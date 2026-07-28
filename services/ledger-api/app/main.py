@@ -43,6 +43,130 @@ def me(request: Request):
                 "perms": sorted(who["perms"])}
 
 
+@app.get("/api/bootstrap")
+def bootstrap(request: Request, limit: int = 1000):
+    """Ledger prototype-shaped state: directory, entries, periods, projects."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
+        out = {"me": {"name": who["name"], "email": who["email"],
+                      "initials": "".join(w[0] for w in who["name"].split()[:2]).upper(),
+                      "perms": sorted(who["perms"])}}
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""SELECT c.id, c.name, c.is_sentinel, c.billing_cycle,
+                                  c.billable_default, c.archived_at,
+                                  (SELECT cr.rate_cents FROM ledger.client_rates cr
+                                    WHERE cr.client_id = c.id AND cr.activity_type_id IS NULL
+                                    ORDER BY cr.valid_from DESC LIMIT 1) AS wide_rate
+                             FROM shared.clients c ORDER BY c.is_sentinel DESC, c.name""")
+            clients = {str(r["id"]): {"id": str(r["id"]), "name": r["name"],
+                       "sentinel": r["is_sentinel"], "cycle": r["billing_cycle"],
+                       "rateOverride": (r["wide_rate"] / 100) if r["wide_rate"] is not None else None,
+                       "billableDefault": r["billable_default"],
+                       "archived": r["archived_at"] is not None,
+                       "rates": {}, "access": {"mode": "all", "techs": []}}
+                       for r in cur.fetchall()}
+            cur.execute("""SELECT DISTINCT ON (client_id, activity_type_id)
+                                  client_id, activity_type_id, rate_cents, billable
+                             FROM ledger.client_rates WHERE activity_type_id IS NOT NULL
+                            ORDER BY client_id, activity_type_id, valid_from DESC""")
+            for r in cur.fetchall():
+                c = clients.get(str(r["client_id"]))
+                if c is not None:
+                    c["rates"][str(r["activity_type_id"])] = {
+                        "rate": (r["rate_cents"] / 100) if r["rate_cents"] is not None else None,
+                        "billable": r["billable"]}
+            out["clients"] = list(clients.values())
+            cur.execute("SELECT id, name, initials, email FROM shared.agents WHERE active ORDER BY name")
+            out["techs"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
+                             "email": r["email"], "groups": []} for r in cur.fetchall()]
+            cur.execute("""SELECT t.id, t.name, t.billable, t.is_sentinel,
+                                  (SELECT tr.rate_cents FROM ledger.activity_type_rates tr
+                                    WHERE tr.activity_type_id = t.id
+                                    ORDER BY tr.valid_from DESC LIMIT 1) AS rate
+                             FROM ledger.activity_types t WHERE t.active
+                            ORDER BY t.is_sentinel, t.name""")
+            out["types"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
+                             "sentinel": r["is_sentinel"], "active": True, "note": "",
+                             "rate": (r["rate"] / 100) if r["rate"] is not None else 0}
+                            for r in cur.fetchall()]
+            cur.execute("""SELECT bp.id, bp.client_id, bp.period_key, bp.status, bp.export_ref
+                             FROM ledger.billing_periods bp ORDER BY bp.period_key""")
+            out["periods"] = [{"id": str(r["id"]), "clientId": str(r["client_id"]),
+                               "key": r["period_key"], "status": r["status"],
+                               "exportRef": r["export_ref"]} for r in cur.fetchall()]
+            cur.execute("""SELECT e.id, e.ticket_id, e.task_id, e.client_id, e.tech_id,
+                                  e.activity_type_id, e.started_at, e.ended_at, e.hours,
+                                  e.note, e.status, e.void_reason, e.voided_at,
+                                  e.submitted_at, e.ts_approved_at, e.ts_approved_by,
+                                  e.returned_at, e.returned_by, e.return_reason,
+                                  e.created_at,
+                                  tk.title AS ticket_title,
+                                  pt.label AS task_label,
+                                  ap.name AS approver_name
+                             FROM ledger.time_entries e
+                             LEFT JOIN desk.tickets tk ON tk.id = e.ticket_id
+                             LEFT JOIN desk.project_tasks pt ON pt.id = e.task_id
+                             LEFT JOIN shared.agents ap ON ap.id = e.ts_approved_by
+                            ORDER BY e.started_at DESC LIMIT %s""", (limit,))
+            out["entries"] = [{
+                "id": str(r["id"]), "zEntryId": str(r["id"])[:8],
+                "zTicket": r["ticket_id"], "ticketTitle": r["ticket_title"] or "",
+                "clientId": str(r["client_id"]), "techId": str(r["tech_id"]),
+                "typeId": str(r["activity_type_id"]), "content": r["note"] or "",
+                "startedAt": ms(r["started_at"]), "endedAt": ms(r["ended_at"]),
+                "hours": float(r["hours"]), "status": r["status"],
+                "source": "api", "createdAt": ms(r["created_at"]),
+                "voidedAt": ms(r["voided_at"]), "voidReason": r["void_reason"],
+                "zDeleted": False,
+                "submitted": r["submitted_at"] is not None,
+                "submittedAt": ms(r["submitted_at"]),
+                "tsApproved": r["ts_approved_at"] is not None,
+                "tsApprovedAt": ms(r["ts_approved_at"]),
+                "tsApprovedBy": r["approver_name"],
+                "returnedAt": ms(r["returned_at"]), "returnedBy": None,
+                "returnReason": r["return_reason"],
+                "zTask": ({"id": str(r["task_id"]), "label": r["task_label"] or ""}
+                          if r["task_id"] else None)} for r in cur.fetchall()]
+            cur.execute("""SELECT p.ticket_id, p.billing_model, p.project_flat_cents,
+                                  p.status, p.approved_at
+                             FROM desk.projects p WHERE p.status = 'approved'""")
+            out["projects"] = [{"zTicket": r["ticket_id"],
+                                "pmode": "flat" if r["billing_model"] == "project_flat" else "tasks",
+                                "projectFlat": (r["project_flat_cents"] or 0) / 100 or None,
+                                "approvedAt": ms(r["approved_at"])} for r in cur.fetchall()]
+        return out
+
+
+class Classify(BaseModel):
+    activity_type: str
+
+
+@app.patch("/api/entries/{entry_id}")
+def classify_entry(entry_id: str, body: Classify, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_edit_own", "l_edit_all")
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM ledger.activity_types WHERE name = %s OR id::text = %s",
+                        (body.activity_type, body.activity_type))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown activity type")
+            cur.execute("""UPDATE ledger.time_entries
+                              SET activity_type_id = %s
+                            WHERE id = %s AND status = 'pending'
+                              AND submitted_at IS NULL
+                            RETURNING id""", (row[0], entry_id))
+            if cur.fetchone() is None:
+                raise HTTPException(409, "Entry missing, submitted, or immutable")
+        auth.audit(conn, "ledger", "Entry classified", f"entry:{entry_id}",
+                   f"type → {body.activity_type} ({who['label']})")
+        return {"ok": True}
+
+
 ENTRY_SELECT = """
   SELECT e.id, e.ticket_id, e.task_id, c.name AS client, a.name AS technician,
          a.email AS technician_email,

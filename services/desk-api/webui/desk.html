@@ -4250,10 +4250,15 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     if(d.mailboxes){
       MAILBOXES.length=0;
       d.mailboxes.forEach(m=>MAILBOXES.push(m));
+      if(!MAILBOXES.length) MAILBOXES.push({id:'mb0',addr:'(no mailbox configured)',
+        type:'shared',groupId:(GROUPS[0]||{}).id,prio:2,outbound:false,
+        desc:'Add one via /api/settings/mailboxes',status:'paused',today:0});
       Object.keys(GROUP_SENDAS).forEach(k=>delete GROUP_SENDAS[k]);
       GROUPS.forEach(g=>{ const m=MAILBOXES.find(x=>x.groupId===g.id)||MAILBOXES[0];
         if(m) GROUP_SENDAS[g.id]=m.id; });
     }
+    RULES.forEach(r=>{ if(r.act&&r.act.groupId&&!GROUPS.some(g=>g.id===r.act.groupId))
+      r.act.groupId=(GROUPS[0]||{}).id; });
     if(d.roles){
       state.roleDefs.length=0;
       d.roles.forEach(r=>state.roleDefs.push({name:r.name,note:r.note||'',
