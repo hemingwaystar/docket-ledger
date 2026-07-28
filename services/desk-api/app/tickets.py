@@ -171,6 +171,32 @@ def bootstrap(request: Request, limit: int = 500):
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
                                                r["label"].lower().replace(" ", "-")),
                               "label": r["label"], "type": r["kind"]} for r in cur.fetchall()]
+            cur.execute("SELECT value FROM shared.app_config WHERE key = 'mail'")
+            row = cur.fetchone()
+            mail_cfg = row["value"] if row else {}
+            outbound = bool((mail_cfg or {}).get("outbound_enabled"))
+            cur.execute("""SELECT m.id, m.address, m.display_name, m.group_id, m.paused,
+                             COALESCE(p.rank, 2) AS prio,
+                             (SELECT count(*) FROM desk.articles ar
+                               WHERE ar.mail_to = m.address AND ar.kind = 'mail_in'
+                                 AND ar.sent_at::date = current_date) AS today
+                             FROM desk.mailboxes m
+                             LEFT JOIN desk.priorities p ON p.id = m.default_priority_id
+                            ORDER BY m.address""")
+            out["mailboxes"] = [{"id": str(r["id"]), "addr": r["address"],
+                                 "type": "shared", "groupId": str(r["group_id"]),
+                                 "prio": r["prio"], "outbound": outbound,
+                                 "desc": r["display_name"] or "",
+                                 "status": "paused" if r["paused"] else "connected",
+                                 "today": r["today"]} for r in cur.fetchall()]
+            cur.execute("""SELECT r.name, r.note, r.is_core, r.entra_group,
+                             COALESCE((SELECT array_agg(permission_id)
+                                        FROM shared.role_permissions rp
+                                       WHERE rp.role_id = r.id), '{}') AS perms
+                             FROM shared.roles r WHERE r.active ORDER BY r.name""")
+            out["roles"] = [{"name": r["name"], "note": r["note"], "core": r["is_core"],
+                             "entra": r["entra_group"] or "",
+                             "perms": list(r["perms"])} for r in cur.fetchall()]
             cur.execute("""SELECT t.id, t.title, t.client_id, t.contact_id, t.group_id,
                              t.owner_id, s.label AS st_label, p.rank AS prio,
                              t.pending_until, t.merged_into_id, t.is_project, t.cc,
