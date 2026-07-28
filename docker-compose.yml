@@ -60,7 +60,7 @@ services:
       KEK_FILE: /run/secrets/kek
     secrets: [pg_desk_api_password, kek]
     ports:
-      - "127.0.0.1:8081:8000"     # host nginx → /desk/
+      - "${BIND_ADDR:-127.0.0.1}:8081:8000"   # loopback by default; overlay IP via .env
     networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
@@ -80,7 +80,7 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/pg_ledger_api_password
     secrets: [pg_ledger_api_password]
     ports:
-      - "127.0.0.1:8082:8000"     # host nginx → /ledger/
+      - "${BIND_ADDR:-127.0.0.1}:8082:8000"
     networks: [internal]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
