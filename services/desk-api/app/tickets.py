@@ -118,6 +118,149 @@ def get_audit(request: Request, limit: int = 100):
             return {"events": cur.fetchall()}
 
 
+ST_MAP = {"new": "new", "open": "open", "pending reminder": "pending",
+          "on hold": "hold", "solved": "solved", "closed": "closed",
+          "archived": "archived"}
+
+
+@router.get("/bootstrap")
+def bootstrap(request: Request, limit: int = 500):
+    """The whole app state, shaped exactly like the prototype's in-page state
+    so DESK-LIVE hydrates without translation at the UI layer."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        out = {"me": {"id": str(who["agent_id"]), "name": who["name"],
+                      "email": who["email"], "perms": sorted(who["perms"]),
+                      "initials": "".join(w[0] for w in who["name"].split()[:2]).upper()}}
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT id, name FROM shared.groups WHERE active ORDER BY name")
+            out["groups"] = [{"id": str(r["id"]), "name": r["name"]} for r in cur.fetchall()]
+            cur.execute("""SELECT a.id, a.name, a.initials, a.email, r.name AS role,
+                             COALESCE((SELECT array_agg(ag.group_id) FROM shared.agent_groups ag
+                                        WHERE ag.agent_id = a.id), '{}') AS gids
+                             FROM shared.agents a LEFT JOIN shared.roles r ON r.id = a.role_id
+                            WHERE a.active ORDER BY a.name""")
+            out["agents"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
+                             "email": r["email"], "role": r["role"] or "Technician",
+                             "groups": [str(g) for g in r["gids"]]} for r in cur.fetchall()]
+            cur.execute("""SELECT c.id, c.name, c.is_sentinel, c.archived_at,
+                             COALESCE((SELECT array_agg(domain) FROM shared.client_domains d
+                                        WHERE d.client_id = c.id), '{}') AS domains
+                             FROM shared.clients c ORDER BY c.is_sentinel DESC, c.name""")
+            clients = {str(r["id"]): {"id": str(r["id"]), "name": r["name"],
+                                      "sentinel": r["is_sentinel"],
+                                      "archived": r["archived_at"] is not None,
+                                      "since": "", "notes": ", ".join(r["domains"]),
+                                      "contacts": []} for r in cur.fetchall()}
+            cur.execute("""SELECT id, client_id, name, email, title, department, phone, mobile
+                             FROM shared.contacts WHERE active ORDER BY name""")
+            for r in cur.fetchall():
+                c = clients.get(str(r["client_id"]))
+                if c is not None:
+                    c["contacts"].append({"id": str(r["id"]), "name": r["name"],
+                                          "email": r["email"], "title": r["title"],
+                                          "dept": r["department"], "phone": r["phone"],
+                                          "mobile": r["mobile"]})
+            out["clients"] = list(clients.values())
+            cur.execute("SELECT id, name, billable FROM ledger.activity_types WHERE active ORDER BY is_sentinel DESC, name")
+            out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"]}
+                             for r in cur.fetchall()]
+            cur.execute("SELECT label, kind FROM desk.ticket_states WHERE active ORDER BY position")
+            out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
+                                               r["label"].lower().replace(" ", "-")),
+                              "label": r["label"], "type": r["kind"]} for r in cur.fetchall()]
+            cur.execute("""SELECT t.id, t.title, t.client_id, t.contact_id, t.group_id,
+                             t.owner_id, s.label AS st_label, p.rank AS prio,
+                             t.pending_until, t.merged_into_id, t.is_project, t.cc,
+                             t.created_at, t.updated_at, t.version,
+                             COALESCE((SELECT array_agg(tag ORDER BY tag)
+                                        FROM desk.ticket_tags tt WHERE tt.ticket_id = t.id), '{}') AS tags
+                             FROM desk.tickets t
+                             JOIN desk.ticket_states s ON s.id = t.state_id
+                             JOIN desk.priorities p ON p.id = t.priority_id
+                            ORDER BY t.updated_at DESC LIMIT %s""", (limit,))
+            tickets = {}
+            ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
+            for r in cur.fetchall():
+                tickets[r["id"]] = {
+                    "id": r["id"], "title": r["title"],
+                    "clientId": str(r["client_id"]),
+                    "contactId": str(r["contact_id"]) if r["contact_id"] else None,
+                    "groupId": str(r["group_id"]),
+                    "ownerId": str(r["owner_id"]) if r["owner_id"] else None,
+                    "st": ST_MAP.get(r["st_label"].lower(),
+                                     r["st_label"].lower().replace(" ", "-")),
+                    "prio": r["prio"], "tags": list(r["tags"]), "cc": list(r["cc"] or []),
+                    "pendingUntil": ms(r["pending_until"]),
+                    "mergedInto": r["merged_into_id"], "isProject": r["is_project"],
+                    "createdAt": ms(r["created_at"]), "updatedAt": ms(r["updated_at"]),
+                    "version": r["version"], "articles": [], "time": []}
+            if tickets:
+                ids = list(tickets)
+                cur.execute("""SELECT ticket_id, id, kind, author, body, is_auto,
+                                 mail_from, mail_to, sent_at
+                                 FROM desk.articles WHERE ticket_id = ANY(%s)
+                                ORDER BY sent_at""", (ids,))
+                for r in cur.fetchall():
+                    tickets[r["ticket_id"]]["articles"].append({
+                        "id": str(r["id"]),
+                        "kind": "mail-in" if r["kind"] == "mail_in" else r["kind"],
+                        "author": {"name": r["author"]}, "ts": ms(r["sent_at"]),
+                        "body": r["body"], "auto": r["is_auto"],
+                        "mailFrom": r["mail_from"], "mailTo": r["mail_to"]})
+                cur.execute("""SELECT e.ticket_id, e.id, e.tech_id, e.activity_type_id,
+                                 e.task_id, e.hours, e.started_at, e.ended_at, e.status,
+                                 e.submitted_at, e.ts_approved_at
+                                 FROM ledger.time_entries e WHERE e.ticket_id = ANY(%s)
+                                ORDER BY e.started_at""", (ids,))
+                for r in cur.fetchall():
+                    tickets[r["ticket_id"]]["time"].append({
+                        "eid": str(r["id"]), "techId": str(r["tech_id"]),
+                        "typeId": str(r["activity_type_id"]),
+                        "taskId": str(r["task_id"]) if r["task_id"] else None,
+                        "h": float(r["hours"]),
+                        "startedAt": ms(r["started_at"]), "endedAt": ms(r["ended_at"]),
+                        "void": r["status"] == "void",
+                        "submitted": r["submitted_at"] is not None,
+                        "approved": r["ts_approved_at"] is not None})
+                cur.execute("""SELECT p.ticket_id, p.status, p.billing_model,
+                                 p.project_flat_cents, p.template, p.unlocked,
+                                 p.submitted_at, p.approved_at
+                                 FROM desk.projects p WHERE p.ticket_id = ANY(%s)""", (ids,))
+                for r in cur.fetchall():
+                    tickets[r["ticket_id"]]["project"] = {
+                        "status": r["status"],
+                        "pmode": "flat" if r["billing_model"] == "project_flat" else "tasks",
+                        "projectFlat": (r["project_flat_cents"] or 0) / 100 or None,
+                        "template": r["template"], "unlocked": r["unlocked"],
+                        "defaultMode": "hourly",
+                        "submittedAt": ms(r["submitted_at"]),
+                        "approvedAt": ms(r["approved_at"]), "tasks": []}
+                cur.execute("""SELECT pt.ticket_id, pt.id, pt.label, pt.position,
+                                 pt.done_at, pt.done_by, pt.billing_mode,
+                                 pt.rate_cents, pt.flat_cents
+                                 FROM desk.project_tasks pt WHERE pt.ticket_id = ANY(%s)
+                                ORDER BY pt.position""", (ids,))
+                for r in cur.fetchall():
+                    proj = tickets[r["ticket_id"]].get("project")
+                    if proj is not None:
+                        proj["tasks"].append({
+                            "id": str(r["id"]), "label": r["label"],
+                            "done": r["done_at"] is not None, "doneAt": ms(r["done_at"]),
+                            "doneBy": str(r["done_by"]) if r["done_by"] else None,
+                            "mode": r["billing_mode"],
+                            "rate": (r["rate_cents"] / 100) if r["rate_cents"] is not None else None,
+                            "flat": (r["flat_cents"] / 100) if r["flat_cents"] is not None else None})
+            out["tickets"] = list(tickets.values())
+            cur.execute("""SELECT at, actor, action, detail FROM audit.events
+                            ORDER BY at DESC LIMIT 120""")
+            out["audit"] = [{"ts": ms(r["at"]), "who": r["actor"], "action": r["action"],
+                             "detail": r["detail"] or ""} for r in cur.fetchall()]
+        return out
+
+
 @router.get("/meta")
 def meta(request: Request):
     """Everything the UI needs for selects, in one call."""

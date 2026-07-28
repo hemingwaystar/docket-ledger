@@ -161,7 +161,19 @@ prompts for the tech-visible reason), **Periods** (approve-and-lock, preview
 the Odoo draft-invoice payload, mark exported → ref recorded). ledger-api
 gains GET /me and serves the UI with no-cache.
 
-Next: Entra OIDC as the second sign-in path, SLA escalation fan-out, the
-automations engine, remaining Docket views (projects, directory, settings,
-reports), the full off-instance backup process, then nginx TLS go-live
-(one origin for both apps; flip the session cookie to secure).
+Prototype-parity UI, phase 1 (this drop): the full Docket prototype — every
+view, pixel and interaction — now runs LIVE at /ui/desk.html. It is the
+prototype file itself with a hydration adapter: GET /api/bootstrap serves the
+entire application state in the prototype's native shape (directory, states,
+priorities, activity types, tickets with threads/time/projects, audit tail),
+the demo seed is gated off, and identity/permissions come from your session.
+Wired to the API in phase 1: the composer (reply/note with time), tags, and
+new-ticket; refresh-on-focus keeps it current. Everything renders and
+navigates identically to the prototype; mutations not yet wired (props
+panel, projects, directory edits, settings) apply locally and revert on the
+next hydrate — they are the next drops, in that order. The simple
+/ui/index.html shell remains as a fallback.
+
+Next: wire the props panel + pending + merge, then projects, then directory
+and settings views; Entra OIDC; SLA fan-out; automations; the Ledger
+prototype gets the same adapter treatment; backup process; TLS go-live.
