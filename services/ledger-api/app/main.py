@@ -128,7 +128,8 @@ def list_periods(request: Request, client: str | None = None):
 @app.post("/api/entries/{entry_id}/submit")
 def submit_entry(entry_id: str, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'l_submit')
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE ledger.time_entries
@@ -156,6 +157,7 @@ def return_timesheet(body: ReturnSheet, request: Request):
     unsubmit with the reason stamped on each (the tech-visible kick-back)."""
     with db.connect() as conn:
         who = auth.require(conn, request)
+        auth.need(who, 'l_approve')
         with conn.cursor() as cur:
             cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",
                         (body.tech_email,))
@@ -202,6 +204,7 @@ def revoke_timesheet(body: RevokeSheet, request: Request):
     """Undo a manager approval (pre period-lock): entries back to Submitted."""
     with db.connect() as conn:
         who = auth.require(conn, request)
+        auth.need(who, 'l_approve')
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM shared.agents WHERE lower(email) = lower(%s)",
                         (body.tech_email,))
@@ -241,7 +244,8 @@ def approve_period(period_id: str, body: PeriodApprove, request: Request):
     """Approve & lock a billing period — every entry in it becomes immutable
     (trigger-enforced). Refuses while any live entry is Unclassified. One-way."""
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'l_approve')
         with conn.cursor() as cur:
             cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",
                         (body.approver_email,))
@@ -309,7 +313,8 @@ def _export_payload(cur, period_id):
 @app.get("/api/periods/{period_id}/export-payload")
 def export_payload(period_id: str, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'l_export')
         with conn.cursor() as cur:
             return _export_payload(cur, period_id)
 
@@ -322,6 +327,7 @@ def mark_exported(period_id: str, request: Request):
     import json
     with db.connect() as conn:
         who = auth.require(conn, request)
+        auth.need(who, 'l_export')
         with conn.cursor() as cur:
             payload = _export_payload(cur, period_id)
             ref = f"ODO-{payload['period']}-{period_id[:8]}"
@@ -353,6 +359,7 @@ def approve_timesheet(body: ApproveSheet, request: Request):
     enforced) pending the period lock."""
     with db.connect() as conn:
         who = auth.require(conn, request)
+        auth.need(who, 'l_approve')
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM shared.agents WHERE lower(email) = lower(%s)",
                         (body.tech_email,))

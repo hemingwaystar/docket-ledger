@@ -109,7 +109,8 @@ def report_queue(request: Request):
 @router.get("/audit")
 def get_audit(request: Request, limit: int = 100):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'view_audit')
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""SELECT at, actor, app, action, entity, detail
                              FROM audit.events ORDER BY at DESC LIMIT %s""",
@@ -129,6 +130,7 @@ class NewTicket(BaseModel):
 def create_ticket(body: NewTicket, request: Request):
     with db.connect() as conn:
         who = auth.require(conn, request)
+        auth.need(who, 'create')
         with conn.cursor() as cur:
             client_id = helpers.client_id(cur, body.client)
             group_id = helpers.group_id(cur, body.group)
@@ -164,7 +166,8 @@ class PatchTicket(BaseModel):
 @router.patch("/tickets/{ticket_id}")
 def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'edit_props', 'assign', 'close')
         with conn.cursor() as cur:
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)
@@ -214,7 +217,8 @@ class Tags(BaseModel):
 @router.post("/tickets/{ticket_id}/tags")
 def tags(ticket_id: int, body: Tags, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'edit_props')
         with conn.cursor() as cur:
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)
@@ -245,7 +249,8 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
     if body.into == ticket_id:
         raise HTTPException(422, "Cannot merge a ticket into itself")
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'edit_props')
         with conn.cursor() as cur:
             src = helpers.ticket_or_404(cur, ticket_id)
             dst = helpers.ticket_or_404(cur, body.into)
@@ -314,7 +319,10 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
     if body.kind not in ("reply", "note"):
         raise HTTPException(422, "kind must be reply or note")
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, "reply" if body.kind == "reply" else "note")
+        if body.time:
+            auth.need(who, "log_time")
         with conn.cursor() as cur:
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)

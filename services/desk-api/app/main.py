@@ -4,9 +4,12 @@
   projects.py   checklist lifecycle: create → tasks/billing → submit → approve → unlock
 Auth: Bearer PAT (auth.py). Invariants live in the DB; routers stay thin."""
 from fastapi import FastAPI
-from . import db, tickets, directory, projects
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from . import db, sessions, tickets, directory, projects
 
 app = FastAPI(title="desk-api", root_path="/desk")
+app.include_router(sessions.router)
 app.include_router(tickets.router)
 app.include_router(directory.router)
 app.include_router(projects.router)
@@ -23,3 +26,10 @@ def readyz():
         cur.execute("SELECT count(*) FROM desk.ticket_states")
         (states,) = cur.fetchone()
     return {"ok": True, "ticket_states": states}
+
+
+@app.get("/")
+def root():
+    return RedirectResponse("/ui/login.html")
+
+app.mount("/ui", StaticFiles(directory="webui", html=True), name="ui")

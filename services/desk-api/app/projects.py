@@ -36,7 +36,8 @@ def create_project(body: NewProject, request: Request):
     if body.billing_model not in ("per_task", "project_flat"):
         raise HTTPException(422, "billing_model must be per_task or project_flat")
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
             client_id = helpers.client_id(cur, body.client)
             group_id = helpers.group_id(cur, body.group)
@@ -84,7 +85,8 @@ class NewTask(BaseModel):
 @router.post("/{ticket_id}/tasks", status_code=201)
 def add_task(ticket_id: int, body: NewTask, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status != "open":
@@ -113,7 +115,8 @@ class PatchTask(BaseModel):
 @router.patch("/{ticket_id}/tasks/{task_id}")
 def patch_task(ticket_id: int, task_id: str, body: PatchTask, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects', 'log_time')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status == "approved":
@@ -166,7 +169,8 @@ def patch_task(ticket_id: int, task_id: str, body: PatchTask, request: Request):
 @router.delete("/{ticket_id}/tasks/{task_id}")
 def remove_task(ticket_id: int, task_id: str, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status != "open":
@@ -193,7 +197,8 @@ class Flat(BaseModel):
 @router.patch("/{ticket_id}/billing")
 def patch_billing(ticket_id: int, body: Flat, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status == "approved":
@@ -218,7 +223,8 @@ def patch_billing(ticket_id: int, body: Flat, request: Request):
 @router.post("/{ticket_id}/submit")
 def submit(ticket_id: int, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
             status, model, flat, _ = _project(cur, ticket_id)
             if status != "open":
@@ -258,7 +264,8 @@ class Approve(BaseModel):
 @router.post("/{ticket_id}/approve")
 def approve(ticket_id: int, body: Approve, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'approve_projects')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status != "review":
@@ -291,7 +298,8 @@ def unlock(ticket_id: int, request: Request):
     """Admin unlock: reopens the TICKET (notes/time/props). Checklist and
     billing stay frozen — they billed. Re-lock with /relock."""
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'approve_projects')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status != "approved":
@@ -306,7 +314,8 @@ def unlock(ticket_id: int, request: Request):
 @router.post("/{ticket_id}/relock")
 def relock(ticket_id: int, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'approve_projects')
         with conn.cursor() as cur:
             _project(cur, ticket_id)
             cur.execute("UPDATE desk.projects SET unlocked = false WHERE ticket_id = %s",

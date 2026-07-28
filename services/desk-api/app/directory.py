@@ -49,7 +49,8 @@ class NewGroup(BaseModel):
 @router.post("/groups", status_code=201)
 def create_group(body: NewGroup, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_settings')
         with conn.cursor() as cur:
             cur.execute("INSERT INTO shared.groups (name) VALUES (%s) RETURNING id",
                         (body.name,))
@@ -69,7 +70,8 @@ class NewAgent(BaseModel):
 @router.post("/agents", status_code=201)
 def create_agent(body: NewAgent, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_roles', 'manage_settings')
         with conn.cursor() as cur:
             role = helpers.one(cur, "SELECT id FROM shared.roles WHERE name = %s AND active",
                                (body.role,), "Unknown role")[0]
@@ -94,7 +96,8 @@ class PatchAgent(BaseModel):
 @router.patch("/agents/{email}")
 def patch_agent(email: str, body: PatchAgent, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_roles', 'manage_settings')
         with conn.cursor() as cur:
             aid, name = helpers.agent(cur, email)
             changes = []
@@ -131,7 +134,8 @@ def create_client(body: NewClient, request: Request):
     if body.billing_cycle not in ("monthly", "weekly"):
         raise HTTPException(422, "billing_cycle must be monthly or weekly")
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_clients')
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO shared.clients (name, billing_cycle, billable_default)
                            VALUES (%s, %s, %s) RETURNING id""",
@@ -154,7 +158,8 @@ class PatchClient(BaseModel):
 @router.patch("/clients/{handle}")
 def patch_client(handle: str, body: PatchClient, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_clients')
         with conn.cursor() as cur:
             cid = helpers.client_id(cur, handle)
             if body.archived is not None:
@@ -187,7 +192,8 @@ class NewContact(BaseModel):
 @router.post("/contacts", status_code=201)
 def create_contact(body: NewContact, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        auth.need(who, 'add_contacts', 'manage_clients')
         with conn.cursor() as cur:
             cid = helpers.client_id(cur, body.client)
             cur.execute("""INSERT INTO shared.contacts

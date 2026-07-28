@@ -95,7 +95,26 @@ tickets/directory/projects — for manageability):
   the routing ladder (contact → domain auto-contact → sentinel + unrouted) is
   implemented and waiting on Graph consent, which the worker checks each pass
 
+Auth + first live UI (this drop): DB-backed sessions shared by both APIs
+(migration 0004; role matrix snapshotted at sign-in), local argon2id
+passwords with TOTP MFA (stdlib RFC 6238; secrets envelope-encrypted under
+the KEK), temp-password must-change flow, admin-direct resets that are never
+emailed, server-side RBAC (`auth.need`) on every write endpoint — PATs remain
+all-scope service credentials — and a served web UI at
+http://127.0.0.1:8081/ui/ : HTS login (MFA-aware) + a live Docket queue and
+ticket view with a note-and-time composer hitting the real API.
+
+Bootstrap the first login:
+```sh
+sudo docker-compose run --rm migrate                      # applies 0004
+sudo docker-compose up -d --build desk-api ledger-api
+sudo docker compose exec desk-api python -m app.bootstrap you@yourdomain.com "Your Name"
+# open http://127.0.0.1:8081/ui/ (or via SSH tunnel), sign in, change the temp password
+```
+NOTE: the session cookie ships with secure=False so it works pre-TLS; flip it
+in app/sessions.py when the nginx HTTPS front goes live.
+
 Next: settings/secrets endpoints (Graph + Entra consent, verification config),
 Graph ingestion itself (subscription renew + delta poll over the ladder),
-Entra OIDC sessions, SLA escalation fan-out, then pointing the prototype
-frontends at the real APIs.
+Entra OIDC as the second sign-in path, SLA escalation fan-out, then converting
+the remaining prototype views onto the live UI.
