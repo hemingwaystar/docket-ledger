@@ -150,6 +150,18 @@ until you flip it: PUT /api/settings/config/mail {"value":
 Exchange application access policy. Also new: GET /api/meta for UI selects,
 and state/priority/owner controls in the ticket view (optimistic-locked).
 
+Ledger UI (this drop): http://<host>:8082/ui/ — same login session as
+Docket (the cookie spans both ports; unauthenticated visits bounce to the
+Docket login). Three views, permission-gated by the sign-in snapshot:
+**My time** (entries with status chips, per-entry + submit-all; amounts only
+with l_see_amounts; Unclassified can't submit; return reasons surface as ↩),
+**Approvals** (l_approve: sheets grouped tech × client × period with
+submitted/approved counts, Approve enabled only when fully submitted, Return
+prompts for the tech-visible reason), **Periods** (approve-and-lock, preview
+the Odoo draft-invoice payload, mark exported → ref recorded). ledger-api
+gains GET /me and serves the UI with no-cache.
+
 Next: Entra OIDC as the second sign-in path, SLA escalation fan-out, the
-automations engine, then converting the remaining prototype views (Ledger
-first) onto the live UI, and the full off-instance backup process.
+automations engine, remaining Docket views (projects, directory, settings,
+reports), the full off-instance backup process, then nginx TLS go-live
+(one origin for both apps; flip the session cookie to secure).

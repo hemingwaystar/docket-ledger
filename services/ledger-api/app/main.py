@@ -11,6 +11,8 @@ Write paths (timesheet chain — DB triggers enforce the freeze):
   POST /api/timesheets/approve        {tech_email, client, period_key}
 """
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 from . import auth, db
@@ -31,8 +33,19 @@ def readyz():
     return {"ok": True, "activity_types": types}
 
 
+@app.get("/me")
+def me(request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        return {"name": who["name"], "email": who["email"],
+                "perms": sorted(who["perms"])}
+
+
 ENTRY_SELECT = """
   SELECT e.id, e.ticket_id, e.task_id, c.name AS client, a.name AS technician,
+         a.email AS technician_email,
          at.name AS activity_type, e.started_at, e.ended_at, e.hours, e.note,
          bp.period_key, bp.status AS period_status,
          p.rate_cents, p.amount_cents, p.billable, p.covered_by_project_flat,
@@ -397,3 +410,18 @@ def approve_timesheet(body: ApproveSheet, request: Request):
                    f"timesheet:{tech_id}|{client_id}|{body.period_key}",
                    f"{n} entries approved via API ({who['label']})")
         return {"approved_entries": n}
+
+
+@app.get("/")
+def root():
+    return RedirectResponse("/ui/index.html")
+
+
+class NoCacheStatic(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/ui", NoCacheStatic(directory="webui", html=True), name="ui")
