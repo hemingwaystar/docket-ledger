@@ -4,7 +4,7 @@ loop: props (optimistic-locked), tags, pending wakes, and transactional merge
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel
-from . import auth, db, helpers
+from . import auth, db, helpers, mailer
 
 router = APIRouter(prefix="/api")
 
@@ -116,6 +116,26 @@ def get_audit(request: Request, limit: int = 100):
                              FROM audit.events ORDER BY at DESC LIMIT %s""",
                         (min(limit, 1000),))
             return {"events": cur.fetchall()}
+
+
+@router.get("/meta")
+def meta(request: Request):
+    """Everything the UI needs for selects, in one call."""
+    with db.connect() as conn:
+        auth.require(conn, request)
+        with conn.cursor(row_factory=dict_row) as cur:
+            out = {}
+            cur.execute("SELECT label, kind FROM desk.ticket_states WHERE active ORDER BY position")
+            out["states"] = cur.fetchall()
+            cur.execute("SELECT label FROM desk.priorities WHERE active ORDER BY rank")
+            out["priorities"] = [r["label"] for r in cur.fetchall()]
+            cur.execute("SELECT name FROM shared.groups WHERE active ORDER BY name")
+            out["groups"] = [r["name"] for r in cur.fetchall()]
+            cur.execute("SELECT name, email FROM shared.agents WHERE active ORDER BY name")
+            out["agents"] = cur.fetchall()
+            cur.execute("SELECT name FROM ledger.activity_types WHERE active AND NOT is_sentinel ORDER BY name")
+            out["activity_types"] = [r["name"] for r in cur.fetchall()]
+            return out
 
 
 class NewTicket(BaseModel):
@@ -311,6 +331,7 @@ class NewArticle(BaseModel):
     kind: str
     body: str
     author_email: str
+    to: str | None = None              # reply recipient override
     time: TimeSpec | None = None
 
 
@@ -328,9 +349,53 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
             helpers.refuse_if_locked_project(row)
             client_id = row[1]
             author_id, author_name = helpers.agent(cur, body.author_email)
-            cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
-                           VALUES (%s, %s, %s, %s, %s) RETURNING id""",
-                        (ticket_id, body.kind, author_name, author_id, body.body))
+            sent, mail_to, out_mid = False, None, None
+            if body.kind == "reply":
+                # recipient: explicit override → ticket contact → last inbound sender
+                cur.execute("""SELECT COALESCE(
+                                 %s,
+                                 (SELECT co.email FROM desk.tickets tk
+                                    JOIN shared.contacts co ON co.id = tk.contact_id
+                                   WHERE tk.id = %s),
+                                 (SELECT ar.mail_from FROM desk.articles ar
+                                   WHERE ar.ticket_id = %s AND ar.kind = 'mail_in'
+                                   ORDER BY ar.sent_at DESC LIMIT 1))""",
+                            (body.to, ticket_id, ticket_id))
+                (mail_to,) = cur.fetchone()
+                if not mail_to:
+                    raise HTTPException(409, "No recipient — the ticket has no contact or inbound mail")
+                cur.execute("""SELECT m.address, m.display_name
+                                 FROM desk.mailboxes m
+                                 JOIN desk.tickets t ON t.group_id = m.group_id
+                                WHERE t.id = %s AND NOT m.paused
+                                ORDER BY m.address LIMIT 1""", (ticket_id,))
+                mbrow = cur.fetchone()
+                if mbrow is None:
+                    raise HTTPException(409, "No mailbox is attached to this ticket's group")
+                mb_addr, mb_name = mbrow
+                cur.execute("""SELECT t.title, t.cc,
+                                 (SELECT ar.message_id FROM desk.articles ar
+                                   WHERE ar.ticket_id = t.id AND ar.message_id IS NOT NULL
+                                   ORDER BY ar.sent_at DESC LIMIT 1),
+                                 COALESCE((SELECT array_agg(ar.message_id ORDER BY ar.sent_at)
+                                   FROM desk.articles ar
+                                  WHERE ar.ticket_id = t.id AND ar.message_id IS NOT NULL), '{}')
+                                FROM desk.tickets t WHERE t.id = %s""", (ticket_id,))
+                title, cc_list, last_mid, all_mids = cur.fetchone()
+                if mailer.outbound_enabled(cur):
+                    out_mid = mailer.send_reply(
+                        cur, mailbox_address=mb_addr, display_name=mb_name or "",
+                        to=mail_to, cc=list(cc_list or []),
+                        subject=f"[#{ticket_id}] {title}", body=body.body,
+                        in_reply_to=last_mid, references=list(all_mids or []))
+                    sent = True
+            cur.execute("""INSERT INTO desk.articles
+                             (ticket_id, kind, author, author_id, body,
+                              mail_from, mail_to, message_id)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                        (ticket_id, body.kind, author_name, author_id, body.body,
+                         None if body.kind != "reply" else None,
+                         mail_to, out_mid))
             (article_id,) = cur.fetchone()
             entry_id, hours = None, None
             if body.time:
@@ -346,9 +411,14 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 entry_id, hours = cur.fetchone()
             cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
         detail = f"#{ticket_id} · {body.kind} by {author_name}"
+        if body.kind == "reply":
+            detail += (f" · mailed to {mail_to}" if sent
+                       else f" · to {mail_to} — RECORDED ONLY (outbound disabled)")
         if entry_id:
             detail += f" · {hours} h → Ledger"
-        auth.audit(conn, "desk", "Reply sent" if body.kind == "reply" else "Note added",
+        auth.audit(conn, "desk",
+                   ("Reply sent" if sent else "Reply recorded") if body.kind == "reply"
+                   else "Note added",
                    f"ticket:{ticket_id}", detail)
-        return {"article_id": str(article_id),
+        return {"article_id": str(article_id), "sent": sent, "to": mail_to,
                 "time_entry_id": str(entry_id) if entry_id else None}

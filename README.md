@@ -136,6 +136,20 @@ Connecting mail (one-time, in Entra admin center):
   with an Exchange application access policy (New-ApplicationAccessPolicy)
   — least privilege for mail, matching everything else here.
 
-Next: reply-out via Graph (send from the group mailbox, loop guards),
-Entra OIDC as the second sign-in path, SLA escalation fan-out, automations
-engine, then converting the remaining prototype views onto the live UI.
+Reply-out (this drop): agents answer customers from the ticket view. The
+composer gains a Reply/Note toggle; replies send AS the ticket's group
+mailbox (GROUP_SENDAS) via Graph — MIME-built so real In-Reply-To/References
+headers thread the conversation in the customer's client, [#100123] in the
+subject threads their answer back to us, our outbound Message-ID stored on
+the immutable article. Recipient resolves override → ticket contact → last
+inbound sender. SAFETY: ships with {"outbound_enabled": false} (migration
+0008) — replies are recorded in the thread and audited as "RECORDED ONLY"
+until you flip it: PUT /api/settings/config/mail {"value":
+{"outbound_enabled": true}}. Requires the Mail.Send application permission
+(already consented if you followed the setup) and works within the same
+Exchange application access policy. Also new: GET /api/meta for UI selects,
+and state/priority/owner controls in the ticket view (optimistic-locked).
+
+Next: Entra OIDC as the second sign-in path, SLA escalation fan-out, the
+automations engine, then converting the remaining prototype views (Ledger
+first) onto the live UI, and the full off-instance backup process.
