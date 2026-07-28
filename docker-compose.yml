@@ -1,0 +1,136 @@
+# Hemingway Suite backend
+# One Postgres, three services, one internal network. The host's nginx owns
+# TLS + HSTS and proxies to the two loopback-published API ports — nothing
+# here touches certificates or the public interface.
+#
+# Secrets: ./secrets/* files are mounted read-only. App credentials (Entra,
+# Graph, voip.ms, Twilio) NEVER appear here or in env — they live envelope-
+# encrypted in the DB, unlocked by the mounted KEK (see secrets/README.md).
+# The only file-mounted secrets are the DB role passwords and the KEK itself:
+# that's the bootstrap floor a self-hosted deployment cannot go below.
+
+name: hemingway
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hemingway
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
+    secrets: [pg_superuser_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hemingway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    # one-shot: applies db/migrations/*.sql in order, records them in
+    # public.schema_migrations, sets runtime role passwords from files.
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGDATABASE: hemingway
+      PGUSER: postgres
+      PGPASSFILE_SOURCE: /run/secrets/pg_superuser_password
+    secrets: [pg_superuser_password, pg_desk_api_password, pg_ledger_api_password, pg_mail_worker_password]
+    volumes:
+      - ./db:/db:ro
+    entrypoint: ["/bin/sh", "/db/migrate.sh"]
+    networks: [internal]
+
+  desk-api:
+    build: ./services/desk-api
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_NAME: hemingway
+      DATABASE_USER: desk_api
+      DATABASE_PASSWORD_FILE: /run/secrets/pg_desk_api_password
+      KEK_FILE: /run/secrets/kek
+    secrets: [pg_desk_api_password, kek]
+    ports:
+      - "127.0.0.1:8081:8000"     # host nginx → /desk/
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  ledger-api:
+    build: ./services/ledger-api
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_NAME: hemingway
+      DATABASE_USER: ledger_api
+      DATABASE_PASSWORD_FILE: /run/secrets/pg_ledger_api_password
+    secrets: [pg_ledger_api_password]
+    ports:
+      - "127.0.0.1:8082:8000"     # host nginx → /ledger/
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  mail-worker:
+    build: ./services/mail-worker
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_NAME: hemingway
+      DATABASE_USER: mail_worker
+      DATABASE_PASSWORD_FILE: /run/secrets/pg_mail_worker_password
+      KEK_FILE: /run/secrets/kek
+    secrets: [pg_mail_worker_password, kek]
+    networks: [internal]
+    # no ports: the worker only talks outward (Graph) and to Postgres
+
+  db-backup:
+    # nightly logical dump into ./backups — copy those off-host on your own
+    # schedule; restore-test quarterly (see README "Backups").
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGDATABASE: hemingway
+      PGUSER: postgres
+    secrets: [pg_superuser_password]
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c",
+      "export PGPASSWORD=$$(cat /run/secrets/pg_superuser_password); while true; do pg_dump -Fc -f /backups/hemingway-$$(date +%F).dump && find /backups -name '*.dump' -mtime +14 -delete; sleep 86400; done"]
+    networks: [internal]
+
+secrets:
+  pg_superuser_password:  { file: ./secrets/pg_superuser_password }
+  pg_desk_api_password:   { file: ./secrets/pg_desk_api_password }
+  pg_ledger_api_password: { file: ./secrets/pg_ledger_api_password }
+  pg_mail_worker_password:{ file: ./secrets/pg_mail_worker_password }
+  kek:                    { file: ./secrets/kek }
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:
