@@ -76,16 +76,26 @@ locking, timesheet + project state machines, per-task/project-flat billing,
 runner, backup sidecar, nginx example, service scaffolds with health checks
 and per-transaction audit actor.
 
-Implemented in the API layer: PAT auth (hashed, last-used stamped, 401
-semantics as prototyped) via `scripts/create-token.sh`; desk-api GET
-tickets/ticket/queue-report/audit + POST ticket and article-with-time;
-ledger-api GET entries (priced by `ledger.priced`), utilization, periods
-(incl. project flat fees) + POST entry submit and timesheet approve;
-migration 0003 makes billing-period assignment a DB trigger so every writer
-agrees.
+Implemented in the API layer (desk-api now split into routers —
+tickets/directory/projects — for manageability):
 
-Next, in order: the remaining desk-api surface (state/props/tags, merge,
-projects lifecycle, directory writes), ledger-api period approve + Odoo
-export, mail-worker Graph ingestion + routing ladder + pending/SLA
-schedulers, Entra OIDC sessions, then pointing the prototype frontends at
-the real APIs.
+* PAT auth (`scripts/create-token.sh`; hashed, last-used stamped, 401s as prototyped)
+* desk-api: ticket reads (DocketAPI mirror) · create · article-with-time ·
+  PATCH props with optimistic version lock · tags · transactional merge
+  (locked-period entries stay, noted) · pending_until · full directory writes
+  (groups, agents+roles, clients+routing domains, contacts) · complete project
+  lifecycle (create from template, task CRUD, per-task/project-flat billing,
+  submit → approve → queue entries for timesheet review, admin unlock/relock);
+  approved-and-locked projects answer 423 everywhere
+* ledger-api: priced entries · utilization · periods (incl. project flat fees) ·
+  entry submit · timesheet approve/return-with-reason/revoke · period
+  approve-and-lock (refuses on Unclassified) · Odoo export payload +
+  mark-exported (draft-invoice payload recorded in ledger.odoo_exports)
+* mail-worker: pending-wake scheduler is LIVE (reopens, sys article, audited);
+  the routing ladder (contact → domain auto-contact → sentinel + unrouted) is
+  implemented and waiting on Graph consent, which the worker checks each pass
+
+Next: settings/secrets endpoints (Graph + Entra consent, verification config),
+Graph ingestion itself (subscription renew + delta poll over the ladder),
+Entra OIDC sessions, SLA escalation fan-out, then pointing the prototype
+frontends at the real APIs.

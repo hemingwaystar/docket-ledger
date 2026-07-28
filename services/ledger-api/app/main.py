@@ -143,6 +143,203 @@ def submit_entry(entry_id: str, request: Request):
         return {"ok": True}
 
 
+class ReturnSheet(BaseModel):
+    tech_email: str
+    client: str
+    period_key: str
+    reason: str = ""
+
+
+@app.post("/api/timesheets/return")
+def return_timesheet(body: ReturnSheet, request: Request):
+    """Send a (tech, client, period) sheet back: submitted-not-approved entries
+    unsubmit with the reason stamped on each (the tech-visible kick-back)."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",
+                        (body.tech_email,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown technician")
+            tech_id, tech_name = row
+            cur.execute("SELECT id FROM shared.clients WHERE name = %s OR id::text = %s",
+                        (body.client, body.client))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown client")
+            client_id = row[0]
+            cur.execute("""
+                UPDATE ledger.time_entries e
+                   SET submitted_at = NULL,
+                       returned_at = now(), return_reason = NULLIF(%s, '')
+                  FROM ledger.billing_periods bp
+                 WHERE bp.id = e.period_id AND bp.status = 'open'
+                   AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
+                   AND e.status <> 'void'
+                   AND e.submitted_at IS NOT NULL AND e.ts_approved_at IS NULL
+                RETURNING e.id""",
+                (body.reason, tech_id, client_id, body.period_key))
+            n = len(cur.fetchall())
+            if n == 0:
+                raise HTTPException(409, "Nothing to return on that sheet")
+        auth.audit(conn, "ledger", "Timesheet returned",
+                   f"timesheet:{tech_id}|{client_id}|{body.period_key}",
+                   f"{n} entries back to {tech_name}"
+                   + (f" — “{body.reason}”" if body.reason else "")
+                   + f" ({who['label']})")
+        return {"returned_entries": n}
+
+
+class RevokeSheet(BaseModel):
+    tech_email: str
+    client: str
+    period_key: str
+
+
+@app.post("/api/timesheets/revoke")
+def revoke_timesheet(body: RevokeSheet, request: Request):
+    """Undo a manager approval (pre period-lock): entries back to Submitted."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM shared.agents WHERE lower(email) = lower(%s)",
+                        (body.tech_email,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown technician")
+            tech_id = row[0]
+            cur.execute("SELECT id FROM shared.clients WHERE name = %s OR id::text = %s",
+                        (body.client, body.client))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown client")
+            client_id = row[0]
+            cur.execute("""
+                UPDATE ledger.time_entries e
+                   SET ts_approved_at = NULL, ts_approved_by = NULL
+                  FROM ledger.billing_periods bp
+                 WHERE bp.id = e.period_id AND bp.status = 'open'
+                   AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
+                   AND e.ts_approved_at IS NOT NULL
+                RETURNING e.id""", (tech_id, client_id, body.period_key))
+            n = len(cur.fetchall())
+            if n == 0:
+                raise HTTPException(409, "Nothing approved (or the period is locked)")
+        auth.audit(conn, "ledger", "Timesheet approval revoked",
+                   f"timesheet:{tech_id}|{client_id}|{body.period_key}",
+                   f"{n} entries back to Submitted ({who['label']})")
+        return {"revoked_entries": n}
+
+
+class PeriodApprove(BaseModel):
+    approver_email: str
+
+
+@app.post("/api/periods/{period_id}/approve")
+def approve_period(period_id: str, body: PeriodApprove, request: Request):
+    """Approve & lock a billing period — every entry in it becomes immutable
+    (trigger-enforced). Refuses while any live entry is Unclassified. One-way."""
+    with db.connect() as conn:
+        auth.require(conn, request)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",
+                        (body.approver_email,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown approver")
+            aid, name = row
+            cur.execute("""
+                SELECT count(*) FROM ledger.time_entries e
+                  JOIN ledger.activity_types at ON at.id = e.activity_type_id
+                 WHERE e.period_id = %s AND e.status <> 'void' AND at.is_sentinel""",
+                (period_id,))
+            (unclassified,) = cur.fetchone()
+            if unclassified:
+                raise HTTPException(409, f"{unclassified} entries are Unclassified — classify first")
+            cur.execute("""
+                UPDATE ledger.billing_periods
+                   SET status = 'approved', approved_at = now(), approved_by = %s
+                 WHERE id = %s AND status = 'open'
+                RETURNING client_id, period_key""", (aid, period_id))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(409, "Period missing or not open")
+            client_id, period_key = row
+        auth.audit(conn, "ledger", "Period approved & locked",
+                   f"period:{period_id}", f"{period_key} · approved by {name}")
+        return {"ok": True, "period_key": period_key}
+
+
+def _export_payload(cur, period_id):
+    cur.execute("""SELECT bp.client_id, bp.period_key, bp.status, c.name
+                     FROM ledger.billing_periods bp
+                     JOIN shared.clients c ON c.id = bp.client_id
+                    WHERE bp.id = %s""", (period_id,))
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(404, "No such period")
+    client_id, period_key, status, client_name = row
+    if status == "open":
+        raise HTTPException(409, "Approve the period before exporting")
+    cur.execute("""
+        SELECT at.name, p.rate_cents, round(sum(e.hours), 2)
+          FROM ledger.time_entries e
+          CROSS JOIN LATERAL ledger.priced(e) AS p
+          JOIN ledger.activity_types at ON at.id = e.activity_type_id
+         WHERE e.period_id = %s AND e.status <> 'void' AND p.billable
+         GROUP BY at.name, p.rate_cents ORDER BY at.name""", (period_id,))
+    lines = [{"name": n, "quantity": float(q), "price_unit": r / 100.0, "uom": "Hours"}
+             for n, r, q in cur.fetchall()]
+    cur.execute("""
+        SELECT fl.project_title, fl.line_label, fl.amount_cents
+          FROM ledger.project_flat_lines fl
+         WHERE fl.client_id = %s
+           AND ledger.period_key_for(fl.client_id, fl.approved_at) = %s""",
+        (client_id, period_key))
+    for title, label, cents in cur.fetchall():
+        lines.append({"name": f"{title} — {label}", "quantity": 1,
+                      "price_unit": cents / 100.0, "uom": "Fee"})
+    return {"partner": client_name, "period": period_key,
+            "move_type": "out_invoice", "state": "draft",
+            "invoice_line_ids": lines,
+            "total": round(sum(l["quantity"] * l["price_unit"] for l in lines), 2)}
+
+
+@app.get("/api/periods/{period_id}/export-payload")
+def export_payload(period_id: str, request: Request):
+    with db.connect() as conn:
+        auth.require(conn, request)
+        with conn.cursor() as cur:
+            return _export_payload(cur, period_id)
+
+
+@app.post("/api/periods/{period_id}/mark-exported")
+def mark_exported(period_id: str, request: Request):
+    """Stamps the period exported and records the exact payload. The Odoo
+    connector posts this payload as a draft invoice once its settings are
+    configured; until then this is the open-connector behavior as prototyped."""
+    import json
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            payload = _export_payload(cur, period_id)
+            ref = f"ODO-{payload['period']}-{period_id[:8]}"
+            cur.execute("""
+                UPDATE ledger.billing_periods
+                   SET status = 'exported', exported_at = now(), export_ref = %s
+                 WHERE id = %s AND status = 'approved'
+                RETURNING id""", (ref, period_id))
+            if cur.fetchone() is None:
+                raise HTTPException(409, "Period must be approved (and not already exported)")
+            cur.execute("""INSERT INTO ledger.odoo_exports (period_id, export_ref, payload)
+                           VALUES (%s, %s, %s)""", (period_id, ref, json.dumps(payload)))
+        auth.audit(conn, "ledger", "Period exported to Odoo",
+                   f"period:{period_id}",
+                   f"{payload['period']} · {ref} · total {payload['total']} ({who['label']})")
+        return {"export_ref": ref, "payload": payload}
+
+
 class ApproveSheet(BaseModel):
     tech_email: str
     client: str            # name or uuid
