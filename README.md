@@ -24,7 +24,11 @@ Everything below the proxy is loopback-only.
 ## First boot
 
 ```sh
-cd secrets && sh -c "$(sed -n '/openssl/,+4p' README.md)"   # or follow README by hand
+cd secrets
+for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password kek; do
+  openssl rand -base64 32 | tr -d '\n' > "$f"
+  chmod 600 "$f"
+done
 cd .. && docker compose up -d --build
 docker compose logs migrate      # expect "apply 0001..., apply 0002..., migrations complete"
 curl http://127.0.0.1:8081/readyz && curl http://127.0.0.1:8082/readyz
@@ -46,6 +50,23 @@ Then install `nginx/hemingway.conf.example` on the host and reload nginx.
 * **Config** → everything operational lives in `shared.app_config` and is
   GUI-editable per HANDOFF §7 — compose stays static.
 
+## API quickstart
+
+```sh
+sh scripts/create-token.sh "my-first-token"     # prints the token once
+export T="<token>"
+curl -H "Authorization: Bearer $T" http://127.0.0.1:8081/api/tickets
+curl -H "Authorization: Bearer $T" http://127.0.0.1:8081/api/reports/queue
+curl -H "Authorization: Bearer $T" http://127.0.0.1:8082/api/entries
+curl -H "Authorization: Bearer $T" http://127.0.0.1:8082/api/reports/utilization
+# create a ticket, add a note with time (task_id only for project tickets):
+curl -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
+  -d '{"title":"Printer down","client":"Unassigned intake","group":"<group name>"}' \
+  http://127.0.0.1:8081/api/tickets
+```
+
+Interactive docs: http://127.0.0.1:8081/docs and :8082/docs (loopback-only).
+
 ## What's implemented vs next
 
 Done: full schema + seeds encoding HANDOFF §10 items 1–24a (interval time,
@@ -55,8 +76,16 @@ locking, timesheet + project state machines, per-task/project-flat billing,
 runner, backup sidecar, nginx example, service scaffolds with health checks
 and per-transaction audit actor.
 
-Next, in order: desk-api ticket + directory endpoints (mirroring the
-prototype's `window.DocketAPI`), ledger-api entries/approvals/periods/export,
-mail-worker Graph ingestion + routing ladder + pending/SLA schedulers, Entra
-OIDC session shared across both APIs, then pointing the prototype frontends
-at the real APIs.
+Implemented in the API layer: PAT auth (hashed, last-used stamped, 401
+semantics as prototyped) via `scripts/create-token.sh`; desk-api GET
+tickets/ticket/queue-report/audit + POST ticket and article-with-time;
+ledger-api GET entries (priced by `ledger.priced`), utilization, periods
+(incl. project flat fees) + POST entry submit and timesheet approve;
+migration 0003 makes billing-period assignment a DB trigger so every writer
+agrees.
+
+Next, in order: the remaining desk-api surface (state/props/tags, merge,
+projects lifecycle, directory writes), ledger-api period approve + Odoo
+export, mail-worker Graph ingestion + routing ladder + pending/SLA
+schedulers, Entra OIDC sessions, then pointing the prototype frontends at
+the real APIs.

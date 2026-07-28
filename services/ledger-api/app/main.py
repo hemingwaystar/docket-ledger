@@ -1,19 +1,195 @@
-"""ledger-api — Ledger's backend. Scaffold: health + version + DB ping.
-Endpoints land here next, mirroring the prototype's window.LedgerAPI 1:1:
-GET /api/tickets, /api/tickets/{id}, /api/reports/queue, /api/audit,
-plus the full ticket/project/directory surface."""
-from fastapi import FastAPI
-from . import db
+"""ledger-api — Ledger's backend.
 
-app = FastAPI(title="desk-api", root_path="/ledger")
+Read surface mirrors the prototype's window.LedgerAPI, priced by the ONE
+SQL pricing ladder (ledger.priced) so nothing here can disagree with exports:
+  GET /api/entries?client=&status=    status: pending|submitted|approved|locked|void
+  GET /api/reports/utilization        per-tech billable/total/% vs the 75% target
+  GET /api/periods?client=            period cards incl. project flat fees
+
+Write paths (timesheet chain — DB triggers enforce the freeze):
+  POST /api/entries/{id}/submit
+  POST /api/timesheets/approve        {tech_email, client, period_key}
+"""
+from fastapi import FastAPI, HTTPException, Request
+from psycopg.rows import dict_row
+from pydantic import BaseModel
+from . import auth, db
+
+app = FastAPI(title="ledger-api", root_path="/ledger")
+
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
+
 @app.get("/readyz")
 def readyz():
     with db.connect("system") as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM ledger.activity_types")
-        (states,) = cur.fetchone()
-    return {"ok": True, "activity_types": states}
+        (types,) = cur.fetchone()
+    return {"ok": True, "activity_types": types}
+
+
+ENTRY_SELECT = """
+  SELECT e.id, e.ticket_id, e.task_id, c.name AS client, a.name AS technician,
+         at.name AS activity_type, e.started_at, e.ended_at, e.hours, e.note,
+         bp.period_key, bp.status AS period_status,
+         p.rate_cents, p.amount_cents, p.billable, p.covered_by_project_flat,
+         CASE WHEN e.status = 'void' THEN 'void'
+              WHEN bp.status <> 'open' THEN 'locked'
+              WHEN e.ts_approved_at IS NOT NULL THEN 'approved'
+              WHEN e.submitted_at IS NOT NULL THEN 'submitted'
+              ELSE 'pending' END AS status,
+         e.return_reason, e.version
+    FROM ledger.time_entries e
+    CROSS JOIN LATERAL ledger.priced(e) AS p
+    JOIN shared.clients c ON c.id = e.client_id
+    JOIN shared.agents a  ON a.id = e.tech_id
+    JOIN ledger.activity_types at ON at.id = e.activity_type_id
+    LEFT JOIN ledger.billing_periods bp ON bp.id = e.period_id
+"""
+
+
+@app.get("/api/entries")
+def list_entries(request: Request, client: str | None = None, status: str | None = None,
+                 limit: int = 200):
+    with db.connect() as conn:
+        auth.require(conn, request)
+        sql, args = ENTRY_SELECT, []
+        where = []
+        if client:
+            where.append("(c.name = %s OR c.id::text = %s)")
+            args += [client, client]
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY e.started_at DESC LIMIT %s"
+        args.append(min(limit, 1000))
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, args)
+            rows = cur.fetchall()
+        if status:
+            rows = [r for r in rows if r["status"] == status]
+        return {"entries": rows}
+
+
+@app.get("/api/reports/utilization")
+def utilization(request: Request, target: float = 0.75):
+    with db.connect() as conn:
+        auth.require(conn, request)
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT a.name AS technician,
+                       round(sum(e.hours) FILTER (WHERE p.billable), 2) AS billable_hours,
+                       round(sum(e.hours), 2) AS total_hours
+                  FROM ledger.time_entries e
+                  CROSS JOIN LATERAL ledger.priced(e) AS p
+                  JOIN shared.agents a ON a.id = e.tech_id
+                 WHERE e.status <> 'void'
+                 GROUP BY a.name ORDER BY a.name""")
+            rows = cur.fetchall()
+        for r in rows:
+            bill = float(r["billable_hours"] or 0)
+            tot = float(r["total_hours"] or 0)
+            r["utilization"] = round(bill / tot, 3) if tot else 0.0
+            r["target"] = target
+        return {"technicians": rows}
+
+
+@app.get("/api/periods")
+def list_periods(request: Request, client: str | None = None):
+    with db.connect() as conn:
+        auth.require(conn, request)
+        sql = """
+          SELECT bp.id, c.name AS client, bp.period_key, bp.status,
+                 bp.approved_at, bp.exported_at, bp.export_ref,
+                 count(e.id) FILTER (WHERE e.status <> 'void') AS entries,
+                 round(COALESCE(sum(e.hours) FILTER (WHERE e.status <> 'void'), 0), 2) AS hours,
+                 COALESCE(sum(p.amount_cents) FILTER (WHERE e.status <> 'void'), 0) AS hourly_amount_cents,
+                 COALESCE((SELECT sum(fl.amount_cents) FROM ledger.project_flat_lines fl
+                            WHERE fl.client_id = bp.client_id
+                              AND ledger.period_key_for(bp.client_id, fl.approved_at) = bp.period_key), 0)
+                   AS project_flat_cents
+            FROM ledger.billing_periods bp
+            JOIN shared.clients c ON c.id = bp.client_id
+            LEFT JOIN ledger.time_entries e ON e.period_id = bp.id
+            LEFT JOIN LATERAL ledger.priced(e) AS p ON TRUE
+        """
+        args = []
+        if client:
+            sql += " WHERE (c.name = %s OR c.id::text = %s)"
+            args += [client, client]
+        sql += " GROUP BY bp.id, c.name ORDER BY bp.period_key DESC, c.name"
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, args)
+            return {"periods": cur.fetchall()}
+
+
+@app.post("/api/entries/{entry_id}/submit")
+def submit_entry(entry_id: str, request: Request):
+    with db.connect() as conn:
+        auth.require(conn, request)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE ledger.time_entries
+                   SET submitted_at = now(),
+                       returned_at = NULL, returned_by = NULL, return_reason = NULL
+                 WHERE id = %s AND status = 'pending' AND submitted_at IS NULL
+                   AND activity_type_id <> (SELECT id FROM ledger.activity_types WHERE is_sentinel)
+                RETURNING id""", (entry_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(409, "Entry missing, already submitted, voided, or unclassified")
+        auth.audit(conn, "ledger", "Submitted for review", f"entry:{entry_id}", "via API")
+        return {"ok": True}
+
+
+class ApproveSheet(BaseModel):
+    tech_email: str
+    client: str            # name or uuid
+    period_key: str        # '2026-07' / '2026-W31'
+
+
+@app.post("/api/timesheets/approve")
+def approve_timesheet(body: ApproveSheet, request: Request):
+    """Approve one (tech, client, period) timesheet — the manager sign-off.
+    Requires every live entry in the bundle submitted; freezes them (trigger-
+    enforced) pending the period lock."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM shared.agents WHERE lower(email) = lower(%s)",
+                        (body.tech_email,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown technician")
+            tech_id = row[0]
+            cur.execute("SELECT id FROM shared.clients WHERE name = %s OR id::text = %s",
+                        (body.client, body.client))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(422, "Unknown client")
+            client_id = row[0]
+            cur.execute("""
+                SELECT count(*) FILTER (WHERE e.submitted_at IS NULL)
+                  FROM ledger.time_entries e
+                  JOIN ledger.billing_periods bp ON bp.id = e.period_id
+                 WHERE e.tech_id = %s AND e.client_id = %s
+                   AND bp.period_key = %s AND e.status <> 'void'""",
+                (tech_id, client_id, body.period_key))
+            (unsubmitted,) = cur.fetchone()
+            if unsubmitted:
+                raise HTTPException(409, f"{unsubmitted} entries not yet submitted")
+            cur.execute("""
+                UPDATE ledger.time_entries e
+                   SET ts_approved_at = now()
+                  FROM ledger.billing_periods bp
+                 WHERE bp.id = e.period_id
+                   AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
+                   AND e.status <> 'void' AND e.ts_approved_at IS NULL
+                RETURNING e.id""",
+                (tech_id, client_id, body.period_key))
+            n = len(cur.fetchall())
+        auth.audit(conn, "ledger", "Timesheet approved",
+                   f"timesheet:{tech_id}|{client_id}|{body.period_key}",
+                   f"{n} entries approved via API ({who['label']})")
+        return {"approved_entries": n}

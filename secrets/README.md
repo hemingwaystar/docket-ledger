@@ -11,10 +11,9 @@ this directory is gitignored except for this README):
 
 Generate them:
 
-    for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password; do
+    for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password kek; do
       openssl rand -base64 32 | tr -d '\n' > "$f"; chmod 600 "$f"
     done
-    openssl rand -base64 32 | tr -d '\n' > kek; chmod 600 kek
 
 ## Why a file-mounted KEK
 

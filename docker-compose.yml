@@ -125,7 +125,7 @@ secrets:
   pg_superuser_password:  { file: ./secrets/pg_superuser_password }
   pg_desk_api_password:   { file: ./secrets/pg_desk_api_password }
   pg_ledger_api_password: { file: ./secrets/pg_ledger_api_password }
-  pg_mail_worker_password:{ file: ./secrets/pg_mail_worker_password }
+  pg_mail_worker_password: { file: ./secrets/pg_mail_worker_password }
   kek:                    { file: ./secrets/kek }
 
 networks:
