@@ -43,7 +43,7 @@ f.addEventListener('submit',async ev=>{
   const body={email:f.email.value.trim(),password:f.pw.value};
   const code=f.totp.value.trim();if(code)body.totp_code=code;
   try{
-    const r=await fetch('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
       credentials:'same-origin',body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
     if(r.ok){location.href=d.must_change_password?'index.html#change-password':'index.html';return}

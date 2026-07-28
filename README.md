@@ -114,7 +114,28 @@ sudo docker compose exec desk-api python -m app.bootstrap you@yourdomain.com "Yo
 NOTE: the session cookie ships with secure=False so it works pre-TLS; flip it
 in app/sessions.py when the nginx HTTPS front goes live.
 
-Next: settings/secrets endpoints (Graph + Entra consent, verification config),
-Graph ingestion itself (subscription renew + delta poll over the ladder),
-Entra OIDC as the second sign-in path, SLA escalation fan-out, then converting
-the remaining prototype views onto the live UI.
+Settings + Graph ingestion (this drop): /api/settings — app_config CRUD,
+WRITE-ONLY secrets api (envelope-encrypted under the KEK; metadata out,
+plaintext never), mailbox management, and POST /api/settings/graph/test which
+acquires a real client-credentials token and flips graph.connected. The
+mail-worker then delta-polls every unpaused mailbox each pass: Message-ID
+idempotent, Auto-Submitted mail never changes state, [#100123]/In-Reply-To
+threading with reopen-on-followup (locked projects excepted), and the full
+routing ladder (contact → domain auto-contact → sentinel + 'unrouted').
+Plus: change-password screen in the UI and no-cache headers on /ui.
+
+Connecting mail (one-time, in Entra admin center):
+  App registrations → New → single tenant → API permissions → Microsoft Graph
+  → Application permissions → Mail.Read (Mail.Send for the coming reply-out
+  build) → Grant admin consent → Certificates & secrets → new client secret.
+  Then: PUT /api/settings/config/graph {"value": {"tenant": "<tenant-id>",
+  "client_id": "<app-id>", "connected": false}} · PUT
+  /api/settings/secrets/graph {"value": "<client-secret>"} · POST
+  /api/settings/mailboxes {"address": "support@…", "group": "Service Desk"} ·
+  POST /api/settings/graph/test. Restrict the app to the support mailboxes
+  with an Exchange application access policy (New-ApplicationAccessPolicy)
+  — least privilege for mail, matching everything else here.
+
+Next: reply-out via Graph (send from the group mailbox, loop guards),
+Entra OIDC as the second sign-in path, SLA escalation fan-out, automations
+engine, then converting the remaining prototype views onto the live UI.

@@ -6,10 +6,11 @@ Auth: Bearer PAT (auth.py). Invariants live in the DB; routers stay thin."""
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from . import db, sessions, tickets, directory, projects
+from . import db, sessions, settings, tickets, directory, projects
 
-app = FastAPI(title="desk-api", root_path="/desk")
+app = FastAPI(title="desk-api")
 app.include_router(sessions.router)
+app.include_router(settings.router)
 app.include_router(tickets.router)
 app.include_router(directory.router)
 app.include_router(projects.router)
@@ -32,4 +33,12 @@ def readyz():
 def root():
     return RedirectResponse("/ui/login.html")
 
-app.mount("/ui", StaticFiles(directory="webui", html=True), name="ui")
+class NoCacheStatic(StaticFiles):
+    """UI fixes must land on refresh — never let the browser cache stale JS."""
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/ui", NoCacheStatic(directory="webui", html=True), name="ui")

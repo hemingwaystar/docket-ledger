@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel
 from . import auth, db
 
-app = FastAPI(title="ledger-api", root_path="/ledger")
+app = FastAPI(title="ledger-api")
 
 
 @app.get("/healthz")

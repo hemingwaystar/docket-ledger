@@ -59,6 +59,17 @@ select,input[type=datetime-local]{padding:7px 9px;border:1px solid var(--line);b
   <div class="who"><b id="meName">…</b><span id="meMail"></span><br><a id="logout">Sign out</a></div>
 </aside>
 <main>
+  <div id="pwCard" style="display:none;max-width:420px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:18px">
+    <h1 style="font-size:16px">Change your password</h1>
+    <div class="sub">Your password was admin-issued — set your own to continue.</div>
+    <label style="font-size:12.5px;font-weight:600;color:var(--mut)">Current password</label>
+    <input type="password" id="pwCur" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;margin:4px 0 10px;font:inherit">
+    <label style="font-size:12.5px;font-weight:600;color:var(--mut)">New password (12+ characters)</label>
+    <input type="password" id="pwNew" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;margin:4px 0 10px;font:inherit">
+    <label style="font-size:12.5px;font-weight:600;color:var(--mut)">Confirm new password</label>
+    <input type="password" id="pwNew2" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;margin:4px 0 12px;font:inherit">
+    <button class="btn" id="pwGo">Change password</button><span class="msg" id="pwMsg"></span>
+  </div>
   <div id="queue">
     <h1>Queue</h1><div class="sub" id="qsub">Live from desk-api</div>
     <div class="toolbar" id="filters"></div>
@@ -72,10 +83,25 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 let ME=null,FILTER='open';
 
 async function boot(){
-  ME=await api('auth/me');
+  ME=await api('/auth/me');
   document.getElementById('meName').textContent=ME.name;
   document.getElementById('meMail').textContent=ME.email;
-  document.getElementById('logout').onclick=async()=>{await fetch('auth/logout',{method:'POST',credentials:'same-origin'});location.href='login.html'};
+  document.getElementById('logout').onclick=async()=>{await fetch('/auth/logout',{method:'POST',credentials:'same-origin'});location.href='login.html'};
+  if(ME.must_change_password||location.hash==='#change-password'){
+    document.getElementById('pwCard').style.display='block';
+    document.getElementById('pwGo').onclick=async()=>{
+      const m=document.getElementById('pwMsg');m.textContent='';m.className='msg';
+      const cur=document.getElementById('pwCur').value,nw=document.getElementById('pwNew').value;
+      if(nw!==document.getElementById('pwNew2').value){m.textContent='New passwords differ';m.className='msg bad';return}
+      const r=await fetch('/auth/change-password',{method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({current_password:cur,new_password:nw})});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok){m.textContent='Changed ✓';m.className='msg ok';
+        setTimeout(()=>{location.hash='';document.getElementById('pwCard').style.display='none'},700)}
+      else{m.textContent=d.detail||'Failed';m.className='msg bad'}
+    };
+  }
   renderFilters();loadQueue();
 }
 function renderFilters(){
@@ -86,7 +112,7 @@ function renderFilters(){
 }
 async function loadQueue(){
   const q=FILTER==='all'?'':'?state='+FILTER;
-  const d=await api('api/tickets'+q);
+  const d=await api('/api/tickets'+q);
   const rows=d.tickets||[];
   document.getElementById('qsub').textContent=rows.length+' tickets · live from desk-api';
   document.getElementById('qwrap').innerHTML=rows.length?
@@ -99,7 +125,7 @@ async function loadQueue(){
   document.querySelectorAll('tbody tr').forEach(tr=>tr.onclick=()=>openTicket(tr.dataset.id));
 }
 async function openTicket(id){
-  const t=await api('api/tickets/'+id);
+  const t=await api('/api/tickets/'+id);
   document.getElementById('queue').style.display='none';
   const v=document.getElementById('view');v.style.display='block';
   v.innerHTML=`<span class="back" id="back">← Queue</span>
@@ -134,7 +160,7 @@ async function openTicket(id){
       payload.time={started_at:new Date(document.getElementById('cStart').value).toISOString(),
         ended_at:new Date(document.getElementById('cEnd').value).toISOString(),
         activity_type:document.getElementById('cType').value,technician_email:ME.email};
-    const r=await fetch('api/tickets/'+id+'/articles',{method:'POST',credentials:'same-origin',
+    const r=await fetch('/api/tickets/'+id+'/articles',{method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json().catch(()=>({}));
     if(r.ok){msg.textContent=d.time_entry_id?'Noted + time → Ledger':'Noted';msg.className='msg ok';openTicket(id)}
