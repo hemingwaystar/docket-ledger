@@ -4256,6 +4256,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       GROUPS.forEach(g=>{ const m=MAILBOXES.find(x=>x.groupId===g.id)||MAILBOXES[0];
         if(m) GROUP_SENDAS[g.id]=m.id; });
     }
+    try{
     RULES.length=0; TRIGGERS.length=0;   /* server automations engine is a coming build */
     d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });
     AGENTS.forEach(a=>{ AGENT_SIGS[a.id]=a.name+(a.role?' \u00b7 '+a.role:''); });
@@ -4275,6 +4276,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       if(SECRETS.twilioKey!==undefined) put('twilioKey','twilio','Twilio auth token');
     }
     if(d.graph&&d.graph.tenant){ GRAPH_AUTH.tenant=d.graph.tenant; AUTH_CFG.tenant=AUTH_CFG.tenant||d.graph.tenant; }
+    }catch(err){ console.error('cosmetic hydration failed (core data is live):', err); }
     if(d.roles){
       state.roleDefs.length=0;
       d.roles.forEach(r=>state.roleDefs.push({name:r.name,note:r.note||'',
@@ -4292,6 +4294,13 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
   async function hydrate(keepView){
     const r=await $fetch('/api/bootstrap');
     if(r.status===401){ location.href='login.html'; return; }
+    if(!r.ok){
+      const d=await r.json().catch(()=>({}));
+      document.title='⚠ LIVE SYNC FAILED — Docket';
+      console.error('bootstrap failed', r.status, d);
+      alert('Live sync failed ('+r.status+'): '+(d.detail||'server error')+'\nShowing stale/demo data — check desk-api logs.');
+      return;
+    }
     const d=await r.json();
     const keep={view:state.view,ticketId:state.ticketId,clientId:state.clientId,
                 qf:state.qf,searchQ:state.searchQ,overview:state.overview};

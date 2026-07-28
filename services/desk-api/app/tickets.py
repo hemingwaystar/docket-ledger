@@ -131,6 +131,7 @@ def bootstrap(request: Request, limit: int = 500):
         who = auth.require(conn, request)
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
+        ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
         out = {"me": {"id": str(who["agent_id"]), "name": who["name"],
                       "email": who["email"], "perms": sorted(who["perms"]),
                       "initials": "".join(w[0] for w in who["name"].split()[:2]).upper()}}
@@ -226,7 +227,6 @@ def bootstrap(request: Request, limit: int = 500):
                              JOIN desk.priorities p ON p.id = t.priority_id
                             ORDER BY t.updated_at DESC LIMIT %s""", (limit,))
             tickets = {}
-            ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
             for r in cur.fetchall():
                 tickets[r["id"]] = {
                     "id": r["id"], "title": r["title"],
