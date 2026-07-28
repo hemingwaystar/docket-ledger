@@ -171,6 +171,24 @@ def bootstrap(request: Request, limit: int = 500):
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
                                                r["label"].lower().replace(" ", "-")),
                               "label": r["label"], "type": r["kind"]} for r in cur.fetchall()]
+            cur.execute("""SELECT key, value, updated_at, updated_by FROM shared.app_config
+                            WHERE key IN ('graph','auth')""")
+            cfgs = {r["key"]: r for r in cur.fetchall()}
+            g = cfgs.get("graph", {"value": {}, "updated_at": None, "updated_by": ""})
+            gv = g["value"] if isinstance(g["value"], dict) else {}
+            out["graph"] = {"tenant": gv.get("tenant", ""), "clientId": gv.get("client_id", ""),
+                            "connected": bool(gv.get("connected")),
+                            "at": ms(g.get("updated_at")), "by": g.get("updated_by") or ""}
+            a = cfgs.get("auth", {"value": {}})
+            av = a["value"] if isinstance(a["value"], dict) else {}
+            out["authCfg"] = {"ssoConnected": bool(av.get("sso_enabled")),
+                              "tenant": av.get("tenant", ""),
+                              "localPasswords": bool(av.get("local_passwords", True)),
+                              "roleMapping": bool(av.get("role_mapping")),
+                              "mfa": av.get("mfa", "optional")}
+            cur.execute("SELECT name, rotated_at, rotated_by FROM shared.secrets")
+            out["secretMeta"] = {r["name"]: {"at": ms(r["rotated_at"]),
+                                             "by": r["rotated_by"]} for r in cur.fetchall()}
             cur.execute("SELECT value FROM shared.app_config WHERE key = 'mail'")
             row = cur.fetchone()
             mail_cfg = row["value"] if row else {}

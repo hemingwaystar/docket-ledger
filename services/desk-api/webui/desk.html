@@ -2978,7 +2978,6 @@ function viewAutomations(){
           ${i<RULES.length-1?`<button class="rowbtn" onclick="moveRule('${r.id}',1)" title="run later">↓</button>`:''}</td>
       </tr>`).join('')}</tbody>
     </table>
-    <div class="mini muted" style="padding:10px 16px 12px">Try it: the demo-pill's <b>+ incoming email</b> runs rules first, then triggers — the first click is an RMM alert that lands in <b>noc@</b>, gets boarded, escalated and tagged, and its tag then blocks the auto-reply trigger below. Every ⚙ and ⚡ step shows in the thread.</div>
   </div>
   <div class="section-gap"></div>
   <div class="card">
@@ -4257,8 +4256,25 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       GROUPS.forEach(g=>{ const m=MAILBOXES.find(x=>x.groupId===g.id)||MAILBOXES[0];
         if(m) GROUP_SENDAS[g.id]=m.id; });
     }
-    RULES.forEach(r=>{ if(r.act&&r.act.groupId&&!GROUPS.some(g=>g.id===r.act.groupId))
-      r.act.groupId=(GROUPS[0]||{}).id; });
+    RULES.length=0; TRIGGERS.length=0;   /* server automations engine is a coming build */
+    d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });
+    AGENTS.forEach(a=>{ AGENT_SIGS[a.id]=a.name+(a.role?' \u00b7 '+a.role:''); });
+    if(d.graph){
+      GRAPH_AUTH.connected=d.graph.connected;
+      GRAPH_AUTH.clientId=d.graph.clientId||'\u2014';
+      GRAPH_AUTH.consentedAt=d.graph.at||null;
+      GRAPH_AUTH.consentedBy=d.graph.by||'\u2014';
+    }
+    if(d.authCfg) Object.assign(AUTH_CFG, d.authCfg);
+    if(d.secretMeta){
+      const put=(slot,name,label)=>{ const m=d.secretMeta[name];
+        SECRETS[slot]= m? {set:true, at:m.at, by:m.by, label} : {set:false, at:null, by:'', label}; };
+      put('graphSecret','graph','Graph app client secret');
+      put('entraSecret','entra_oidc','Entra OIDC client secret');
+      put('voipKey','voipms','voip.ms API password');
+      if(SECRETS.twilioKey!==undefined) put('twilioKey','twilio','Twilio auth token');
+    }
+    if(d.graph&&d.graph.tenant){ GRAPH_AUTH.tenant=d.graph.tenant; AUTH_CFG.tenant=AUTH_CFG.tenant||d.graph.tenant; }
     if(d.roles){
       state.roleDefs.length=0;
       d.roles.forEach(r=>state.roleDefs.push({name:r.name,note:r.note||'',
