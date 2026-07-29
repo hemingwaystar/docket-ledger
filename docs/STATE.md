@@ -48,7 +48,11 @@ vanishing on the next hydrate; extended modal fields now round-trip via the
 0010 `profile` jsonb; new `PATCH /api/contacts/{id}`); **every client picker
 is now the searchable `combo()`** — Docket queue/report filters, ticket props,
 unrouted banner, new-project modal, plus the component ported into Ledger for
-its timesheet/approvals/reports filters and the entry modal.
+its timesheet/approvals/reports filters and the entry modal; **primary-contact
+picker on the ticket** (props panel, under Client) — sets `contact_id` via
+`PATCH /api/tickets/{id}` (`contact` accepts uuid/email, `""` clears), which
+is the person caller-verification targets and the address the reply ladder
+resolves to (explicit override → ticket contact → last inbound sender).
 
 ---
 
@@ -176,6 +180,10 @@ places.
 - [ ] Client pickers everywhere are type-to-search combos (queue + report
       filters, ticket props, unrouted banner, project modal; Ledger filters
       + entry modal)
+- [ ] Primary contact: picker under Client lists that client's people; change
+      it → sys article, audit line, and the composer's reply-to follows;
+      "— none —" clears; after a client move the picker offers the new
+      client's contacts
 - [ ] Client move: props-panel picker re-homes a ticket; unrouted Move claims
       the sender as a contact; open entries follow, approved/locked stay; sys
       article + audit line appear; `unrouted` tag drops

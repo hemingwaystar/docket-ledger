@@ -2185,6 +2185,13 @@ function renderProps(t){
         ${can('edit_props')&&!lk? combo('cliMove-'+t.id, CLIENTS.filter(c=>(!c.sentinel && !(c.archived||c.status==='archived')) || t.clientId===c.id).map(c=>({v:c.id,label:c.name+(c.sentinel?' (intake)':''),sub:c.domain||''})), t.clientId, function(){ const v=document.getElementById('cliMove-'+t.id).value; if(v && v!==t.clientId) reclientTicket(t.id, v); }, 'Search clients\u2026')
           : `<div class="v mini">${esc(client(t.clientId).name)}</div>`}
         <div class="mini muted" style="margin-top:4px">Moving re-homes the ticket \u2014 open Ledger entries follow; approved/locked billing stays put</div></div>
+      <div class="prop"><div class="pk">Primary contact</div>
+        ${can('edit_props')&&!lk? combo('tkContact-'+t.id,
+            [{v:'',label:'\u2014 none \u2014'},
+             ...((client(t.clientId)||{contacts:[]}).contacts||[]).filter(p=>p.active!==false||p.id===t.contactId).map(p=>({v:p.id,label:p.name,sub:p.email}))],
+            t.contactId||'', function(){ setPrimaryContact(t.id, document.getElementById('tkContact-'+t.id).value); }, 'Search contacts\u2026')
+          : `<div class="v mini">${(contact(t.contactId)||{}).name?esc(contact(t.contactId).name):'\u2014'}</div>`}
+        <div class="mini muted" style="margin-top:4px">Caller verification and outgoing replies address this person</div></div>
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
         <input type="datetime-local" value="${t.pendingUntil? new Date(t.pendingUntil).toISOString().slice(0,16):''}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
         <div class="mini muted" style="margin-top:4px">${t.pendingUntil? 'reopens '+fmtDT(t.pendingUntil) : 'no timer \u2014 stays paused until touched'}</div></div>`:''}
@@ -4160,6 +4167,20 @@ function reclientTicket(tid, targetId){
   toast(`#${tid} now belongs to ${target.name} \u2014 Ledger entries follow.`);
   render();
 }
+/* the person verification targets and replies address — the ticket's contact */
+function setPrimaryContact(tid, pid){
+  const t = tk(tid);
+  if(!t || !can('edit_props') || projLocked(t)) return;
+  const norm = v => v || null;
+  if(norm(pid) === norm(t.contactId)) return;
+  const p = pid ? contact(pid) : null;
+  if(pid && !p) return;
+  t.contactId = pid || null;
+  t.articles.push(art('sys', me(), nowMs(), p? `Primary contact set to ${p.name} \u2014 verification and replies now address them` : 'Primary contact cleared'));
+  t.updatedAt = nowMs();
+  log('Primary contact changed', `#${tid} \u2192 ${p?p.name:'\u2014'}`);
+  render();
+}
 function demoIncomingEmail(){
   const d = DEMO_MAILS[demoMailIx++ % DEMO_MAILS.length];
   const mb = MAILBOXES.find(m=>m.addr===d.to && m.status==='connected') || MAILBOXES[0];
@@ -4419,6 +4440,19 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
         hydrate(); });
   };
   function tkc(id){ return CLIENTS.find(c=>c.id===id); }
+
+  /* ---- primary contact ---- */
+  const _setPrimaryContact=window.setPrimaryContact;
+  window.setPrimaryContact=function(tid,pid){
+    const t=tk(tid), was=t?(t.contactId||null):null;
+    _setPrimaryContact(tid,pid);
+    if(!t||(t.contactId||null)===was) return;      // guard refused locally
+    $fetch('/api/tickets/'+tid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contact:pid||'',version:t.version})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
 
   /* ---- client / organization move ---- */
   const _reclient=window.reclientTicket;

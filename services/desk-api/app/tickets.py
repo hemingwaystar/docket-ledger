@@ -373,6 +373,7 @@ class PatchTicket(BaseModel):
     version: int                       # optimistic lock — from your last read
     title: str | None = None
     state: str | None = None
+    contact: str | None = None         # contact uuid or email; "" clears
     priority: str | None = None
     owner_email: str | None = None     # "" clears the owner
     group: str | None = None
@@ -396,6 +397,13 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
             if body.priority is not None:
                 sets.append("priority_id = %s"); args.append(helpers.priority_id(cur, body.priority))
                 notes.append(f"priority → {body.priority}")
+            if body.contact is not None:
+                if body.contact == "":
+                    sets.append("contact_id = NULL"); notes.append("contact cleared")
+                else:
+                    pid, pname = helpers.contact(cur, body.contact)
+                    sets.append("contact_id = %s"); args.append(pid)
+                    notes.append(f"contact → {pname}")
             if body.owner_email is not None:
                 if body.owner_email == "":
                     sets.append("owner_id = NULL"); notes.append("owner cleared")

@@ -26,6 +26,13 @@ def agent(cur, email):
                (email,), "Unknown agent")
 
 
+def contact(cur, handle):
+    """Contact by uuid or email — for setting a ticket's primary contact."""
+    return one(cur, """SELECT id, name FROM shared.contacts
+                        WHERE id::text = %s OR lower(email) = lower(%s)""",
+               (handle, handle), "Unknown contact")
+
+
 def state_id(cur, label):
     return one(cur, "SELECT id FROM desk.ticket_states WHERE lower(label) = lower(%s) AND active",
                (label,), "Unknown state")[0]
