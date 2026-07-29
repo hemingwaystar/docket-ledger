@@ -2189,7 +2189,7 @@ function renderProps(t){
         ${can('edit_props')&&!lk? combo('tkContact-'+t.id,
             [{v:'',label:'\u2014 none \u2014'},
              ...((client(t.clientId)||{contacts:[]}).contacts||[]).filter(p=>p.active!==false||p.id===t.contactId).map(p=>({v:p.id,label:p.name,sub:p.email}))],
-            t.contactId||'', function(){ setPrimaryContact(t.id, document.getElementById('tkContact-'+t.id).value); }, 'Search contacts\u2026')
+            t.contactId||null, function(){ setPrimaryContact(t.id, document.getElementById('tkContact-'+t.id).value); }, 'Search contacts\u2026')
           : `<div class="v mini">${(contact(t.contactId)||{}).name?esc(contact(t.contactId).name):'\u2014'}</div>`}
         <div class="mini muted" style="margin-top:4px">Caller verification and outgoing replies address this person</div></div>
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
@@ -3848,7 +3848,7 @@ function combo(id, opts, val, onpick, placeholder){
   </div>`;
 }
 function comboData(id){ return (_combos[id]||{}).opts || []; }
-function comboOpen(id){ comboFilter(id); }
+function comboOpen(id){ const q=document.getElementById(id+'-q'); if(q) q.select(); comboFilter(id); }
 function comboFilter(id){
   const q = document.getElementById(id+'-q').value.trim().toLowerCase();
   const opts = comboData(id).filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q));

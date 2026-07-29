@@ -173,7 +173,9 @@ resolves to (explicit override → ticket contact → last inbound sender).
 | 16 | (latent, caught in review) tag removal would 500 | tags endpoint DELETEs from desk.ticket_tags but the grant was never made | 0009 grants DELETE on ticket_tags (2nd documented exception after sessions) | Grep every DML verb in the code against the grants list — least-privilege finds these in prod otherwise |
 | 17 | org "Edit details" → "Live sync failed: unknown" | patch_client rewrites shared.client_domains via DELETE — never granted; a FULL code-vs-grants audit then found 3 more: agent_groups DELETE (agent group edits), project_tasks DELETE (checklist task removal), and mail_worker INSERT on shared.contacts (domain-match auto-contact would have failed on the first real unknown-sender email) | 0011 grants all four, each documented | Bug #16's lesson executed: audited every INSERT/UPDATE/DELETE in all 3 services against grants — the class is now provably empty |
 
-| 18 | (latent, caught in review) any ticket-side time-entry edit would 500 | guard_entry_immutability reads billing_periods as the CALLING role; desk_api has no grants there — 0001's "edits (triggers gate)" UPDATE grant was never exercisable | 0012: guard becomes SECURITY DEFINER w/ pinned search_path (the 0006 treatment); desk endpoints convert guard refusals to 409s | Every cross-schema trigger gets the definer-rights question at creation — grep for the next one before it fires |
+| 19 | (latent, caught in review) any ticket-side time-entry edit would 500 | guard_entry_immutability reads billing_periods as the CALLING role; desk_api has no grants there — 0001's "edits (triggers gate)" UPDATE grant was never exercisable | 0012: guard becomes SECURITY DEFINER w/ pinned search_path (the 0006 treatment); desk endpoints convert guard refusals to 409s | Every cross-schema trigger gets the definer-rights question at creation — grep for the next one before it fires |
+
+| 20 | timesheet edit refused "approved period" while the UI showed nothing approved | the DB was right — the Unassigned-intake 2026-07 period WAS approved during 7/28 API testing; the UI's period-lock registry was never seeded from bootstrap (gap #4), so approved periods rendered open — plus timesheet-flow guard raises surfaced as raw 500 "unknown" | mapIn seeds state.periods from bootstrap (w/ approvedAt/By, exportRef now emitted); guard raises → 409 with the real message in approve/return/revoke + entry PATCH | When the UI and DB disagree, hydrate the UI's belief — a correct refusal with an invisible cause reads as a bug |
 
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
@@ -203,6 +205,10 @@ places.
 - [ ] Projects: create from template → tasks appear; toggle/add/rename/remove
       tasks; set billing; submit → reopen → submit → approve → unlock →
       relock — each step survives refresh; approved = frozen everywhere
+- [ ] Billing Periods page shows the truly-approved period as approved (with
+      who/when); Docket drawer on an entry shows "note #xxxx" only when the
+      entry rides on one; combos select-all on focus; ticket contact picker
+      opens empty (no "— none —" prefill) when unset
 - [ ] Ledger loop: select entries → submit → recall → edit a span →
       reclassify → void; approve timesheet → approve period → export marks
       exported with a server ref
@@ -225,8 +231,8 @@ places.
    Entra CSV contact import mirror, Docket settings pages (mailbox
    add/edit, config flags, canned responses — endpoints exist for
    mailboxes/config)
-4. Ledger: entry submit/recall/void/span-edit + export DONE; remaining:
-   period-lock display registry check, admin/settings pages (client cycle,
+4. Ledger: entry submit/recall/void/span-edit + export DONE; period-lock
+   display registry DONE (seeded from bootstrap); remaining: admin/settings pages (client cycle,
    rates & overrides, access rules, role perms, activity types — NO
    endpoints yet; these are feature builds, not wiring), Ledger
    demo-vestige sweep (Settings texts/secret cards)

@@ -1075,7 +1075,7 @@ function viewTimesheets(){
           ${showMoney?`<div><div class="k">Rate</div><div class="v tape">${p.billable?fmtMoney(p.rate)+'/h':'—'}</div></div>`:''}
           <div><div class="k">Start</div><div class="v tape">${fmtStamp(e.startedAt)}</div></div>
           <div><div class="k">End</div><div class="v tape">${fmtStamp(e.endedAt)}</div></div>
-          <div><div class="k">Docket</div><div class="v tape">entry #${e.zEntryId} · art #${e.zArticleId}</div>
+          <div><div class="k">Docket</div><div class="v tape">entry #${e.zEntryId}${e.zArticleId?` · note #${e.zArticleId}`:''}</div>
             <button class="btn sm ghost" style="margin-top:6px" onclick="openInDocket(${e.zTicket})">Open ticket #${e.zTicket} in Docket ↗</button></div>
           <div><div class="k">Submitted</div><div class="v">${e.submitted?fmtStamp(e.submittedAt||e.createdAt):'<span class="muted">not yet</span>'}</div></div>
           <div><div class="k">Timesheet approval</div><div class="v">${e.tsApproved?fmtStamp(e.tsApprovedAt)+(e.tsApprovedBy?' · '+esc(e.tsApprovedBy):''):'<span class="muted">not yet</span>'}</div></div>
@@ -2188,7 +2188,7 @@ function combo(id, opts, val, onpick, placeholder){
   </div>`;
 }
 function comboData(id){ return (_combos[id]||{}).opts || []; }
-function comboOpen(id){ comboFilter(id); }
+function comboOpen(id){ const q=document.getElementById(id+'-q'); if(q) q.select(); comboFilter(id); }
 function comboFilter(id){
   const q = document.getElementById(id+'-q').value.trim().toLowerCase();
   const opts = comboData(id).filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q));
@@ -2674,7 +2674,12 @@ window.addEventListener('message', ev=>{
     state.types.length=0;   d.types.forEach(t=>state.types.push(t));
     state.entries.length=0; d.entries.forEach(e=>state.entries.push(e));
     PERIODS=d.periods||[];
-    /* period registry not located — periods read as open */
+    /* seed the period-lock registry from the server — approved/exported
+       periods must LOOK locked, not just refuse edits (gap #4 closed) */
+    Object.keys(state.periods).forEach(k=>delete state.periods[k]);
+    PERIODS.forEach(p=>{ state.periods[p.clientId+'|'+p.key]={
+      status:p.status, approvedAt:p.approvedAt||null, approvedBy:p.approvedBy||null,
+      exportedAt:p.exportedAt||null, exportRef:p.exportRef||null}; });
     if(state.projects!==undefined){
       if(Array.isArray(state.projects)) state.projects.length=0;
       else Object.keys(state.projects).forEach(k=>delete state.projects[k]);

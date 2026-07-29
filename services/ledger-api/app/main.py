@@ -93,13 +93,20 @@ def bootstrap(request: Request, limit: int = 1000):
                              "sentinel": r["is_sentinel"], "active": True, "note": "",
                              "rate": (r["rate"] / 100) if r["rate"] is not None else 0}
                             for r in cur.fetchall()]
-            cur.execute("""SELECT bp.id, bp.client_id, bp.period_key, bp.status, bp.export_ref
-                             FROM ledger.billing_periods bp ORDER BY bp.period_key""")
+            cur.execute("""SELECT bp.id, bp.client_id, bp.period_key, bp.status,
+                                  bp.export_ref, bp.approved_at, bp.exported_at,
+                                  ag.name AS approved_by_name
+                             FROM ledger.billing_periods bp
+                             LEFT JOIN shared.agents ag ON ag.id = bp.approved_by
+                            ORDER BY bp.period_key""")
             out["periods"] = [{"id": str(r["id"]), "clientId": str(r["client_id"]),
                                "key": r["period_key"], "status": r["status"],
-                               "exportRef": r["export_ref"]} for r in cur.fetchall()]
+                               "exportRef": r["export_ref"],
+                               "approvedAt": ms(r["approved_at"]),
+                               "approvedBy": r["approved_by_name"],
+                               "exportedAt": ms(r["exported_at"])} for r in cur.fetchall()]
             cur.execute("""SELECT e.id, e.ticket_id, e.task_id, e.client_id, e.tech_id,
-                                  e.activity_type_id, e.started_at, e.ended_at, e.hours,
+                                  e.activity_type_id, e.article_id, e.started_at, e.ended_at, e.hours,
                                   e.note, e.status, e.void_reason, e.voided_at,
                                   e.submitted_at, e.ts_approved_at, e.ts_approved_by,
                                   e.returned_at, e.returned_by, e.return_reason,
@@ -114,6 +121,7 @@ def bootstrap(request: Request, limit: int = 1000):
                             ORDER BY e.started_at DESC LIMIT %s""", (limit,))
             out["entries"] = [{
                 "id": str(r["id"]), "zEntryId": str(r["id"])[:8],
+                "zArticleId": str(r["article_id"])[:8] if r["article_id"] else None,
                 "zTicket": r["ticket_id"], "ticketTitle": r["ticket_title"] or "",
                 "clientId": str(r["client_id"]), "techId": str(r["tech_id"]),
                 "typeId": str(r["activity_type_id"]), "content": r["note"] or "",
@@ -357,7 +365,8 @@ def return_timesheet(body: ReturnSheet, request: Request):
             if not row:
                 raise HTTPException(422, "Unknown client")
             client_id = row[0]
-            cur.execute("""
+            try:
+                cur.execute("""
                 UPDATE ledger.time_entries e
                    SET submitted_at = NULL,
                        returned_at = now(), return_reason = NULLIF(%s, '')
@@ -367,7 +376,9 @@ def return_timesheet(body: ReturnSheet, request: Request):
                    AND e.status <> 'void'
                    AND e.submitted_at IS NOT NULL AND e.ts_approved_at IS NULL
                 RETURNING e.id""",
-                (body.reason, tech_id, client_id, body.period_key))
+                            (body.reason, tech_id, client_id, body.period_key))
+            except pg_errors.RaiseException as e:
+                raise HTTPException(409, e.diag.message_primary or "Entries are period-locked")
             n = len(cur.fetchall())
             if n == 0:
                 raise HTTPException(409, "Nothing to return on that sheet")
@@ -404,14 +415,17 @@ def revoke_timesheet(body: RevokeSheet, request: Request):
             if not row:
                 raise HTTPException(422, "Unknown client")
             client_id = row[0]
-            cur.execute("""
-                UPDATE ledger.time_entries e
-                   SET ts_approved_at = NULL, ts_approved_by = NULL
-                  FROM ledger.billing_periods bp
-                 WHERE bp.id = e.period_id AND bp.status = 'open'
-                   AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
-                   AND e.ts_approved_at IS NOT NULL
-                RETURNING e.id""", (tech_id, client_id, body.period_key))
+            try:
+                cur.execute("""
+                    UPDATE ledger.time_entries e
+                       SET ts_approved_at = NULL, ts_approved_by = NULL
+                      FROM ledger.billing_periods bp
+                     WHERE bp.id = e.period_id AND bp.status = 'open'
+                       AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
+                       AND e.ts_approved_at IS NOT NULL
+                    RETURNING e.id""", (tech_id, client_id, body.period_key))
+            except pg_errors.RaiseException as e:
+                raise HTTPException(409, e.diag.message_primary or "Entries are period-locked")
             n = len(cur.fetchall())
             if n == 0:
                 raise HTTPException(409, "Nothing approved (or the period is locked)")
@@ -569,15 +583,18 @@ def approve_timesheet(body: ApproveSheet, request: Request):
             (unsubmitted,) = cur.fetchone()
             if unsubmitted:
                 raise HTTPException(409, f"{unsubmitted} entries not yet submitted")
-            cur.execute("""
-                UPDATE ledger.time_entries e
-                   SET ts_approved_at = now()
-                  FROM ledger.billing_periods bp
-                 WHERE bp.id = e.period_id
-                   AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
-                   AND e.status <> 'void' AND e.ts_approved_at IS NULL
-                RETURNING e.id""",
-                (tech_id, client_id, body.period_key))
+            try:
+                cur.execute("""
+                    UPDATE ledger.time_entries e
+                       SET ts_approved_at = now()
+                      FROM ledger.billing_periods bp
+                     WHERE bp.id = e.period_id
+                       AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
+                       AND e.status <> 'void' AND e.ts_approved_at IS NULL
+                    RETURNING e.id""",
+                    (tech_id, client_id, body.period_key))
+            except pg_errors.RaiseException as e:
+                raise HTTPException(409, e.diag.message_primary or "Entries are period-locked")
             n = len(cur.fetchall())
         auth.audit(conn, "ledger", "Timesheet approved",
                    f"timesheet:{tech_id}|{client_id}|{body.period_key}",
