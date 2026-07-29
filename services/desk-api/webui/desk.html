@@ -1187,8 +1187,9 @@ function render(){
   if(bb){ const n = state.notifs.filter(x=>!x.read).length; bb.style.display = n?'inline':'none'; bb.textContent = n; }
   const __ae=window.__fk_ae, __sel=window.__fk_sel;
   if(__ae){ const el=document.getElementById(__ae)||document.querySelector('[data-fkey="'+__ae+'"]');
-    if(el){ el.focus();
-      if(__sel&&el.setSelectionRange){ try{ el.setSelectionRange(__sel[0],__sel[1]); }catch(e){} } } }
+    if(el){ window.__fk_restoring=true; el.focus();
+      if(__sel&&el.setSelectionRange){ try{ el.setSelectionRange(__sel[0],__sel[1]); }catch(e){} }
+      window.__fk_restoring=false; } }
   if(window.__fk_view!==state.view){ window.__fk_view=state.view; window.scrollTo(0,0); }
 }
 
@@ -1457,6 +1458,26 @@ function commitRender(srcEl){
   if(srcEl && document.activeElement===srcEl){ srcEl.addEventListener('blur', ()=>render(), {once:true}); }
   else render();
 }
+
+/* uniform input ergonomics (bug #26 follow-up): clicking a value field
+   selects its current value so typing replaces it, and Enter commits
+   (blurs). The render-restore path sets __fk_restoring so putting the
+   caret back mid-typing never re-selects and eats the digits. Combo
+   search inputs (-q) keep their own behavior. */
+document.addEventListener('focusin',function(e){
+  var el=e.target;
+  if(window.__fk_restoring) return;
+  if(!el||el.tagName!=='INPUT') return;
+  if((el.id||'').slice(-2)==='-q') return;
+  if(el.type==='number'||el.hasAttribute('data-selectall')){ try{ el.select(); }catch(_e){} }
+});
+document.addEventListener('keydown',function(e){
+  var el=e.target;
+  if(e.key!=='Enter'||!el||el.tagName!=='INPUT') return;
+  if((el.id||'').slice(-2)==='-q') return;
+  el.blur();
+});
+
 /* ---- API — a working in-page mock of the future desk-api ---- */
 const API_TOKENS = [ { id:'tk1', label:'reporting-bot', token:'dk_live_7f3a9q2m8x1c', createdAt:Date.now(), lastUsed:null } ];
 let nextTokIx = 2;

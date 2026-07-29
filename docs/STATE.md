@@ -226,10 +226,10 @@ places.
 - [ ] Return a SUBMITTED sheet → entry goes back to the tech (Returned flag +
       reason), server-side, survives refresh — the bug #22 walk
 - [ ] Timesheet rows show the note text as content when the entry rides on one
-- [ ] Type into a rate override, the client-wide default rate, and every
-      search box (queue/timesheets/client/audit, both apps): full numbers and
-      words land, caret stays, page doesn't jump; override PUTs fire once
-      after typing settles (watch network tab)
+- [ ] Value-field feel (both apps): click a rate/number field → current value
+      selects → type replaces it → Enter commits; full numbers and words land
+      in every search box, caret stays, page doesn't jump; override PUTs fire
+      once after typing settles (watch network tab)
 - [ ] Admin layer: change a client's cycle + billable default; toggle a
       type's billable + edit its rate; set/clear a per-client-type override
       (reset = inherit, priced() follows); set access mode + tech/group lists
