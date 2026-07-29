@@ -149,7 +149,8 @@ its timesheet/approvals/reports filters and the entry modal.
 | 13 | all demo data "returned" | new bootstrap code used `ms()` before definition → 500 → **silent** fallback to baked-in constants | define-before-use; **armor**: loud alert + ⚠ title on sync failure; cosmetic overwrites in try/catch | Silent fallback to plausible-looking data is the worst failure mode — make failure unmissable |
 
 | 14 | every ticket "Updated: just now"; SLA clocks skewed | prototypes keep a pinned demo clock (`NOW='2026-07-26'`); live timestamps sat in its future so all "ago" math went negative | `NOW = LIVE_MODE ? new Date() : pinned` in desk.html + ledger.html | Demo affordances must be LIVE_MODE-gated the moment real data arrives — audit constants, not just seed data |
-| 15 | (latent, caught in review) tag removal would 500 | tags endpoint DELETEs from desk.ticket_tags but the grant was never made | 0009 grants DELETE on ticket_tags (2nd documented exception after sessions) | Grep every DML verb in the code against the grants list — least-privilege finds these in prod otherwise |
+| 15 | contact add: "Live sync failed: Not Found" | live-adapter wrap called /api/contacts; the router prefix is /api/directory | corrected both contact URLs | Mirror URLs come from the router prefix, not the entity name — grep the APIRouter(prefix=) before wiring |
+| 16 | (latent, caught in review) tag removal would 500 | tags endpoint DELETEs from desk.ticket_tags but the grant was never made | 0009 grants DELETE on ticket_tags (2nd documented exception after sessions) | Grep every DML verb in the code against the grants list — least-privilege finds these in prod otherwise |
 
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The

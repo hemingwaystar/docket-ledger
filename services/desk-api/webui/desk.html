@@ -4401,7 +4401,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     const p=contactPayload(); const c=tkc(clientId); const before=c?c.contacts.length:0;
     _saveContact(clientId, fromTicket);
     if(!c||c.contacts.length===before) return;     // original refused
-    $fetch('/api/contacts',{method:'POST',headers:{'Content-Type':'application/json'},
+    $fetch('/api/directory/contacts',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(Object.assign({client:clientId}, p))})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
         if(!fromTicket) hydrate(); });             // ticket draft flow hydrates on create
@@ -4412,7 +4412,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     const act=document.getElementById('acActive');
     _saveContactEdit(clientId, pid);
     if(String(pid).length<10) return;              // demo id — nothing server-side to edit
-    $fetch('/api/contacts/'+encodeURIComponent(pid),{method:'PATCH',
+    $fetch('/api/directory/contacts/'+encodeURIComponent(pid),{method:'PATCH',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(Object.assign({active:act?act.checked:true}, p))})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
