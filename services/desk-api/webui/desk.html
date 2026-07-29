@@ -410,7 +410,7 @@ select:disabled{opacity:.55;cursor:not-allowed}
    ========================================================================== */
 
 /* fixed "today" so the demo is stable — same demo clock as Ledger */
-const NOW = new Date('2026-07-26T15:30:00');
+const NOW = window.LIVE_MODE ? new Date() : new Date('2026-07-26T15:30:00'); /* live: real clock; demo: pinned so the seed is stable */
 const BOOT = Date.now();               // real ms at load, for the live timer
 const nowMs = () => NOW.getTime() + (Date.now() - BOOT);
 /* time entries are intervals: date + start + end are the source of truth,
@@ -2182,6 +2182,10 @@ function renderProps(t){
       <div class="prop"><div class="pk">Group</div>
         <select onchange="setProp(${t.id},'groupId',this.value)" ${dis('assign')}>
           ${GROUPS.filter(g=>!isArch(g)||t.groupId===g.id).map(g=>`<option value="${g.id}" ${t.groupId===g.id?'selected':''}>${esc(g.name)}${isArch(g)?' (archived)':''}</option>`).join('')}</select></div>
+      <div class="prop"><div class="pk">Client</div>
+        <select onchange="reclientTicket(${t.id},this.value)" ${dis('edit_props')}>
+          ${CLIENTS.filter(c=>(!c.sentinel && !(c.archived||c.status==='archived')) || t.clientId===c.id).map(c=>`<option value="${c.id}" ${t.clientId===c.id?'selected':''}>${esc(c.name)}${c.sentinel?' (intake)':''}</option>`).join('')}</select>
+        <div class="mini muted" style="margin-top:4px">Moving re-homes the ticket \u2014 open Ledger entries follow; approved/locked billing stays put</div></div>
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
         <input type="datetime-local" value="${t.pendingUntil? new Date(t.pendingUntil).toISOString().slice(0,16):''}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
         <div class="mini muted" style="margin-top:4px">${t.pendingUntil? 'reopens '+fmtDT(t.pendingUntil) : 'no timer \u2014 stays paused until touched'}</div></div>`:''}
@@ -4347,6 +4351,19 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
         .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
     }; };
   wrapTags('addTag'); wrapTags('rmTag');
+
+  /* ---- client / organization move ---- */
+  const _reclient=window.reclientTicket;
+  window.reclientTicket=function(tid,targetId){
+    const t=tk(tid), was=t?t.clientId:null;
+    _reclient(tid,targetId);
+    if(!t||t.clientId===was) return;               // guard refused locally
+    $fetch('/api/tickets/'+tid+'/client',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({client:targetId,version:t.version})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
 
   /* ---- new ticket ---- */
   const _createTicket=window.createTicket;

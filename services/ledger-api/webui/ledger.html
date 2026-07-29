@@ -355,8 +355,8 @@ select:focus,input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--br
    persists to the shared PostgreSQL database Docket writes to — no sync job.
    ========================================================================== */
 
-/* fixed "today" so the demo is stable */
-const NOW = new Date('2026-07-26T15:30:00');
+/* live: real clock; demo: fixed "today" so the seed is stable */
+const NOW = window.LIVE_MODE ? new Date() : new Date('2026-07-26T15:30:00');
 const CURRENCY = '$';
 
 /* ------------------------------ icons ------------------------------ */

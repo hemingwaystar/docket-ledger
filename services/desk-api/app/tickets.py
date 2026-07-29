@@ -416,6 +416,72 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
         return {"ok": True, "changed": notes, "version": updated[0]}
 
 
+class Reclient(BaseModel):
+    client: str            # target client name or uuid
+    version: int
+
+
+@router.post("/tickets/{ticket_id}/client")
+def reclient_ticket(ticket_id: int, body: Reclient, request: Request):
+    """Move a ticket to another client. If it arrived unrouted, the sender's
+    auto-created contact is claimed into the new client; still-open Ledger
+    entries follow (approved/locked billing never moves — 0009 fn filters,
+    and the immutability guard would refuse regardless)."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'edit_props')
+        with conn.cursor() as cur:
+            row = helpers.ticket_or_404(cur, ticket_id)
+            helpers.refuse_if_locked_project(row)
+            new_id = helpers.client_id(cur, body.client)
+            cur.execute("SELECT name, is_sentinel FROM shared.clients WHERE id = %s",
+                        (new_id,))
+            new_name, new_sentinel = cur.fetchone()
+            if new_sentinel:
+                raise HTTPException(422, "Tickets leave Unassigned intake — they don't move into it")
+            old_id = row[1]
+            if new_id == old_id:
+                return {"ok": True, "changed": [], "version": row[3]}
+            cur.execute("""SELECT c.name, c.is_sentinel, t.contact_id
+                             FROM desk.tickets t JOIN shared.clients c ON c.id = t.client_id
+                            WHERE t.id = %s""", (ticket_id,))
+            old_name, old_sentinel, contact_id = cur.fetchone()
+            cur.execute("""UPDATE desk.tickets SET client_id = %s
+                            WHERE id = %s AND version = %s RETURNING version""",
+                        (new_id, ticket_id, body.version))
+            updated = cur.fetchone()
+            if updated is None:
+                raise HTTPException(409, "Version conflict — re-read the ticket and retry")
+            claimed = None
+            if contact_id and old_sentinel:   # claim the sender out of the intake pool
+                cur.execute("""UPDATE shared.contacts SET client_id = %s
+                                WHERE id = %s AND client_id = %s RETURNING name""",
+                            (new_id, contact_id, old_id))
+                r = cur.fetchone()
+                claimed = r[0] if r else None
+            cur.execute("DELETE FROM desk.ticket_tags WHERE ticket_id = %s AND tag = 'unrouted'",
+                        (ticket_id,))
+            cur.execute("SELECT moved, kept FROM ledger.reclient_ticket_entries(%s, %s)",
+                        (ticket_id, new_id))
+            moved, kept = cur.fetchone()
+            bits = [f"Moved to {new_name}"]
+            if claimed:
+                bits.append(f"{claimed} added to their contacts")
+            if moved:
+                bits.append(f"{moved} open time entr{'y follows' if moved == 1 else 'ies follow'}")
+            if kept:
+                bits.append(f"{kept} stay with {old_name} (approved/locked billing)")
+            cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
+                           VALUES (%s, 'sys', %s, %s, %s)""",
+                        (ticket_id, who.get("name") or who.get("label") or "API",
+                         who.get("agent_id"), " · ".join(bits)))
+        auth.audit(conn, "desk", "Ticket moved to client", f"ticket:{ticket_id}",
+                   f"#{ticket_id} · {old_name} → {new_name}"
+                   + (" · sender claimed as contact" if claimed else "")
+                   + (f" · {moved} entries moved, {kept} kept" if (moved or kept) else ""))
+        return {"ok": True, "changed": [f"client → {new_name}"], "version": updated[0]}
+
+
 class Tags(BaseModel):
     add: list[str] = []
     remove: list[str] = []
