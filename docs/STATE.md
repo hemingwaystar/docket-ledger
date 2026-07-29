@@ -27,7 +27,7 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0012 in this
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0013 in this
 bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
 jsonb; DML-grant audit — four grants the code always needed; article↔time
 link + freeze-guard definer rights); login +
@@ -181,6 +181,8 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 21 | "Nothing to return on that sheet" 409 on Return; investigation found period-approve never mirrored + Revoke unwired | the 409 itself was truthful (same stale approved period as #20, invisible on the deployed build); auditing the flow exposed two real gaps: approvePeriod's wrap compared status synchronously but the flip happens in the confirm-modal callback → the mirror never fired (and would have fired on Cancel if unguarded); tsRevoke had no wrap at all | approvePeriod wrap watches for the post-confirm flip (60s window, silent give-up on dismiss); tsRevoke wrapped with change-detection; export mirror gated on approved→exported | Modal-deferred mutations can't be mirrored with synchronous diffs — watch for the state change, and mirror consent, not clicks |
 
+| 22 | Return (and UI approve/revoke) NEVER worked — "Nothing to return" every time; two prior diagnoses blamed secondary state | the prototype prefixes period keys (M2026-07, W2026-07-20) but the server stores to_char formats (2026-07, 2026-W30) — every timesheets/* call matched zero rows by key; the "approved period" in the DB came from direct API calls, never the UI | srvPeriodKey() translates at the mirror boundary for approve/return/revoke; ledger bootstrap also falls back to the linked note's text for blank entry content (0013 grants ledger_api SELECT on desk.articles — caught pre-ship; the DML audit only covered write verbs, so cross-schema SELECT joins are now part of the audit) | When a user says a feature is flatly broken, diff the actual bytes both sides exchange before defending the server — identifier formats are part of the contract |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -213,6 +215,9 @@ places.
       who/when); Docket drawer on an entry shows "note #xxxx" only when the
       entry rides on one; combos select-all on focus; ticket contact picker
       opens empty (no "— none —" prefill) when unset
+- [ ] Return a SUBMITTED sheet → entry goes back to the tech (Returned flag +
+      reason), server-side, survives refresh — the bug #22 walk
+- [ ] Timesheet rows show the note text as content when the entry rides on one
 - [ ] Ledger loop: select entries → submit → recall → edit a span →
       reclassify → void; approve timesheet → Revoke un-approves server-side →
       Return sends back with reason; approve period ONLY after modal confirm

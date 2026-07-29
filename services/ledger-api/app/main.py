@@ -107,7 +107,9 @@ def bootstrap(request: Request, limit: int = 1000):
                                "exportedAt": ms(r["exported_at"])} for r in cur.fetchall()]
             cur.execute("""SELECT e.id, e.ticket_id, e.task_id, e.client_id, e.tech_id,
                                   e.activity_type_id, e.article_id, e.started_at, e.ended_at, e.hours,
-                                  e.note, e.status, e.void_reason, e.voided_at,
+                                  COALESCE(NULLIF(e.note, ''),
+                                           left(ar.body, 140), '') AS note,
+                                  e.status, e.void_reason, e.voided_at,
                                   e.submitted_at, e.ts_approved_at, e.ts_approved_by,
                                   e.returned_at, e.returned_by, e.return_reason,
                                   e.created_at,
@@ -117,6 +119,7 @@ def bootstrap(request: Request, limit: int = 1000):
                              FROM ledger.time_entries e
                              LEFT JOIN desk.tickets tk ON tk.id = e.ticket_id
                              LEFT JOIN desk.project_tasks pt ON pt.id = e.task_id
+                             LEFT JOIN desk.articles ar ON ar.id = e.article_id
                              LEFT JOIN shared.agents ap ON ap.id = e.ts_approved_by
                             ORDER BY e.started_at DESC LIMIT %s""", (limit,))
             out["entries"] = [{
