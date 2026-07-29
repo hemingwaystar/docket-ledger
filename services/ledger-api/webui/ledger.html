@@ -837,6 +837,12 @@ function renderNav(){
 }
 
 function render(){
+  /* focus-preserving render: a rebuild must not eject the person typing
+     (bug #26 — every oninput→render() input lost focus per keystroke, and
+     scrollTo(0,0) flung the page to the top on every keystroke too). */
+  { const ae=document.activeElement;
+    window.__fk_ae=(ae&&ae!==document.body)?(ae.id||ae.getAttribute('data-fkey')||null):null;
+    window.__fk_sel=(ae&&ae.selectionStart!=null&&/^(text|search|number|email|tel|url|password)$/.test(ae.type||''))?[ae.selectionStart,ae.selectionEnd]:(ae&&ae.tagName==='TEXTAREA'?[ae.selectionStart,ae.selectionEnd]:null); }
   if(!canView(state.view)) state.view='dashboard';
   renderNav();
   document.getElementById('pgTitle').textContent=pgTitle();
@@ -846,7 +852,11 @@ function render(){
     dashboard:viewDashboard, timesheets:viewTimesheets, approvals:viewApprovals, clients:viewClients, client:viewClient,
     types:viewTypes, periods:viewPeriods, reports:viewReports, export:viewExport, audit:viewAudit, directory:viewDirectory, settings:viewSettings
   })[state.view]();
-  window.scrollTo(0,0);
+  const __ae=window.__fk_ae, __sel=window.__fk_sel;
+  if(__ae){ const el=document.getElementById(__ae)||document.querySelector('[data-fkey="'+__ae+'"]');
+    if(el){ el.focus();
+      if(__sel&&el.setSelectionRange){ try{ el.setSelectionRange(__sel[0],__sel[1]); }catch(e){} } } }
+  if(window.__fk_view!==state.view){ window.__fk_view=state.view; window.scrollTo(0,0); }
 }
 
 /* helper: chips */
@@ -1003,7 +1013,7 @@ function viewTimesheets(){
       <label class="mini" style="display:flex;align-items:center;gap:6px">to <input type="date" value="${f.to||''}" onchange="setTF('to',this.value)"></label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note, client${admin?', tech':''}…" value="${esc(f.q)}" oninput="setTF('q',this.value)"></div>
+      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note, client${admin?', tech':''}…" value="${esc(f.q)}" data-fkey="tf-q" oninput="setTF('q',this.value)"></div>
       <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('tfClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], f.client, function(){ setTF('client', document.getElementById('tfClient').value); }, 'All clients')}</span>
       ${admin?`<select onchange="setTF('tech',this.value)">${opt('all','All techs',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>`:''}
       ${typeSel}
@@ -1422,7 +1432,7 @@ function viewClient(){
         ? `<div style="display:flex;align-items:center;gap:8px"><button class="toggle ${effBill?'on':''}" onclick="toggleClientTypeBillable('${c.id}','${t.id}')"></button><span class="mini">${effBill?'Billable':'Non-billable'}</span></div>`
         : `<span class="chip ${effBill?'billable':'nonbill'}" style="padding:1px 8px"><span class="cdot"></span>${effBill?'Billable':'Non-billable'}</span>`}</td>
       <td class="num">${!showMoney?'<span class="muted">—</span>':(manage
-        ? `<input type="number" min="0" step="5" value="${effBill?effRate:''}" placeholder="${effBill?(c.rateOverride!=null?c.rateOverride:t.rate):'—'}" oninput="setClientTypeRate('${c.id}','${t.id}',this.value)" ${effBill?'':'disabled'} style="width:100px;text-align:right">`
+        ? `<input type="number" min="0" step="5" value="${effBill?effRate:''}" placeholder="${effBill?(c.rateOverride!=null?c.rateOverride:t.rate):'—'}" data-fkey="cr-${c.id}-${t.id}" oninput="setClientTypeRate('${c.id}','${t.id}',this.value)" ${effBill?'':'disabled'} style="width:100px;text-align:right">`
         : (effBill?fmtMoney(effRate)+'/h':'—'))}</td>
       <td class="mini muted">${showMoney?src:''}${overridden&&manage?` · <a href="#" onclick="clearClientTypeOverride('${c.id}','${t.id}');return false" style="color:inherit;text-decoration:underline">reset</a>`:''}</td>
     </tr>`;
@@ -1453,7 +1463,7 @@ function viewClient(){
     <div class="card-pad">
       <div class="grid g-3" style="margin-bottom:16px">
         <div><div class="mini muted">Billing cycle</div>${manage?`<select onchange="setClientCycle('${c.id}',this.value)" style="text-transform:capitalize;margin-top:4px">${cycles.map(cy=>`<option value="${cy}" ${c.cycle===cy?'selected':''}>${cy}</option>`).join('')}</select>`:`<div class="v" style="text-transform:capitalize">${c.cycle}</div>`}</div>
-        <div><div class="mini muted">Client default rate (all billable types)</div>${(manage&&showMoney)?`<input type="number" min="0" step="5" placeholder="use type rate" value="${c.rateOverride??''}" oninput="setClientRate('${c.id}',this.value)" style="width:150px;margin-top:4px">`:`<div class="v tape">${showMoney?(c.rateOverride!=null?fmtMoney(c.rateOverride)+'/h':'type rate'):'—'}</div>`}</div>
+        <div><div class="mini muted">Client default rate (all billable types)</div>${(manage&&showMoney)?`<input type="number" min="0" step="5" placeholder="use type rate" value="${c.rateOverride??''}" data-fkey="crw-${c.id}" oninput="setClientRate('${c.id}',this.value)" style="width:150px;margin-top:4px">`:`<div class="v tape">${showMoney?(c.rateOverride!=null?fmtMoney(c.rateOverride)+'/h':'type rate'):'—'}</div>`}</div>
         <div><div class="mini muted">Org</div><div class="v tape">#${c.zorg}</div></div>
       </div>
       <table class="tbl">
@@ -1495,7 +1505,7 @@ function viewClient(){
       <label class="mini" style="display:flex;align-items:center;gap:6px">to <input type="date" value="${cf.to||''}" onchange="setCF('to',this.value)"></label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note${can('view_all')?', tech':''}…" value="${esc(cf.q)}" oninput="setCF('q',this.value)"></div>
+      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note${can('view_all')?', tech':''}…" value="${esc(cf.q)}" data-fkey="cf-q" oninput="setCF('q',this.value)"></div>
       ${can('view_all')?`<select onchange="setCF('tech',this.value)">${opt('all','All techs',cf.tech)}${state.techs.map(t=>opt(t.id,t.name,cf.tech)).join('')}</select>`:''}
       <select onchange="setCF('type',this.value)">${opt('all','All types',cf.type)}${opt('billable','Billable',cf.type)}${opt('nonbill','Non-billable',cf.type)}${opt('unclassified','Unclassified',cf.type)}${state.types.filter(t=>!t.sentinel).map(t=>opt(t.id,t.name,cf.type)).join('')}</select>
       <div class="seg wrap">${['all','pending','submitted','approved','locked','void'].map(s=>`<button class="${cf.status===s?'on':''}" onclick="setCF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
@@ -1982,7 +1992,7 @@ function viewAudit(){
       <label class="mini" style="display:flex;align-items:center;gap:6px">to <input type="date" value="${f.to}" onchange="setAF('to',this.value)"></label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search detail, event, actor…" value="${esc(f.q)}" oninput="setAF('q',this.value)"></div>
+      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search detail, event, actor…" value="${esc(f.q)}" data-fkey="laf-q" oninput="setAF('q',this.value)"></div>
       <select onchange="setAF('action',this.value)">${opt('all','All events',f.action)}${actions.map(a=>opt(a,a,f.action)).join('')}</select>
       <select onchange="setAF('actor',this.value)">${opt('all','All actors',f.actor)}${actors.map(a=>opt(a,a,f.actor)).join('')}</select>
       ${entities.length?`<select onchange="setAF('entity',this.value)">${opt('all','All areas',f.entity)}${entities.map(e=>opt(e,entLabel[e]||e,f.entity)).join('')}</select>`:''}
@@ -2913,17 +2923,28 @@ window.addEventListener('message', ev=>{
       body:JSON.stringify({rate_cents:Math.round(a.rate*100)})})
       .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
   };
-  const clientRatePut=(cid,tid,o)=>
-    $fetch('/api/clients/'+encodeURIComponent(cid)+'/rates',{method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({activity_type:tid,
-        rate_cents:(o&&o.rate!=null)?Math.round(o.rate*100):null,
-        billable:(o&&o.billable!=null)?o.billable:null})})
-      .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+  const rateTimers={};
+  const clientRatePut=(cid,tid,o)=>{
+    const k=cid+'|'+(tid||'wide');
+    clearTimeout(rateTimers[k]);
+    rateTimers[k]=setTimeout(()=>
+      $fetch('/api/clients/'+encodeURIComponent(cid)+'/rates',{method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({activity_type:tid,
+          rate_cents:(o&&o.rate!=null)?Math.round(o.rate*100):null,
+          billable:(o&&o.billable!=null)?o.billable:null})})
+        .then(async r=>{ if(!r.ok) return oops(await jshort(r)); }),600);
+  };
+  const _setClientRate=window.setClientRate;
+  window.setClientRate=function(cid,v){
+    _setClientRate(cid,v);
+    const c=client(cid);
+    clientRatePut(cid,null,(c&&c.rateOverride!=null)?{rate:c.rateOverride}:null);
+  };
   const _setClientTypeRate=window.setClientTypeRate;
   window.setClientTypeRate=function(cid,tid,v){
     _setClientTypeRate(cid,tid,v);
-    clientRatePut(cid,tid,(client(cid).rates||{})[tid]);
+    clientRatePut(cid,tid,(client(cid).rates||{})[tid]);   // debounced; latest wins
   };
   const _toggleClientTypeBillable=window.toggleClientTypeBillable;
   window.toggleClientTypeBillable=function(cid,tid){

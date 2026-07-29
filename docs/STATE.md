@@ -189,6 +189,8 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 25 | Ledger pane completely dead after the 0017 deploy — container crash-looping | crypto.py was copied from desk-api for the Odoo secret sealing, but ledger-api's image never installed `cryptography` → ModuleNotFoundError at import → uvicorn never started → :8082 served nothing | cryptography added to ledger requirements; a dependency audit (third-party imports vs each service's requirements.txt) joins the pre-ship checks | Copying a module across services copies its transitive dependencies too — every image's requirements must be re-verified, and a dead pane means check `docker compose logs` first |
 
+| 26 | rate-override inputs (and, latently, every search box) ejected the cursor after one keystroke; each keystroke also scrolled to top | prototype-origin: oninput handlers end in a bare render() that rebuilds innerHTML — focus and caret die with the old DOM — and render() always scrollTo(0,0); the wiring worsened it by PUTting per keystroke | render() is now focus-preserving in BOTH apps (captures focused element id/data-fkey + caret, restores after rebuild; scroll-to-top only on view change); affected inputs carry data-fkey; rate mirrors debounced 600ms (client-wide override input discovered + wired to PUT rates in the process) | An innerHTML rebuild is a teleport — anything the user was holding (focus, caret, scroll) must be carried across explicitly |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -224,6 +226,10 @@ places.
 - [ ] Return a SUBMITTED sheet → entry goes back to the tech (Returned flag +
       reason), server-side, survives refresh — the bug #22 walk
 - [ ] Timesheet rows show the note text as content when the entry rides on one
+- [ ] Type into a rate override, the client-wide default rate, and every
+      search box (queue/timesheets/client/audit, both apps): full numbers and
+      words land, caret stays, page doesn't jump; override PUTs fire once
+      after typing settles (watch network tab)
 - [ ] Admin layer: change a client's cycle + billable default; toggle a
       type's billable + edit its rate; set/clear a per-client-type override
       (reset = inherit, priced() follows); set access mode + tech/group lists

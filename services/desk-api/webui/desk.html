@@ -1165,6 +1165,12 @@ function renderNav(){
 }
 
 function render(){
+  /* focus-preserving render: a rebuild must not eject the person typing
+     (bug #26 — every oninput→render() input lost focus per keystroke, and
+     scrollTo(0,0) flung the page to the top on every keystroke too). */
+  { const ae=document.activeElement;
+    window.__fk_ae=(ae&&ae!==document.body)?(ae.id||ae.getAttribute('data-fkey')||null):null;
+    window.__fk_sel=(ae&&ae.selectionStart!=null&&/^(text|search|number|email|tel|url|password)$/.test(ae.type||''))?[ae.selectionStart,ae.selectionEnd]:(ae&&ae.tagName==='TEXTAREA'?[ae.selectionStart,ae.selectionEnd]:null); }
   if(!canView(state.view)) state.view='dashboard';
   renderNav();
   const pg = PAGES[state.view];
@@ -1179,7 +1185,11 @@ function render(){
   })[state.view]();
   const bb = document.getElementById('bellBadge');
   if(bb){ const n = state.notifs.filter(x=>!x.read).length; bb.style.display = n?'inline':'none'; bb.textContent = n; }
-  window.scrollTo(0,0);
+  const __ae=window.__fk_ae, __sel=window.__fk_sel;
+  if(__ae){ const el=document.getElementById(__ae)||document.querySelector('[data-fkey="'+__ae+'"]');
+    if(el){ el.focus();
+      if(__sel&&el.setSelectionRange){ try{ el.setSelectionRange(__sel[0],__sel[1]); }catch(e){} } } }
+  if(window.__fk_view!==state.view){ window.__fk_view=state.view; window.scrollTo(0,0); }
 }
 
 /* shared renderers */
@@ -1312,7 +1322,7 @@ function viewTickets(){
     ${can('create')?`<button class="btn primary" onclick="newTicketModal()">${icon(IC.plus)}New ticket</button>`:''}
   </div>
   <div class="toolbar">
-    <div class="search">${icon(IC.search)}<input type="text" placeholder="Search title, number, client…" value="${esc(f.q)}" oninput="setQF('q',this.value)"></div>
+    <div class="search">${icon(IC.search)}<input type="text" placeholder="Search title, number, client…" value="${esc(f.q)}" data-fkey="qf-q" oninput="setQF('q',this.value)"></div>
     <select onchange="setQF('group',this.value)">${['all',...GROUPS.map(g=>g.id)].map(g=>`<option value="${g}" ${f.group===g?'selected':''}>${g==='all'?'All groups':grp(g).name}</option>`).join('')}</select>
     <select onchange="setQF('prio',this.value)"><option value="all">Any priority</option>${PRIOS.map(p=>`<option value="${p.id}" ${f.prio==String(p.id)?'selected':''}>${p.label}</option>`).join('')}</select>
     <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients'},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
@@ -3677,7 +3687,7 @@ function viewAudit(){
       <label class="mini muted" style="display:flex;align-items:center;gap:5px">to <input type="date" value="${f.to}" onchange="setAF('to',this.value)"></label>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><span class="mini muted" style="width:52px;text-transform:uppercase;letter-spacing:.07em;font-weight:600">Filters</span>
-      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search action, detail, actor…" value="${esc(f.q||'')}" oninput="setAF('q',this.value)"></div>
+      <div class="search">${icon(IC.search)}<input type="text" placeholder="Search action, detail, actor…" value="${esc(f.q||'')}" data-fkey="daf-q" oninput="setAF('q',this.value)"></div>
       <select style="width:auto" onchange="setAF('action',this.value)">${opt('all','All events',f.action)}${actions.map(a=>opt(a,a,f.action)).join('')}</select>
       <select style="width:auto" onchange="setAF('who',this.value)">${opt('all','All actors',f.who)}${whos.map(w=>opt(w,w,f.who)).join('')}</select>
       ${anyF?`<button class="btn sm ghost" onclick="clearAF()">Clear</button>`:''}
