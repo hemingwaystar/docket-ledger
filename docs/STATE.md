@@ -27,9 +27,10 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0011 in this
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0012 in this
 bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
-jsonb; DML-grant audit — four grants the code always needed); login +
+jsonb; DML-grant audit — four grants the code always needed; article↔time
+link + freeze-guard definer rights); login +
 password change; ticket #100000 → then ingested tickets up past #100017;
 notes with time flowing to Ledger; PAT + session auth; Graph ingestion live
 (support@ → Service Desk); both shell UIs; Docket prototype UI live with the
@@ -48,7 +49,22 @@ vanishing on the next hydrate; extended modal fields now round-trip via the
 0010 `profile` jsonb; new `PATCH /api/contacts/{id}`); **every client picker
 is now the searchable `combo()`** — Docket queue/report filters, ticket props,
 unrouted banner, new-project modal, plus the component ported into Ledger for
-its timesheet/approvals/reports filters and the entry modal; **primary-contact
+its timesheet/approvals/reports filters and the entry modal; **the full Docket working
+loop now mirrors** — props (state/priority/owner/group), title rename,
+pending-wake timer, merge, and the ENTIRE project lifecycle (create w/
+template tasks, task add/rename/remove/toggle, task + project billing,
+submit/reopen/approve/unlock/relock — new `POST /api/projects/{id}/reopen`);
+**Ledger's working loop mirrors too** — entry submit + NEW recall
+(`POST /api/entries/{id}/recall`), span edits + voids (extended
+`PATCH /api/entries/{id}`), and period export → `mark-exported`;
+**ticket-side time is
+persistent** — "+ time" on an existing note, inline span/type/task edits, and
+chip removal all mirror (`POST /api/tickets/{id}/time`, `PATCH
+/api/time/{entry_id}`; removal = void, and desk bootstrap now omits voided
+entries to match "removed here, Ledger keeps the row"); entries carry
+`article_id` (0012) so chips relink on every hydrate — including on
+composer-attached time, which closes the "chips don't show on notes" gap;
+**primary-contact
 picker on the ticket** (props panel, under Client) — sets `contact_id` via
 `PATCH /api/tickets/{id}` (`contact` accepts uuid/email, `""` clears), which
 is the person caller-verification targets and the address the reply ladder
@@ -157,6 +173,8 @@ resolves to (explicit override → ticket contact → last inbound sender).
 | 16 | (latent, caught in review) tag removal would 500 | tags endpoint DELETEs from desk.ticket_tags but the grant was never made | 0009 grants DELETE on ticket_tags (2nd documented exception after sessions) | Grep every DML verb in the code against the grants list — least-privilege finds these in prod otherwise |
 | 17 | org "Edit details" → "Live sync failed: unknown" | patch_client rewrites shared.client_domains via DELETE — never granted; a FULL code-vs-grants audit then found 3 more: agent_groups DELETE (agent group edits), project_tasks DELETE (checklist task removal), and mail_worker INSERT on shared.contacts (domain-match auto-contact would have failed on the first real unknown-sender email) | 0011 grants all four, each documented | Bug #16's lesson executed: audited every INSERT/UPDATE/DELETE in all 3 services against grants — the class is now provably empty |
 
+| 18 | (latent, caught in review) any ticket-side time-entry edit would 500 | guard_entry_immutability reads billing_periods as the CALLING role; desk_api has no grants there — 0001's "edits (triggers gate)" UPDATE grant was never exercisable | 0012: guard becomes SECURITY DEFINER w/ pinned search_path (the 0006 treatment); desk endpoints convert guard refusals to 409s | Every cross-schema trigger gets the definer-rights question at creation — grep for the next one before it fires |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -180,6 +198,18 @@ places.
 - [ ] Client pickers everywhere are type-to-search combos (queue + report
       filters, ticket props, unrouted banner, project modal; Ledger filters
       + entry modal)
+- [ ] Working loop: change state/priority/owner/group, rename, set a wake
+      timer, merge two tickets → all survive refresh with sys/audit trails
+- [ ] Projects: create from template → tasks appear; toggle/add/rename/remove
+      tasks; set billing; submit → reopen → submit → approve → unlock →
+      relock — each step survives refresh; approved = frozen everywhere
+- [ ] Ledger loop: select entries → submit → recall → edit a span →
+      reclassify → void; approve timesheet → approve period → export marks
+      exported with a server ref
+- [ ] Time survives: "+ time" on an existing note → refresh → chip still on
+      that note, entry in Ledger; inline span/type edits stick; × removes it
+      here and Ledger shows a voided row; composer-attached time shows its
+      chip after refresh
 - [ ] Primary contact: picker under Client lists that client's people; change
       it → sys article, audit line, and the composer's reply-to follows;
       "— none —" clears; after a client move the picker offers the new
@@ -188,20 +218,21 @@ places.
       the sender as a contact; open entries follow, approved/locked stay; sys
       article + audit line appear; `unrouted` tag drops
 
-**Prototype-parity wiring queue (each = unwired mutations that currently
-revert on hydrate):**
-1. Docket props panel (state/priority/owner/group — client select IS now
-   wired), pending timers, merge
-2. Projects lifecycle in prototype UI (create/tasks/billing/submit/approve/unlock)
-3. Directory + settings edits from prototype UI — clients + contacts now
-   wired (create/edit/archive); remaining: settings pages, agents/groups
-   edits, Entra CSV contact import mirror
-4. Ledger: period-lock display registry (approvePeriod's storage not yet
-   auto-located — locked periods render open; backend integrity unaffected),
-   entry edit/void/submit wiring, Ledger's own demo-vestige sweep
-   (its Settings texts/secret cards)
-5. Article time-chip ↔ time-entry linkage (bootstrap doesn't link them; chips
-   don't show on notes), richer mail body rendering (HTML stripped to text)
+**Prototype-parity wiring queue:**
+1. ~~Docket props panel, pending timers, merge~~ DONE
+2. ~~Projects lifecycle in prototype UI~~ DONE (incl. new reopen endpoint)
+3. Directory: clients + contacts DONE; remaining: agents/groups edits,
+   Entra CSV contact import mirror, Docket settings pages (mailbox
+   add/edit, config flags, canned responses — endpoints exist for
+   mailboxes/config)
+4. Ledger: entry submit/recall/void/span-edit + export DONE; remaining:
+   period-lock display registry check, admin/settings pages (client cycle,
+   rates & overrides, access rules, role perms, activity types — NO
+   endpoints yet; these are feature builds, not wiring), Ledger
+   demo-vestige sweep (Settings texts/secret cards)
+5. Article↔time linkage DONE (0012); remaining: richer mail body rendering
+   (HTML stripped to text); ticket links (purely navigational — no schema
+   yet, resets on hydrate by design until a links table exists)
 
 **User-owned ops (flagged, not yet done):**
 - [ ] Lightsail snapshot at "fully configured, pre-real-traffic"

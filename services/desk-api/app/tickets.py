@@ -3,6 +3,7 @@ loop: props (optimistic-locked), tags, pending wakes, and transactional merge
 (HANDOFF §10.11). Locked projects refuse everything (423)."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
+from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from . import auth, db, helpers, mailer
 
@@ -265,8 +266,9 @@ def bootstrap(request: Request, limit: int = 500):
                         "mailFrom": r["mail_from"], "mailTo": r["mail_to"]})
                 cur.execute("""SELECT e.ticket_id, e.id, e.tech_id, e.activity_type_id,
                                  e.task_id, e.hours, e.started_at, e.ended_at, e.status,
-                                 e.submitted_at, e.ts_approved_at
-                                 FROM ledger.time_entries e WHERE e.ticket_id = ANY(%s)
+                                 e.submitted_at, e.ts_approved_at, e.article_id, e.version
+                                 FROM ledger.time_entries e
+                                WHERE e.ticket_id = ANY(%s) AND e.status <> 'void'
                                 ORDER BY e.started_at""", (ids,))
                 for r in cur.fetchall():
                     tickets[r["ticket_id"]]["time"].append({
@@ -277,7 +279,9 @@ def bootstrap(request: Request, limit: int = 500):
                         "startedAt": ms(r["started_at"]), "endedAt": ms(r["ended_at"]),
                         "void": r["status"] == "void",
                         "submitted": r["submitted_at"] is not None,
-                        "approved": r["ts_approved_at"] is not None})
+                        "approved": r["ts_approved_at"] is not None,
+                        "articleId": str(r["article_id"]) if r["article_id"] else None,
+                        "version": r["version"]})
                 cur.execute("""SELECT p.ticket_id, p.status, p.billing_model,
                                  p.project_flat_cents, p.template, p.unlocked,
                                  p.submitted_at, p.approved_at
@@ -504,6 +508,120 @@ class Tags(BaseModel):
     remove: list[str] = []
 
 
+class NewTime(BaseModel):
+    started_at: str
+    ended_at: str
+    activity_type: str
+    technician_email: str
+    article_id: str | None = None      # ride on an existing note/reply
+    task_id: str | None = None
+    note: str = ""
+
+
+@router.post("/tickets/{ticket_id}/time", status_code=201)
+def add_time(ticket_id: int, body: NewTime, request: Request):
+    """A standalone or article-attached time entry — the '+ time' button on an
+    existing note. Composer-attached time still travels with its article."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'log_time')
+        with conn.cursor() as cur:
+            row = helpers.ticket_or_404(cur, ticket_id)
+            helpers.refuse_if_locked_project(row)
+            client_id = row[1]
+            tech_id, tech_name = helpers.agent(cur, body.technician_email)
+            type_id = helpers.activity_type_id(cur, body.activity_type)
+            if body.article_id:
+                cur.execute("""SELECT 1 FROM desk.articles
+                                WHERE id = %s AND ticket_id = %s
+                                  AND kind IN ('note', 'reply')""",
+                            (body.article_id, ticket_id))
+                if cur.fetchone() is None:
+                    raise HTTPException(422, "Article not on this ticket (or not a note/reply)")
+            cur.execute("""INSERT INTO ledger.time_entries
+                             (ticket_id, task_id, client_id, tech_id, activity_type_id,
+                              started_at, ended_at, note, article_id)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           RETURNING id, hours""",
+                        (ticket_id, body.task_id, client_id, tech_id, type_id,
+                         body.started_at, body.ended_at, body.note[:140], body.article_id))
+            entry_id, hours = cur.fetchone()
+            cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
+        auth.audit(conn, "desk", "Time attached", f"ticket:{ticket_id}",
+                   f"#{ticket_id} · {tech_name} · {hours} h · {body.activity_type}"
+                   + (" · on article" if body.article_id else ""))
+        return {"id": str(entry_id), "hours": float(hours)}
+
+
+class PatchTime(BaseModel):
+    started_at: str | None = None
+    ended_at: str | None = None
+    activity_type: str | None = None
+    task_id: str | None = None         # "" clears
+    void: bool | None = None           # remove-from-ticket = void, never delete
+    void_reason: str = ""
+
+
+@router.patch("/time/{entry_id}")
+def patch_time(entry_id: str, body: PatchTime, request: Request):
+    """Edit or void a time entry from the ticket view. Own entries need
+    log_time; someone else's need see_billing. The DB freeze guard (approved
+    timesheets, closed periods — SECURITY DEFINER as of 0012) still fires."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            cur.execute("""SELECT e.tech_id, e.ticket_id, e.hours
+                             FROM ledger.time_entries e WHERE e.id = %s""", (entry_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such time entry")
+            tech_id, ticket_id, old_hours = row
+            if who["kind"] == "session" and tech_id != who["agent_id"]:
+                auth.need(who, 'see_billing')
+            else:
+                auth.need(who, 'log_time', 'see_billing')
+            if ticket_id is not None:
+                trow = helpers.ticket_or_404(cur, ticket_id)
+                helpers.refuse_if_locked_project(trow)
+            sets, args, notes = [], [], []
+            if body.started_at is not None:
+                sets.append("started_at = %s"); args.append(body.started_at)
+            if body.ended_at is not None:
+                sets.append("ended_at = %s"); args.append(body.ended_at)
+            if body.started_at is not None or body.ended_at is not None:
+                notes.append("span edited")
+            if body.activity_type is not None:
+                sets.append("activity_type_id = %s")
+                args.append(helpers.activity_type_id(cur, body.activity_type))
+                notes.append(f"type → {body.activity_type}")
+            if body.task_id is not None:
+                if body.task_id == "":
+                    sets.append("task_id = NULL"); notes.append("task cleared")
+                else:
+                    sets.append("task_id = %s"); args.append(body.task_id)
+                    notes.append("task moved")
+            if body.void:
+                sets += ["status = 'void'", "voided_at = now()", "void_reason = %s"]
+                args.append(body.void_reason or "removed from ticket")
+                notes.append("voided")
+            if not sets:
+                return {"ok": True, "changed": []}
+            try:
+                cur.execute(f"""UPDATE ledger.time_entries SET {', '.join(sets)}
+                                 WHERE id = %s AND ts_approved_at IS NULL
+                               RETURNING hours""", (*args, entry_id))
+            except pg_errors.RaiseException as e:   # the freeze guard said no
+                raise HTTPException(409, e.diag.message_primary or "Entry is immutable")
+            updated = cur.fetchone()
+            if updated is None:
+                raise HTTPException(409, "Entry is manager-approved — revoke the timesheet approval first")
+        auth.audit(conn, "desk", "Time entry updated",
+                   f"entry:{entry_id}",
+                   (f"#{ticket_id} · " if ticket_id else "") + " · ".join(notes)
+                   + f" · {old_hours} → {updated[0]} h")
+        return {"ok": True, "changed": notes, "hours": float(updated[0])}
+
+
 @router.post("/tickets/{ticket_id}/tags")
 def tags(ticket_id: int, body: Tags, request: Request):
     with db.connect() as conn:
@@ -674,10 +792,10 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 type_id = helpers.activity_type_id(cur, t.activity_type)
                 cur.execute("""INSERT INTO ledger.time_entries
                                  (ticket_id, task_id, client_id, tech_id, activity_type_id,
-                                  started_at, ended_at, note)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id, hours""",
+                                  started_at, ended_at, note, article_id)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id, hours""",
                             (ticket_id, t.task_id, client_id, tech_id, type_id,
-                             t.started_at, t.ended_at, body.body[:140]))
+                             t.started_at, t.ended_at, body.body[:140], article_id))
                 entry_id, hours = cur.fetchone()
             cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
         detail = f"#{ticket_id} · {body.kind} by {author_name}"

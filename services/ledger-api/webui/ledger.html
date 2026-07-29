@@ -2723,6 +2723,60 @@ window.addEventListener('message', ev=>{
       const per=PERIODS.find(x=>x.clientId===clientId&&x.key===pk);
       if(per) post('/api/periods/'+per.id+'/approve',{approver_email:state.user.email});
     }; }
+  const srvId=v=>v&&String(v).length>10;
+  const iso=ms=>new Date(ms).toISOString();
+  if(window.applySubmitSelected){ const _s=window.applySubmitSelected;
+    window.applySubmitSelected=function(){
+      const before=new Map(state.entries.map(e=>[e.id,e.submitted]));
+      _s();
+      const done=state.entries.filter(e=>e.submitted&&!before.get(e.id)&&srvId(e.id));
+      if(!done.length) return;
+      Promise.all(done.map(e=>$fetch('/api/entries/'+e.id+'/submit',{method:'POST'})))
+        .then(async rs=>{ const bad=rs.find(r=>!r.ok);
+          if(bad) return oops(await bad.json().catch(()=>0));
+          setTimeout(hydrate,600); });
+    }; }
+  if(window.recallSelected){ const _rc=window.recallSelected;
+    window.recallSelected=function(){
+      const before=new Map(state.entries.map(e=>[e.id,e.submitted]));
+      _rc();
+      const done=state.entries.filter(e=>!e.submitted&&before.get(e.id)&&srvId(e.id));
+      if(!done.length) return;
+      Promise.all(done.map(e=>$fetch('/api/entries/'+e.id+'/recall',{method:'POST'})))
+        .then(async rs=>{ const bad=rs.find(r=>!r.ok);
+          if(bad) return oops(await bad.json().catch(()=>0));
+          setTimeout(hydrate,600); });
+    }; }
+  if(window.applyDeleteSelected){ const _dv=window.applyDeleteSelected;
+    window.applyDeleteSelected=function(){
+      const before=new Map(state.entries.map(e=>[e.id,e.status]));
+      _dv();
+      const done=state.entries.filter(e=>e.status==='void'&&before.get(e.id)!=='void'&&srvId(e.id));
+      if(!done.length) return;
+      Promise.all(done.map(e=>$fetch('/api/entries/'+e.id,{method:'PATCH',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({void:true,void_reason:'removed in Ledger'})})))
+        .then(async rs=>{ const bad=rs.find(r=>!r.ok);
+          if(bad) return oops(await bad.json().catch(()=>0));
+          setTimeout(hydrate,600); });
+    }; }
+  if(window.saveTime){ const _st=window.saveTime;
+    window.saveTime=function(id){
+      const e=state.entries.find(x=>x.id===id);
+      const was=e?{s:e.startedAt,en:e.endedAt}:null;
+      _st(id);
+      if(!e||!was||(e.startedAt===was.s&&e.endedAt===was.en)||!srvId(id)) return;
+      $fetch('/api/entries/'+id,{method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({started_at:iso(e.startedAt),ended_at:iso(e.endedAt)})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    }; }
+  if(window.runExport){ const _rx=window.runExport;
+    window.runExport=function(clientId,pk){
+      _rx(clientId,pk);
+      const per=PERIODS.find(x=>x.clientId===clientId&&x.key===pk);
+      if(per&&srvId(per.id)) post('/api/periods/'+per.id+'/mark-exported');
+    }; }
   window.addEventListener('focus',()=>{ if(!window.__h||Date.now()-window.__h>30000){window.__h=Date.now();hydrate();} });
   hydrate();
 })();

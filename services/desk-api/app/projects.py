@@ -220,6 +220,26 @@ def patch_billing(ticket_id: int, body: Flat, request: Request):
         return {"ok": True, "changed": notes}
 
 
+@router.post("/{ticket_id}/reopen")
+def reopen(ticket_id: int, request: Request):
+    """Pull a submitted project back out of review — the approver (or the
+    submitter) wants changes before sign-off. approved is one-way; this only
+    reverses review → open."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_projects', 'approve_projects')
+        with conn.cursor() as cur:
+            status, *_ = _project(cur, ticket_id)
+            if status != "review":
+                raise HTTPException(409, f"Project is {status}, not in review")
+            cur.execute("""UPDATE desk.projects
+                              SET status = 'open', submitted_at = NULL, submitted_by = NULL
+                            WHERE ticket_id = %s""", (ticket_id,))
+        auth.audit(conn, "desk", "Project reopened from review", f"ticket:{ticket_id}",
+                   f"#{ticket_id}")
+        return {"ok": True}
+
+
 @router.post("/{ticket_id}/submit")
 def submit(ticket_id: int, request: Request):
     with db.connect() as conn:

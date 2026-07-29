@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
+from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from . import auth, db
 
@@ -141,29 +142,77 @@ def bootstrap(request: Request, limit: int = 1000):
 
 
 class Classify(BaseModel):
-    activity_type: str
+    activity_type: str | None = None
+    started_at: str | None = None      # span edits — pre-submission only
+    ended_at: str | None = None
+    void: bool | None = None           # removed-in-Docket semantics; never delete
+    void_reason: str = ""
 
 
 @app.patch("/api/entries/{entry_id}")
 def classify_entry(entry_id: str, body: Classify, request: Request):
+    """Entry edits from the Ledger UI: reclassify or adjust the span
+    (pre-submission), or void. Approved/period-locked rows: the DB freeze
+    guard (SECURITY DEFINER since 0012) refuses and we return 409."""
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "l_edit_own", "l_edit_all")
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM ledger.activity_types WHERE name = %s OR id::text = %s",
-                        (body.activity_type, body.activity_type))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(422, "Unknown activity type")
-            cur.execute("""UPDATE ledger.time_entries
-                              SET activity_type_id = %s
-                            WHERE id = %s AND status = 'pending'
-                              AND submitted_at IS NULL
-                            RETURNING id""", (row[0], entry_id))
+            sets, args, notes = [], [], []
+            if body.activity_type is not None:
+                cur.execute("SELECT id FROM ledger.activity_types WHERE name = %s OR id::text = %s",
+                            (body.activity_type, body.activity_type))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(422, "Unknown activity type")
+                sets.append("activity_type_id = %s"); args.append(row[0])
+                notes.append(f"type → {body.activity_type}")
+            if body.started_at is not None:
+                sets.append("started_at = %s"); args.append(body.started_at)
+            if body.ended_at is not None:
+                sets.append("ended_at = %s"); args.append(body.ended_at)
+            if body.started_at is not None or body.ended_at is not None:
+                notes.append("span edited")
+            if body.void:
+                sets += ["status = 'void'", "voided_at = now()", "void_reason = %s"]
+                args.append(body.void_reason or "removed in Ledger")
+                notes.append("voided")
+            if not sets:
+                return {"ok": True, "changed": []}
+            # span/type edits stop at submission; a void is allowed until
+            # manager approval (the freeze guard has the final word regardless)
+            gate = ("AND ts_approved_at IS NULL" if body.void
+                    else "AND status = 'pending' AND submitted_at IS NULL")
+            try:
+                cur.execute(f"""UPDATE ledger.time_entries SET {', '.join(sets)}
+                                 WHERE id = %s {gate}
+                               RETURNING id""", (*args, entry_id))
+            except pg_errors.RaiseException as e:
+                raise HTTPException(409, e.diag.message_primary or "Entry is immutable")
             if cur.fetchone() is None:
-                raise HTTPException(409, "Entry missing, submitted, or immutable")
-        auth.audit(conn, "ledger", "Entry classified", f"entry:{entry_id}",
-                   f"type → {body.activity_type} ({who['label']})")
+                raise HTTPException(409, "Entry missing, submitted, approved, or immutable")
+        auth.audit(conn, "ledger", "Entry updated", f"entry:{entry_id}",
+                   " · ".join(notes) + f" ({who['label']})")
+        return {"ok": True, "changed": notes}
+
+
+@app.post("/api/entries/{entry_id}/recall")
+def recall_entry(entry_id: str, request: Request):
+    """A tech pulls their own submission back for edits — the reverse of
+    submit, legal until a manager approves."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'l_submit')
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE ledger.time_entries
+                              SET submitted_at = NULL
+                            WHERE id = %s AND submitted_at IS NOT NULL
+                              AND ts_approved_at IS NULL AND status = 'pending'
+                           RETURNING id""", (entry_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(409, "Entry missing, not submitted, or already approved")
+        auth.audit(conn, "ledger", "Submission recalled", f"entry:{entry_id}",
+                   f"via API ({who['label']})")
         return {"ok": True}
 
 

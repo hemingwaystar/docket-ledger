@@ -4267,6 +4267,10 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     state.tickets.length=0;
     d.tickets.forEach(t=>{
       t.tags=t.tags||[]; t.articles=t.articles||[]; t.time=t.time||[];
+      /* article↔entry linkage (0012): same object on both sides, so an edit
+         in either place is an edit everywhere — mirrors mkTicket's contract */
+      t.time.forEach(e=>{ if(e.articleId){
+        const a=t.articles.find(x=>x.id===e.articleId); if(a) a.time=e; } });
       state.tickets.push(t);
     });
     state.audit.length=0; d.audit.forEach(a=>state.audit.push(a));
@@ -4441,6 +4445,53 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
   };
   function tkc(id){ return CLIENTS.find(c=>c.id===id); }
 
+  /* ---- time on tickets: attach / edit / remove ---- */
+  const agentEmail=id=>(AGENTS.find(a=>a.id===id)||{}).email||ME.email;
+  const srvId=v=>v&&String(v).length>10;           // server uuid vs demo id
+  const _attachTime=window.attachTime;
+  window.attachTime=function(tid,aid){
+    const t=tk(tid), before=t?t.time.length:0;
+    _attachTime(tid,aid);
+    if(!t||t.time.length===before) return;         // guard refused locally
+    const e=t.time[t.time.length-1];
+    $fetch('/api/tickets/'+tid+'/time',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({article_id:srvId(aid)?aid:null,
+        started_at:iso(e.startedAt), ended_at:iso(e.endedAt),
+        activity_type:typeName(e.typeId), technician_email:agentEmail(e.techId),
+        task_id:srvId(e.taskId)?e.taskId:null,
+        note:(t.articles.find(a=>a.id===aid)||{body:''}).body.slice(0,140)})})
+      .then(async r=>{ const d=await r.json().catch(()=>({}));
+        if(!r.ok) return oops(d);
+        e.eid=d.id; });                            // edits now mirror; hydrate relinks later
+  };
+  const _editTimeEntry=window.editTimeEntry;
+  window.editTimeEntry=function(tid,i,k,v,srcEl){
+    const t=tk(tid), e=t?t.time[i]:null;
+    const was=e?{s:e.startedAt,en:e.endedAt,ty:e.typeId,ta:e.taskId}:null;
+    _editTimeEntry(tid,i,k,v,srcEl);
+    if(!e||!was) return;
+    if(e.startedAt===was.s&&e.endedAt===was.en&&e.typeId===was.ty&&e.taskId===was.ta) return;
+    if(!srvId(e.eid)) return;                      // local-only entry (pre-mirror)
+    $fetch('/api/time/'+e.eid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({started_at:iso(e.startedAt), ended_at:iso(e.endedAt),
+        activity_type:typeName(e.typeId),
+        task_id:e.taskId?(srvId(e.taskId)?e.taskId:undefined):''})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  const _removeTimeEntry=window.removeTimeEntry;
+  window.removeTimeEntry=function(tid,i){
+    const t=tk(tid), e=t?t.time[i]:null, before=t?t.time.length:0;
+    _removeTimeEntry(tid,i);
+    if(!t||!e||t.time.length===before) return;     // guard refused locally
+    if(!srvId(e.eid)) return;
+    $fetch('/api/time/'+e.eid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({void:true,void_reason:'removed from ticket'})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+
   /* ---- primary contact ---- */
   const _setPrimaryContact=window.setPrimaryContact;
   window.setPrimaryContact=function(tid,pid){
@@ -4486,6 +4537,164 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
         state.ticketId=(state.ticketId===t.id)?d.id:state.ticketId;
         setTimeout(()=>hydrate(),500); });
   };
+
+  /* ---- ticket props: state / priority / owner / group ---- */
+  const _setProp=window.setProp;
+  window.setProp=function(tid,k,v){
+    const t=tk(tid), was=t?{st:t.st,prio:t.prio,ownerId:t.ownerId,groupId:t.groupId}:null;
+    _setProp(tid,k,v);
+    if(!t||!was) return;
+    let payload=null;
+    if(t.st!==was.st)           payload={state:(st8(t.st)||{label:t.st}).label};
+    else if(t.prio!==was.prio)  payload={priority:(prio(t.prio)||{label:'Normal'}).label};
+    else if(t.ownerId!==was.ownerId) payload={owner_email:t.ownerId?agentEmail(t.ownerId):''};
+    else if(t.groupId!==was.groupId) payload={group:t.groupId};
+    if(!payload) return;                            // guard refused locally
+    payload.version=t.version;
+    $fetch('/api/tickets/'+tid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
+  const _setPendingUntil=window.setPendingUntil;
+  window.setPendingUntil=function(tid,v,srcEl){
+    const t=tk(tid), was=t?t.pendingUntil:undefined;
+    _setPendingUntil(tid,v,srcEl);
+    if(!t||t.pendingUntil===was) return;
+    $fetch('/api/tickets/'+tid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pending_until:t.pendingUntil?new Date(t.pendingUntil).toISOString():'',version:t.version})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  const _saveTitle=window.saveTitle;
+  window.saveTitle=function(tid){
+    const t=tk(tid), was=TITLES[tid];
+    _saveTitle(tid);
+    if(!t||TITLES[tid]===was) return;               // unchanged or refused
+    $fetch('/api/tickets/'+tid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title:TITLES[tid],version:t.version})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
+
+  /* ---- merge ---- */
+  const _doMerge=window.doMerge;
+  window.doMerge=function(fromId){
+    const el=document.getElementById('mgTarget');
+    const into=el?Number(el.value):null;            // read before the modal closes
+    const from=tk(fromId);
+    _doMerge(fromId);
+    if(!from||!into||from.mergedInto!==into) return;
+    $fetch('/api/tickets/'+fromId+'/merge',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({into})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),500); });
+  };
+
+  /* ---- projects: full lifecycle ---- */
+  const _createProject=window.createProject;
+  window.createProject=function(){
+    const g=id=>{const el=document.getElementById(id);return el?el.value:'';};
+    const title=g('pjTitle').trim(), clientId=g('pjClient'), groupId=g('pjGroup'),
+          tplId=g('pjTpl'), mode=g('pjMode');
+    const beforeIds=new Set(state.tickets.map(t=>t.id));
+    _createProject();
+    const t=state.tickets.find(x=>!beforeIds.has(x.id));
+    if(!t) return;                                  // original refused (no title etc.)
+    const tpl=PROJ_TEMPLATES.find(x=>x.id===tplId)||{tasks:[]};
+    $fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title, client:clientId, group:groupId, owner_email:ME.email,
+        tasks:tpl.tasks, billing_model:mode==='pflat'?'project_flat':'per_task',
+        default_task_mode:mode==='flat'?'flat':'hourly'})})
+      .then(async r=>{ const d=await r.json().catch(()=>({}));
+        if(!r.ok) return oops(d);
+        if(state.ticketId===t.id&&d.id) state.ticketId=d.id;
+        setTimeout(()=>hydrate(),500); });
+  };
+  const projPatchTask=(tid,taskId,payload)=>
+    $fetch('/api/projects/'+tid+'/tasks/'+taskId,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  const _toggleTask=window.toggleTask;
+  window.toggleTask=function(tid,taskId){
+    const t=tk(tid), x=t&&isProj(t)?projTask(t,taskId):null, was=x?x.done:null;
+    _toggleTask(tid,taskId);
+    if(!x||x.done===was||!srvId(taskId)) return;
+    projPatchTask(tid,taskId, x.done?{done:true,done_by_email:ME.email}:{done:false});
+  };
+  const _addProjTask=window.addProjTask;
+  window.addProjTask=function(tid){
+    const t=tk(tid), before=t&&isProj(t)?t.project.tasks.length:null;
+    _addProjTask(tid);
+    if(before===null||t.project.tasks.length===before) return;
+    const x=t.project.tasks[t.project.tasks.length-1];
+    $fetch('/api/projects/'+tid+'/tasks',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({label:x.label,billing_mode:x.mode||'hourly'})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
+  const _renameProjTask=window.renameProjTask;
+  window.renameProjTask=function(tid,taskId){
+    const t=tk(tid), x=t&&isProj(t)?projTask(t,taskId):null, was=x?x.label:null;
+    _renameProjTask(tid,taskId);
+    if(!x||x.label===was||!srvId(taskId)) return;
+    projPatchTask(tid,taskId,{label:x.label});
+  };
+  const _rmProjTask=window.rmProjTask;
+  window.rmProjTask=function(tid,taskId){
+    const t=tk(tid), had=t&&isProj(t)&&!!projTask(t,taskId);
+    _rmProjTask(tid,taskId);
+    if(!had||projTask(t,taskId)||!srvId(taskId)) return;
+    $fetch('/api/projects/'+tid+'/tasks/'+taskId,{method:'DELETE'})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  const _setTaskBilling=window.setTaskBilling;
+  window.setTaskBilling=function(tid,taskId,k,v,srcEl){
+    const t=tk(tid), x=t&&isProj(t)?projTask(t,taskId):null;
+    const was=x?{mode:x.mode,rate:x.rate,flat:x.flat}:null;
+    _setTaskBilling(tid,taskId,k,v,srcEl);
+    if(!x||!was||!srvId(taskId)) return;
+    if(x.mode!==was.mode)       projPatchTask(tid,taskId,{billing_mode:x.mode});
+    else if(x.rate!==was.rate)  projPatchTask(tid,taskId,{rate_cents:x.rate==null?-1:Math.round(x.rate*100)});
+    else if(x.flat!==was.flat&&x.flat!=null) projPatchTask(tid,taskId,{flat_cents:Math.round(x.flat*100)});
+  };
+  const _setProjectBilling=window.setProjectBilling;
+  window.setProjectBilling=function(tid,k,v,srcEl){
+    const t=tk(tid), p=t&&isProj(t)?t.project:null;
+    const was=p?{pmode:p.pmode,projectFlat:p.projectFlat}:null;
+    _setProjectBilling(tid,k,v,srcEl);
+    if(!p||!was) return;
+    let payload=null;
+    if(p.pmode!==was.pmode) payload={billing_model:p.pmode==='flat'?'project_flat':'per_task'};
+    else if(p.projectFlat!==was.projectFlat&&p.projectFlat!=null)
+      payload={project_flat_cents:Math.round(p.projectFlat*100)};
+    if(!payload) return;
+    $fetch('/api/projects/'+tid+'/billing',{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  const projPost=(tid,action,payload)=>
+    $fetch('/api/projects/'+tid+'/'+action,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),500); });
+  const wrapProjMove=(name,action,check,payloadFn)=>{
+    const orig=window[name];
+    window[name]=function(tid){
+      const t=tk(tid), p=t&&isProj(t)?t.project:null, was=p?{status:p.status,unlocked:p.unlocked}:null;
+      orig(tid);
+      if(!p||!was) return;
+      if(check(p,was)) projPost(tid,action,payloadFn?payloadFn():null);
+    };
+  };
+  wrapProjMove('submitProject','submit',(p,w)=>p.status==='review'&&w.status==='open');
+  wrapProjMove('reopenProject','reopen',(p,w)=>p.status==='open'&&w.status==='review');
+  wrapProjMove('approveProject','approve',(p,w)=>p.status==='approved'&&w.status!=='approved',
+               ()=>({approver_email:ME.email}));
+  wrapProjMove('unlockProject','unlock',(p,w)=>p.unlocked&&!w.unlocked);
+  wrapProjMove('relockProject','relock',(p,w)=>!p.unlocked&&w.unlocked);
 
   /* refresh on focus, throttled */
   window.addEventListener('focus',()=>{ if(Date.now()-HYD>30000){HYD=Date.now();hydrate();} });
