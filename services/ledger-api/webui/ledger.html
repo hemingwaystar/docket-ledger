@@ -2698,35 +2698,68 @@ window.addEventListener('message', ev=>{
     mapIn(await r.json());
     render();
   }
-  const oops=async d=>{ alert('Live sync failed: '+((d&&d.detail)||'unknown')); hydrate(); };
+  const oops=async d=>{ alert((d&&d.detail)? 'Server declined: '+d.detail
+    : 'Live sync failed \u2014 check ledger-api logs'); hydrate(); };
   const post=(p,body)=>$fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},
       body:body?JSON.stringify(body):undefined})
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
       setTimeout(hydrate,600); });
 
+  /* every wrap mirrors ONLY when the local action actually changed state —
+     a locally-refused click (toast) must never reach the server */
   if(window.classify){ const _c=window.classify;
-    window.classify=function(id,typeId){ _c(id,typeId);
-      const ty=state.types.find(t=>t.id===typeId);
+    window.classify=function(id,typeId){
+      const e=state.entries.find(x=>x.id===id), was=e?e.typeId:null;
+      _c(id,typeId);
+      if(!e||e.typeId===was||String(id).length<=10) return;
+      const ty=state.types.find(t=>t.id===e.typeId);
       $fetch('/api/entries/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({activity_type:ty?ty.name:typeId})})
+        body:JSON.stringify({activity_type:ty?ty.name:e.typeId})})
         .then(async r=>{ if(!r.ok) oops(await r.json().catch(()=>0)); });
     }; }
   if(window.tsApprove){ const _a=window.tsApprove;
-    window.tsApprove=function(techId,clientId,perKey){ _a(techId,clientId,perKey);
+    window.tsApprove=function(techId,clientId,perKey){
+      const before=new Map(state.entries.map(e=>[e.id,e.tsApproved]));
+      _a(techId,clientId,perKey);
+      if(!state.entries.some(e=>e.tsApproved&&!before.get(e.id))) return;
       const t=state.techs.find(x=>x.id===techId), c=state.clients.find(x=>x.id===clientId);
       if(t&&c) post('/api/timesheets/approve',{tech_email:t.email,client:c.name,period_key:perKey});
     }; }
   if(window.tsReturn){ const _r=window.tsReturn;
-    window.tsReturn=function(techId,clientId,perKey){ _r(techId,clientId,perKey);
+    window.tsReturn=function(techId,clientId,perKey){
+      const before=new Map(state.entries.map(e=>[e.id,e.submitted]));
+      _r(techId,clientId,perKey);
+      const done=state.entries.find(e=>!e.submitted&&before.get(e.id)&&e.techId===techId&&e.clientId===clientId);
+      if(!done) return;
       const t=state.techs.find(x=>x.id===techId), c=state.clients.find(x=>x.id===clientId);
-      const flagged=state.entries.find(e=>e.techId===techId&&e.clientId===clientId&&e.returnReason);
       if(t&&c) post('/api/timesheets/return',{tech_email:t.email,client:c.name,
-        period_key:perKey,reason:(flagged&&flagged.returnReason)||''});
+        period_key:perKey,reason:done.returnReason||''});
+    }; }
+  if(window.tsRevoke){ const _rv=window.tsRevoke;
+    window.tsRevoke=function(techId,clientId,perKey){
+      const before=new Map(state.entries.map(e=>[e.id,e.tsApproved]));
+      _rv(techId,clientId,perKey);
+      if(!state.entries.some(e=>!e.tsApproved&&before.get(e.id)&&e.techId===techId&&e.clientId===clientId)) return;
+      const t=state.techs.find(x=>x.id===techId), c=state.clients.find(x=>x.id===clientId);
+      if(t&&c) post('/api/timesheets/revoke',{tech_email:t.email,client:c.name,period_key:perKey});
     }; }
   if(window.approvePeriod){ const _p=window.approvePeriod;
-    window.approvePeriod=function(clientId,pk){ _p(clientId,pk);
+    window.approvePeriod=function(clientId,pk){
+      /* the status flip happens inside the confirm modal's callback, AFTER
+         this returns — a synchronous before/after compare never fires. Watch
+         for the flip; if the modal is dismissed, give up quietly. */
+      const was=(state.periods[clientId+'|'+pk]||{}).status||'open';
+      _p(clientId,pk);
+      if(was!=='open') return;
       const per=PERIODS.find(x=>x.clientId===clientId&&x.key===pk);
-      if(per) post('/api/periods/'+per.id+'/approve',{approver_email:state.user.email});
+      if(!per) return;
+      let n=0; const iv=setInterval(()=>{
+        const now=(state.periods[clientId+'|'+pk]||{}).status||'open';
+        if(now==='approved'){
+          clearInterval(iv);
+          post('/api/periods/'+per.id+'/approve',{approver_email:state.user.email});
+        } else if(++n>240) clearInterval(iv);
+      },250);
     }; }
   const srvId=v=>v&&String(v).length>10;
   const iso=ms=>new Date(ms).toISOString();
@@ -2778,7 +2811,9 @@ window.addEventListener('message', ev=>{
     }; }
   if(window.runExport){ const _rx=window.runExport;
     window.runExport=function(clientId,pk){
+      const before=periodState(clientId,pk).status;
       _rx(clientId,pk);
+      if(before!=='approved'||periodState(clientId,pk).status!=='exported') return;
       const per=PERIODS.find(x=>x.clientId===clientId&&x.key===pk);
       if(per&&srvId(per.id)) post('/api/periods/'+per.id+'/mark-exported');
     }; }

@@ -4341,7 +4341,8 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
 
   const typeName=id=>(ATYPES.find(a=>a.id===id)||{}).name||'Unclassified';
   const iso=ms=>new Date(ms).toISOString();
-  const oops=async d=>{ alert('Live sync failed: '+(d&&d.detail||'unknown')); await hydrate(); };
+  const oops=async d=>{ alert((d&&d.detail)? 'Server declined: '+d.detail
+    : 'Live sync failed \u2014 check desk-api logs'); await hydrate(); };
 
   /* ---- composer: let the prototype do its local thing, then mirror ---- */
   const _sendArticle=window.sendArticle;

@@ -177,6 +177,10 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 20 | timesheet edit refused "approved period" while the UI showed nothing approved | the DB was right — the Unassigned-intake 2026-07 period WAS approved during 7/28 API testing; the UI's period-lock registry was never seeded from bootstrap (gap #4), so approved periods rendered open — plus timesheet-flow guard raises surfaced as raw 500 "unknown" | mapIn seeds state.periods from bootstrap (w/ approvedAt/By, exportRef now emitted); guard raises → 409 with the real message in approve/return/revoke + entry PATCH | When the UI and DB disagree, hydrate the UI's belief — a correct refusal with an invisible cause reads as a bug |
 
+| 21 | "Return timesheet" alerted "Nothing to return" even though the click was a local no-op | the four ORIGINAL ledger wraps (classify/tsApprove/tsReturn/approvePeriod) predate the diff-guard pattern and mirrored unconditionally — a locally-refused click still hit the server, whose correct 409 then displayed as "Live sync failed" | diff-guards added to all four (now every wrap in both apps checks local state changed before mirroring); oops() reworded: 4xx detail shows as "Server declined: …", only detail-less failures say "Live sync failed" | A mirror must fire on state change, not on click — and a correct refusal labeled "failed" reads as broken plumbing |
+
+| 21 | "Nothing to return on that sheet" 409 on Return; investigation found period-approve never mirrored + Revoke unwired | the 409 itself was truthful (same stale approved period as #20, invisible on the deployed build); auditing the flow exposed two real gaps: approvePeriod's wrap compared status synchronously but the flip happens in the confirm-modal callback → the mirror never fired (and would have fired on Cancel if unguarded); tsRevoke had no wrap at all | approvePeriod wrap watches for the post-confirm flip (60s window, silent give-up on dismiss); tsRevoke wrapped with change-detection; export mirror gated on approved→exported | Modal-deferred mutations can't be mirrored with synchronous diffs — watch for the state change, and mirror consent, not clicks |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -210,8 +214,10 @@ places.
       entry rides on one; combos select-all on focus; ticket contact picker
       opens empty (no "— none —" prefill) when unset
 - [ ] Ledger loop: select entries → submit → recall → edit a span →
-      reclassify → void; approve timesheet → approve period → export marks
-      exported with a server ref
+      reclassify → void; approve timesheet → Revoke un-approves server-side →
+      Return sends back with reason; approve period ONLY after modal confirm
+      (Cancel = no server call) → export marks exported with a server ref;
+      Return on an all-pending sheet = friendly local toast, no server alert
 - [ ] Time survives: "+ time" on an existing note → refresh → chip still on
       that note, entry in Ledger; inline span/type edits stick; × removes it
       here and Ledger shows a voided row; composer-attached time shows its
