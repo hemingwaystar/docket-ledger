@@ -187,6 +187,8 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 24 | (latent since 0001, caught building the admin layer) client-WIDE rate overrides were unstorable | client_rates' PRIMARY KEY includes activity_type_id → forced NOT NULL, contradicting the documented "NULL = client-wide"; priced() and bootstrap read a branch that could never have rows | 0017 replaces the PK with two partial unique indexes (typed / wide), same-day collapse preserved | A PK is a NOT NULL in disguise — nullable-by-design columns can't live inside one |
 
+| 25 | Ledger pane completely dead after the 0017 deploy — container crash-looping | crypto.py was copied from desk-api for the Odoo secret sealing, but ledger-api's image never installed `cryptography` → ModuleNotFoundError at import → uvicorn never started → :8082 served nothing | cryptography added to ledger requirements; a dependency audit (third-party imports vs each service's requirements.txt) joins the pre-ship checks | Copying a module across services copies its transitive dependencies too — every image's requirements must be re-verified, and a dead pane means check `docker compose logs` first |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
