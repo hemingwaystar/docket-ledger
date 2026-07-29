@@ -27,9 +27,9 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0010 in this
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0011 in this
 bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
-jsonb); login +
+jsonb; DML-grant audit — four grants the code always needed); login +
 password change; ticket #100000 → then ingested tickets up past #100017;
 notes with time flowing to Ledger; PAT + session auth; Graph ingestion live
 (support@ → Service Desk); both shell UIs; Docket prototype UI live with the
@@ -151,6 +151,7 @@ its timesheet/approvals/reports filters and the entry modal.
 | 14 | every ticket "Updated: just now"; SLA clocks skewed | prototypes keep a pinned demo clock (`NOW='2026-07-26'`); live timestamps sat in its future so all "ago" math went negative | `NOW = LIVE_MODE ? new Date() : pinned` in desk.html + ledger.html | Demo affordances must be LIVE_MODE-gated the moment real data arrives — audit constants, not just seed data |
 | 15 | contact add: "Live sync failed: Not Found" | live-adapter wrap called /api/contacts; the router prefix is /api/directory | corrected both contact URLs | Mirror URLs come from the router prefix, not the entity name — grep the APIRouter(prefix=) before wiring |
 | 16 | (latent, caught in review) tag removal would 500 | tags endpoint DELETEs from desk.ticket_tags but the grant was never made | 0009 grants DELETE on ticket_tags (2nd documented exception after sessions) | Grep every DML verb in the code against the grants list — least-privilege finds these in prod otherwise |
+| 17 | org "Edit details" → "Live sync failed: unknown" | patch_client rewrites shared.client_domains via DELETE — never granted; a FULL code-vs-grants audit then found 3 more: agent_groups DELETE (agent group edits), project_tasks DELETE (checklist task removal), and mail_worker INSERT on shared.contacts (domain-match auto-contact would have failed on the first real unknown-sender email) | 0011 grants all four, each documented | Bug #16's lesson executed: audited every INSERT/UPDATE/DELETE in all 3 services against grants — the class is now provably empty |
 
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
@@ -166,6 +167,9 @@ places.
       tenant/app-id/rotation; rules/triggers empty; titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes
 - [ ] Updated column shows real ages; SLA countdowns real (bug #14 fix)
+- [ ] Org "Edit details" saves (domains rewrite — needs 0011); agent group
+      edits save; project task removal works; auto-contact on inbound mail
+      from a known client domain works
 - [ ] New client persists across hydrate (create "Acme Corp" → refresh →
       still there, with industry/address fields intact); archive/restore
       sticks; contact add/edit sticks
