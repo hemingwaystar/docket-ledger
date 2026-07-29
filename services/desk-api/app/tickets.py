@@ -182,14 +182,20 @@ def bootstrap(request: Request, limit: int = 500):
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
                                                r["label"].lower().replace(" ", "-")),
                               "label": r["label"], "type": r["kind"]} for r in cur.fetchall()]
+            cur.execute("""SELECT id, name, body FROM desk.canned_responses
+                            WHERE active ORDER BY name""")
+            out["canned"] = [{"id": str(r["id"]), "name": r["name"], "body": r["body"]}
+                             for r in cur.fetchall()]
             cur.execute("""SELECT key, value, updated_at, updated_by FROM shared.app_config
-                            WHERE key IN ('graph','auth')""")
+                            WHERE key IN ('graph','auth','verification')""")
             cfgs = {r["key"]: r for r in cur.fetchall()}
             g = cfgs.get("graph", {"value": {}, "updated_at": None, "updated_by": ""})
             gv = g["value"] if isinstance(g["value"], dict) else {}
             out["graph"] = {"tenant": gv.get("tenant", ""), "clientId": gv.get("client_id", ""),
                             "connected": bool(gv.get("connected")),
                             "at": ms(g.get("updated_at")), "by": g.get("updated_by") or ""}
+            v = cfgs.get("verification", {"value": {}})
+            out["vcfg"] = v["value"] if isinstance(v["value"], dict) else {}
             a = cfgs.get("auth", {"value": {}})
             av = a["value"] if isinstance(a["value"], dict) else {}
             out["authCfg"] = {"ssoConnected": bool(av.get("sso_enabled")),

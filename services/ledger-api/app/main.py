@@ -115,12 +115,14 @@ def bootstrap(request: Request, limit: int = 1000):
                                   e.created_at,
                                   tk.title AS ticket_title,
                                   pt.label AS task_label,
-                                  ap.name AS approver_name
+                                  ap.name AS approver_name,
+                                  rb.name AS returner_name
                              FROM ledger.time_entries e
                              LEFT JOIN desk.tickets tk ON tk.id = e.ticket_id
                              LEFT JOIN desk.project_tasks pt ON pt.id = e.task_id
                              LEFT JOIN desk.articles ar ON ar.id = e.article_id
                              LEFT JOIN shared.agents ap ON ap.id = e.ts_approved_by
+                             LEFT JOIN shared.agents rb ON rb.id = e.returned_by
                             ORDER BY e.started_at DESC LIMIT %s""", (limit,))
             out["entries"] = [{
                 "id": str(r["id"]), "zEntryId": str(r["id"])[:8],
@@ -138,7 +140,7 @@ def bootstrap(request: Request, limit: int = 1000):
                 "tsApproved": r["ts_approved_at"] is not None,
                 "tsApprovedAt": ms(r["ts_approved_at"]),
                 "tsApprovedBy": r["approver_name"],
-                "returnedAt": ms(r["returned_at"]), "returnedBy": None,
+                "returnedAt": ms(r["returned_at"]), "returnedBy": r["returner_name"],
                 "returnReason": r["return_reason"],
                 "zTask": ({"id": str(r["task_id"]), "label": r["task_label"] or ""}
                           if r["task_id"] else None)} for r in cur.fetchall()]
@@ -371,7 +373,7 @@ def return_timesheet(body: ReturnSheet, request: Request):
             try:
                 cur.execute("""
                 UPDATE ledger.time_entries e
-                   SET submitted_at = NULL,
+                   SET submitted_at = NULL, returned_by = %s,
                        returned_at = now(), return_reason = NULLIF(%s, '')
                   FROM ledger.billing_periods bp
                  WHERE bp.id = e.period_id AND bp.status = 'open'
@@ -379,7 +381,8 @@ def return_timesheet(body: ReturnSheet, request: Request):
                    AND e.status <> 'void'
                    AND e.submitted_at IS NOT NULL AND e.ts_approved_at IS NULL
                 RETURNING e.id""",
-                            (body.reason, tech_id, client_id, body.period_key))
+                            (who.get("agent_id"), body.reason, tech_id,
+                             client_id, body.period_key))
             except pg_errors.RaiseException as e:
                 raise HTTPException(409, e.diag.message_primary or "Entries are period-locked")
             n = len(cur.fetchall())

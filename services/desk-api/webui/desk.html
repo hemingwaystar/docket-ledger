@@ -4295,6 +4295,11 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       GRAPH_AUTH.consentedBy=d.graph.by||'\u2014';
     }
     if(d.authCfg) Object.assign(AUTH_CFG, d.authCfg);
+    if(d.canned){ CANNED.length=0; d.canned.forEach(c=>CANNED.push(c)); }
+    if(d.vcfg&&Object.keys(d.vcfg).length){
+      ['sms','email'].forEach(k=>{ if(d.vcfg[k]) Object.assign(VCFG[k]=VCFG[k]||{}, d.vcfg[k]); });
+      ['ttlMin','attempts'].forEach(k=>{ if(d.vcfg[k]!=null) VCFG[k]=d.vcfg[k]; });
+    }
     if(d.secretMeta){
       const put=(slot,name,label)=>{ const m=d.secretMeta[name];
         SECRETS[slot]= m? {set:true, at:m.at, by:m.by, label} : {set:false, at:null, by:'', label}; };
@@ -4696,6 +4701,146 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
                ()=>({approver_email:ME.email}));
   wrapProjMove('unlockProject','unlock',(p,w)=>p.unlocked&&!w.unlocked);
   wrapProjMove('relockProject','relock',(p,w)=>!p.unlocked&&w.unlocked);
+
+  /* ---- directory: agents & groups ---- */
+  const _setAgentRole=window.setAgentRole;
+  window.setAgentRole=function(tid,role){
+    const a=AGENTS.find(x=>x.id===tid), was=a?a.role:null;
+    _setAgentRole(tid,role);
+    if(!a||a.role===was) return;
+    $fetch('/api/directory/agents/'+encodeURIComponent(a.email),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({role:a.role})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  const _saveGroup=window.saveGroup;
+  window.saveGroup=function(gid){
+    const name=(document.getElementById('gpName')||{value:''}).value.trim();
+    const before=new Set(GROUPS.map(g=>g.id));
+    _saveGroup(gid);
+    if(!name) return;
+    if(gid){
+      $fetch('/api/directory/groups/'+encodeURIComponent(gid),{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+          setTimeout(()=>hydrate(),400); });
+    }else{
+      const g=GROUPS.find(x=>!before.has(x.id)); if(!g) return;
+      $fetch('/api/directory/groups',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+          setTimeout(()=>hydrate(),400); });
+    }
+  };
+  const _archiveGroup=window.archiveGroup;
+  window.archiveGroup=function(gid){
+    const g=GROUPS.find(x=>x.id===gid), was=g?g.active:null;
+    _archiveGroup(gid);
+    if(!g||g.active===was) return;                 // "last group" guard refused
+    $fetch('/api/directory/groups/'+encodeURIComponent(gid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({active:g.active!==false})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
+
+  /* ---- settings: mailboxes ---- */
+  const prioLabel=n=>((typeof PRIOS!=='undefined'&&PRIOS.find(p=>p.id===Number(n)))||{label:'Normal'}).label;
+  const _saveMailbox=window.saveMailbox;
+  window.saveMailbox=function(id){
+    const g=k=>{const el=document.getElementById(k);return el?el.value:'';};
+    const addr=g('mbAddr').trim().toLowerCase(), groupId=g('mbGroup'),
+          prio=g('mbPrio'), desc=g('mbDesc').trim();
+    const oldAddr=id?(MAILBOXES.find(x=>x.id===id)||{}).addr:null;
+    const before=MAILBOXES.length;
+    _saveMailbox(id);
+    if(!addr.includes('@')) return;                // original refused
+    if(id){
+      const patch={group:groupId, display_name:desc, default_priority:prioLabel(prio)};
+      if(oldAddr&&oldAddr!==addr) patch.address=addr;
+      $fetch('/api/settings/mailboxes/'+encodeURIComponent(oldAddr||addr),{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+          setTimeout(()=>hydrate(),400); });
+    }else{
+      if(MAILBOXES.length===before) return;
+      $fetch('/api/settings/mailboxes',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({address:addr, group:groupId, display_name:desc,
+                             default_priority:prioLabel(prio)})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+          setTimeout(()=>hydrate(),400); });
+    }
+  };
+  const _toggleMailbox=window.toggleMailbox;
+  window.toggleMailbox=function(id){
+    const m=MAILBOXES.find(x=>x.id===id), was=m?m.status:null;
+    _toggleMailbox(id);
+    if(!m||m.status===was) return;
+    $fetch('/api/settings/mailboxes/'+encodeURIComponent(m.addr),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({paused:m.status==='paused'})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+
+  /* ---- settings: canned responses ---- */
+  const _saveCanned=window.saveCanned;
+  window.saveCanned=function(cid){
+    const name=(document.getElementById('cnName')||{value:''}).value.trim();
+    const body=(document.getElementById('cnBody')||{value:''}).value;
+    const before=CANNED.length;
+    _saveCanned(cid);
+    if(!name||!body.trim()) return;                // original refused
+    if(cid){
+      if(!srvId(cid)) return;                      // demo row — nothing server-side
+      $fetch('/api/settings/canned/'+encodeURIComponent(cid),{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({name,body})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    }else{
+      if(CANNED.length===before) return;
+      $fetch('/api/settings/canned',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({name,body})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+          setTimeout(()=>hydrate(),400); });
+    }
+  };
+  const _deleteCanned=window.deleteCanned;
+  window.deleteCanned=function(cid){
+    const had=CANNED.some(x=>x.id===cid);
+    _deleteCanned(cid);
+    if(!had||CANNED.some(x=>x.id===cid)||!srvId(cid)) return;
+    $fetch('/api/settings/canned/'+encodeURIComponent(cid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({active:false})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+
+  /* ---- settings: verification config (feature ships later; settings persist now) ---- */
+  let vcfgTimer=null;
+  const _vcfgSet=window.vcfgSet;
+  window.vcfgSet=function(path,v,srcEl){
+    _vcfgSet(path,v,srcEl);
+    clearTimeout(vcfgTimer);
+    vcfgTimer=setTimeout(()=>{
+      $fetch('/api/settings/config/verification',{method:'PUT',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    },600);
+  };
+
+  /* ---- Entra CSV import → real contacts ---- */
+  const _csvImportGo=window.csvImportGo;
+  window.csvImportGo=function(cid){
+    const c=tkc(cid), before=c?c.contacts.length:0;
+    _csvImportGo(cid);
+    if(!c||c.contacts.length===before) return;
+    const fresh=c.contacts.slice(before);
+    Promise.all(fresh.map(u=>$fetch('/api/directory/contacts',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({client:cid, name:u.name, email:u.email,
+          title:u.title||'', department:u.dept||'', phone:u.phone||'',
+          mobile:u.mobile||''})})))
+      .then(async rs=>{ const bad=rs.find(r=>!r.ok);
+        if(bad) return oops(await bad.json().catch(()=>0));
+        setTimeout(()=>hydrate(),500); });
+  };
 
   /* refresh on focus, throttled */
   window.addEventListener('focus',()=>{ if(Date.now()-HYD>30000){HYD=Date.now();hydrate();} });

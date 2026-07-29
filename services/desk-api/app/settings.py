@@ -187,6 +187,9 @@ def create_mailbox(body: NewMailbox, request: Request):
 class PatchMailbox(BaseModel):
     paused: bool | None = None
     group: str | None = None
+    address: str | None = None         # rename — path param is the OLD address
+    display_name: str | None = None
+    default_priority: str | None = None
 
 
 @router.patch("/mailboxes/{address}")
@@ -206,6 +209,19 @@ def patch_mailbox(address: str, body: PatchMailbox, request: Request):
                 cur.execute("UPDATE desk.mailboxes SET paused = %s WHERE id = %s",
                             (body.paused, mid))
                 notes.append("paused" if body.paused else "resumed")
+            if body.address is not None:
+                cur.execute("UPDATE desk.mailboxes SET address = %s WHERE id = %s",
+                            (body.address.lower().strip(), mid))
+                changes.append(f"address → {body.address}")
+            if body.display_name is not None:
+                cur.execute("UPDATE desk.mailboxes SET display_name = %s WHERE id = %s",
+                            (body.display_name, mid))
+                changes.append("display name set")
+            if body.default_priority is not None:
+                pid = helpers.priority_id(cur, body.default_priority)
+                cur.execute("UPDATE desk.mailboxes SET default_priority_id = %s WHERE id = %s",
+                            (pid, mid))
+                changes.append(f"priority → {body.default_priority}")
             if body.group is not None:
                 cur.execute("UPDATE desk.mailboxes SET group_id = %s WHERE id = %s",
                             (helpers.group_id(cur, body.group), mid))
@@ -213,4 +229,48 @@ def patch_mailbox(address: str, body: PatchMailbox, request: Request):
         if notes:
             auth.audit(conn, "desk", "Mailbox updated", f"mailbox:{mid}",
                        f"{address} · " + " · ".join(notes))
+        return {"ok": True}
+
+
+class NewCanned(BaseModel):
+    name: str
+    body: str
+
+
+class PatchCanned(BaseModel):
+    name: str | None = None
+    body: str | None = None
+    active: bool | None = None         # false = archived, never deleted (0014)
+
+
+@router.post("/canned", status_code=201)
+def create_canned(body: NewCanned, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings", "manage_automations")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO desk.canned_responses (name, body)
+                           VALUES (%s, %s) RETURNING id""", (body.name, body.body))
+            (cid,) = cur.fetchone()
+        auth.audit(conn, "desk", "Canned response added", f"canned:{cid}", body.name)
+        return {"id": str(cid)}
+
+
+@router.patch("/canned/{canned_id}")
+def patch_canned(canned_id: str, body: PatchCanned, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings", "manage_automations")
+        cols = {k: v for k, v in body.model_dump().items() if v is not None}
+        if not cols:
+            return {"ok": True}
+        with conn.cursor() as cur:
+            sets = ", ".join(f"{k} = %s" for k in cols)
+            cur.execute(f"UPDATE desk.canned_responses SET {sets} WHERE id = %s RETURNING name",
+                        (*cols.values(), canned_id))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such canned response")
+        auth.audit(conn, "desk", "Canned response updated", f"canned:{canned_id}",
+                   f"{row[0]} · " + ", ".join(cols))
         return {"ok": True}

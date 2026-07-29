@@ -27,7 +27,7 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0013 in this
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0015 in this
 bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
 jsonb; DML-grant audit — four grants the code always needed; article↔time
 link + freeze-guard definer rights); login +
@@ -183,6 +183,8 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 22 | Return (and UI approve/revoke) NEVER worked — "Nothing to return" every time; two prior diagnoses blamed secondary state | the prototype prefixes period keys (M2026-07, W2026-07-20) but the server stores to_char formats (2026-07, 2026-W30) — every timesheets/* call matched zero rows by key; the "approved period" in the DB came from direct API calls, never the UI | srvPeriodKey() translates at the mirror boundary for approve/return/revoke; ledger bootstrap also falls back to the linked note's text for blank entry content (0013 grants ledger_api SELECT on desk.articles — caught pre-ship; the DML audit only covered write verbs, so cross-schema SELECT joins are now part of the audit) | When a user says a feature is flatly broken, diff the actual bytes both sides exchange before defending the server — identifier formats are part of the contract |
 
+| 23 | (latent, caught by the extended audit) ticket merge with time, project approve with time, and inbound followups on project tickets would each 500 | three cross-schema SELECT joins never granted: desk_api reads billing_periods in merge's time-move and approve's timesheet-queue; mail_worker reads desk.projects for the locked-project followup exception | 0015 grants all three (read-only) | The audit now covers FROM/JOIN reads, not just write verbs — this row is that extension paying for itself |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -238,10 +240,14 @@ places.
 **Prototype-parity wiring queue:**
 1. ~~Docket props panel, pending timers, merge~~ DONE
 2. ~~Projects lifecycle in prototype UI~~ DONE (incl. new reopen endpoint)
-3. Directory: clients + contacts DONE; remaining: agents/groups edits,
-   Entra CSV contact import mirror, Docket settings pages (mailbox
-   add/edit, config flags, canned responses — endpoints exist for
-   mailboxes/config)
+3. ~~Directory + Docket settings~~ DONE this bundle: agent role changes,
+   group create/rename/archive (archive pauses its mailboxes server-side,
+   new PATCH /api/directory/groups), mailbox add/edit/pause (PATCH gains
+   address/display_name/default_priority), canned responses (new endpoints +
+   0014 archive-first `active`; bootstrap emits them), verification-page
+   settings persist to app_config('verification') (feature ships later),
+   Entra CSV import creates real contacts; kick-back message now shows
+   (return sets returned_by; bootstrap emits the returner's name)
 4. Ledger: entry submit/recall/void/span-edit + export DONE; period-lock
    display registry DONE (seeded from bootstrap); remaining: admin/settings pages (client cycle,
    rates & overrides, access rules, role perms, activity types — NO

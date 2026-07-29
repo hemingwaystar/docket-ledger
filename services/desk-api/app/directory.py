@@ -60,6 +60,45 @@ def create_group(body: NewGroup, request: Request):
         return {"id": str(gid)}
 
 
+class PatchGroup(BaseModel):
+    name: str | None = None
+    active: bool | None = None         # archive-first; archiving pauses its mailboxes
+
+
+@router.patch("/groups/{handle}")
+def patch_group(handle: str, body: PatchGroup, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_settings', 'manage_roles')
+        with conn.cursor() as cur:
+            gid = helpers.group_id(cur, handle)
+            changes = []
+            if body.name is not None:
+                cur.execute("UPDATE shared.groups SET name = %s WHERE id = %s",
+                            (body.name, gid))
+                changes.append(f"renamed → {body.name}")
+            if body.active is not None:
+                if not body.active:
+                    cur.execute("SELECT count(*) FROM shared.groups WHERE active AND id <> %s",
+                                (gid,))
+                    if cur.fetchone()[0] == 0:
+                        raise HTTPException(409, "At least one group has to stay active")
+                cur.execute("UPDATE shared.groups SET active = %s WHERE id = %s",
+                            (body.active, gid))
+                if not body.active:   # archived groups stop receiving mail
+                    cur.execute("""UPDATE desk.mailboxes SET paused = true
+                                    WHERE group_id = %s AND NOT paused
+                                   RETURNING address""", (gid,))
+                    paused = [r[0] for r in cur.fetchall()]
+                    changes.append("archived" + (f" · paused {', '.join(paused)}" if paused else ""))
+                else:
+                    changes.append("restored (resume its mailboxes when ready)")
+        if changes:
+            auth.audit(conn, "desk", "Group updated", f"group:{gid}",
+                       f"{handle} · " + " · ".join(changes))
+        return {"ok": True}
+
+
 class NewAgent(BaseModel):
     name: str
     email: str
