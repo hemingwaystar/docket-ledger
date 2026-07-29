@@ -1,5 +1,6 @@
 """Directory writes — the control plane the prototypes edited in Docket.
 Archive-first everywhere; the DB refuses deletes and sentinel abuse."""
+import json
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel
@@ -127,6 +128,7 @@ class NewClient(BaseModel):
     billing_cycle: str = "monthly"     # monthly | weekly
     billable_default: bool = True
     domains: list[str] = []
+    profile: dict = {}                 # display-only directory fields (0010)
 
 
 @router.post("/clients", status_code=201)
@@ -137,9 +139,10 @@ def create_client(body: NewClient, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_clients')
         with conn.cursor() as cur:
-            cur.execute("""INSERT INTO shared.clients (name, billing_cycle, billable_default)
-                           VALUES (%s, %s, %s) RETURNING id""",
-                        (body.name, body.billing_cycle, body.billable_default))
+            cur.execute("""INSERT INTO shared.clients (name, billing_cycle, billable_default, profile)
+                           VALUES (%s, %s, %s, %s::jsonb) RETURNING id""",
+                        (body.name, body.billing_cycle, body.billable_default,
+                         json.dumps(body.profile)))
             (cid,) = cur.fetchone()
             for d in body.domains:
                 cur.execute("INSERT INTO shared.client_domains (client_id, domain) VALUES (%s, %s)",
@@ -153,6 +156,8 @@ def create_client(body: NewClient, request: Request):
 class PatchClient(BaseModel):
     archived: bool | None = None       # archive-first; DB refuses on the sentinel
     domains: list[str] | None = None
+    name: str | None = None
+    profile: dict | None = None        # replaces the whole profile (0010)
 
 
 @router.patch("/clients/{handle}")
@@ -162,6 +167,13 @@ def patch_client(handle: str, body: PatchClient, request: Request):
         auth.need(who, 'manage_clients')
         with conn.cursor() as cur:
             cid = helpers.client_id(cur, handle)
+            if body.name is not None:
+                cur.execute("UPDATE shared.clients SET name = %s WHERE id = %s",
+                            (body.name, cid))
+                auth.audit(conn, "desk", "Client renamed", f"client:{cid}", body.name)
+            if body.profile is not None:
+                cur.execute("UPDATE shared.clients SET profile = %s::jsonb WHERE id = %s",
+                            (json.dumps(body.profile), cid))
             if body.archived is not None:
                 cur.execute(
                     "UPDATE shared.clients SET archived_at = CASE WHEN %s THEN now() END WHERE id = %s",
@@ -205,3 +217,33 @@ def create_contact(body: NewContact, request: Request):
         auth.audit(conn, "desk", "Contact added", f"contact:{pid}",
                    f"{body.name} <{body.email}> → {body.client}")
         return {"id": str(pid)}
+
+
+class PatchContact(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    title: str | None = None
+    department: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    active: bool | None = None         # people leave — they stay on old tickets
+
+
+@router.patch("/contacts/{contact_id}")
+def patch_contact(contact_id: str, body: PatchContact, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'add_contacts', 'manage_clients')
+        cols = {k: v for k, v in body.model_dump().items() if v is not None}
+        if not cols:
+            return {"ok": True}
+        with conn.cursor() as cur:
+            sets = ", ".join(f"{k} = %s" for k in cols)
+            cur.execute(f"UPDATE shared.contacts SET {sets} WHERE id = %s RETURNING name",
+                        (*cols.values(), contact_id))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such contact")
+        auth.audit(conn, "desk", "Contact updated", f"contact:{contact_id}",
+                   f"{row[0]} · " + ", ".join(cols))
+        return {"ok": True}

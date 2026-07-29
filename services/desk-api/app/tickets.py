@@ -146,24 +146,33 @@ def bootstrap(request: Request, limit: int = 500):
             out["agents"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
                              "email": r["email"], "role": r["role"] or "Technician",
                              "groups": [str(g) for g in r["gids"]]} for r in cur.fetchall()]
-            cur.execute("""SELECT c.id, c.name, c.is_sentinel, c.archived_at,
+            cur.execute("""SELECT c.id, c.name, c.is_sentinel, c.archived_at, c.profile,
                              COALESCE((SELECT array_agg(domain) FROM shared.client_domains d
                                         WHERE d.client_id = c.id), '{}') AS domains
                              FROM shared.clients c ORDER BY c.is_sentinel DESC, c.name""")
-            clients = {str(r["id"]): {"id": str(r["id"]), "name": r["name"],
-                                      "sentinel": r["is_sentinel"],
-                                      "archived": r["archived_at"] is not None,
-                                      "since": "", "notes": ", ".join(r["domains"]),
-                                      "contacts": []} for r in cur.fetchall()}
-            cur.execute("""SELECT id, client_id, name, email, title, department, phone, mobile
-                             FROM shared.contacts WHERE active ORDER BY name""")
+            clients = {}
+            for r in cur.fetchall():
+                prof = r["profile"] if isinstance(r["profile"], dict) else {}
+                doms = list(r["domains"])
+                clients[str(r["id"])] = {
+                    "id": str(r["id"]), "name": r["name"], "sentinel": r["is_sentinel"],
+                    "archived": r["archived_at"] is not None,
+                    "status": "archived" if r["archived_at"] is not None else "active",
+                    "domain": doms[0] if doms else "", "domains": doms,
+                    **{k: prof.get(k, "") for k in
+                       ("industry", "website", "phone", "fax", "addr1", "addr2",
+                        "city", "st", "zip", "tz", "since", "notes")},
+                    "contacts": []}
+            cur.execute("""SELECT id, client_id, name, email, title, department, phone,
+                             mobile, active
+                             FROM shared.contacts ORDER BY name""")
             for r in cur.fetchall():
                 c = clients.get(str(r["client_id"]))
                 if c is not None:
                     c["contacts"].append({"id": str(r["id"]), "name": r["name"],
                                           "email": r["email"], "title": r["title"],
                                           "dept": r["department"], "phone": r["phone"],
-                                          "mobile": r["mobile"]})
+                                          "mobile": r["mobile"], "active": r["active"]})
             out["clients"] = list(clients.values())
             cur.execute("SELECT id, name, billable FROM ledger.activity_types WHERE active ORDER BY is_sentinel DESC, name")
             out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"]}

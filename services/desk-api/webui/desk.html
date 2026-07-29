@@ -1315,7 +1315,7 @@ function viewTickets(){
     <div class="search">${icon(IC.search)}<input type="text" placeholder="Search title, number, client…" value="${esc(f.q)}" oninput="setQF('q',this.value)"></div>
     <select onchange="setQF('group',this.value)">${['all',...GROUPS.map(g=>g.id)].map(g=>`<option value="${g}" ${f.group===g?'selected':''}>${g==='all'?'All groups':grp(g).name}</option>`).join('')}</select>
     <select onchange="setQF('prio',this.value)"><option value="all">Any priority</option>${PRIOS.map(p=>`<option value="${p.id}" ${f.prio==String(p.id)?'selected':''}>${p.label}</option>`).join('')}</select>
-    <select onchange="setQF('client',this.value)">${['all',...CLIENTS.map(c=>c.id)].map(c=>`<option value="${c}" ${f.client===c?'selected':''}>${c==='all'?'All clients':client(c).name}</option>`).join('')}</select>
+    <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients'},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
   </div>
   <div class="card">
     ${rows.length? `<table class="tbl">
@@ -1354,8 +1354,7 @@ function viewTicket(){
       ${client(t.clientId)?.sentinel?`<div class="notice" style="background:#fdf6e8;border:1px solid var(--seal);margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <span style="color:var(--seal);font-weight:700">Unrouted</span>
         <span class="mini">arrived from an unknown sender \u2014 pick where it belongs; the sender moves into that client's contacts</span>
-        ${can('edit_props')?`<select id="rc-${t.id}" style="width:auto">${CLIENTS.filter(c=>!c.sentinel && c.status!=='archived').map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-        <button class="btn sm primary" onclick="reclientTicket(${t.id}, document.getElementById('rc-${t.id}').value)">Move</button>`:''}
+        ${can('edit_props')?`<span style="display:inline-block;min-width:230px">${combo('rc-'+t.id, CLIENTS.filter(c=>!c.sentinel && c.status!=='archived').map(c=>({v:c.id,label:c.name,sub:c.domain||''})), '', function(){ reclientTicket(t.id, document.getElementById('rc-'+t.id).value); }, 'Search clients\u2026')}</span>`:''}
       </div>`:''}
       ${t.mergedInto?`<div class="notice info" style="margin-bottom:10px">${icon(IC.ticket)}<div><b>Merged.</b> This ticket's thread and time now live on <a href="#" onclick="openTicket(${t.mergedInto});return false" style="color:var(--brand);font-weight:600">#${t.mergedInto}</a>.</div></div>`:''}
       ${state.editTitle===t.id
@@ -2183,8 +2182,8 @@ function renderProps(t){
         <select onchange="setProp(${t.id},'groupId',this.value)" ${dis('assign')}>
           ${GROUPS.filter(g=>!isArch(g)||t.groupId===g.id).map(g=>`<option value="${g.id}" ${t.groupId===g.id?'selected':''}>${esc(g.name)}${isArch(g)?' (archived)':''}</option>`).join('')}</select></div>
       <div class="prop"><div class="pk">Client</div>
-        <select onchange="reclientTicket(${t.id},this.value)" ${dis('edit_props')}>
-          ${CLIENTS.filter(c=>(!c.sentinel && !(c.archived||c.status==='archived')) || t.clientId===c.id).map(c=>`<option value="${c.id}" ${t.clientId===c.id?'selected':''}>${esc(c.name)}${c.sentinel?' (intake)':''}</option>`).join('')}</select>
+        ${can('edit_props')&&!lk? combo('cliMove-'+t.id, CLIENTS.filter(c=>(!c.sentinel && !(c.archived||c.status==='archived')) || t.clientId===c.id).map(c=>({v:c.id,label:c.name+(c.sentinel?' (intake)':''),sub:c.domain||''})), t.clientId, function(){ const v=document.getElementById('cliMove-'+t.id).value; if(v && v!==t.clientId) reclientTicket(t.id, v); }, 'Search clients\u2026')
+          : `<div class="v mini">${esc(client(t.clientId).name)}</div>`}
         <div class="mini muted" style="margin-top:4px">Moving re-homes the ticket \u2014 open Ledger entries follow; approved/locked billing stays put</div></div>
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
         <input type="datetime-local" value="${t.pendingUntil? new Date(t.pendingUntil).toISOString().slice(0,16):''}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
@@ -2435,7 +2434,7 @@ function viewReports(){
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" id="rfQ" placeholder="Search number, title, client, article text…" value="${esc(f.q)}" oninput="setRFQ(this)" style="width:250px"></div>
       <select style="width:auto" onchange="setRF('group',this.value)">${opt('all','All groups',f.group)}${GROUPS.map(g=>opt(g.id,g.name+(isArch(g)?' (archived)':''),f.group)).join('')}</select>
-      <select style="width:auto" onchange="setRF('client',this.value)">${opt('all','All clients',f.client)}${CLIENTS.map(c=>opt(c.id,c.name,f.client)).join('')}</select>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rfClient', [{v:'all',label:'All clients'},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setRF('client', document.getElementById('rfClient').value); }, 'All clients')}</span>
       <select style="width:auto" onchange="setRF('tech',this.value)">${opt('all','All technicians',f.tech)}${AGENTS.map(a=>opt(a.id,a.name,f.tech)).join('')}</select>
       <select style="width:auto" onchange="setRF('prio',this.value)">${opt('all','Any priority',f.prio)}${PRIOS.map(p=>opt(p.id,p.label,f.prio)).join('')}</select>
       <select style="width:auto" onchange="setRF('st',this.value)">${opt('all','Any state',f.st)}${opt('type:open','Any open',f.st)}${opt('type:paused','Any paused',f.st)}${opt('type:done','Any done',f.st)}${STATES.map(s=>opt(s.id,'\u2014 '+s.label+(isArch(s)?' (archived)':''),f.st)).join('')}</select>
@@ -2636,7 +2635,7 @@ function newProjectModal(){
     <div class="modal-body">
       <div class="field"><label>Project title</label><input type="text" id="pjTitle" placeholder="e.g. Northwind office move \u2014 Q3"></div>
       <div class="grid g-2" style="gap:12px">
-        <div class="field"><label>Client</label><select id="pjClient">${CLIENTS.filter(c=>!c.sentinel&&c.status!=='archived').map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Client</label>${combo('pjClient', CLIENTS.filter(c=>!c.sentinel&&c.status!=='archived').map(c=>({v:c.id,label:c.name,sub:c.domain||''})), (CLIENTS.find(c=>!c.sentinel&&c.status!=='archived')||{}).id||'', null, 'Search clients\u2026')}</div>
         <div class="field"><label>Board / group</label><select id="pjGroup">${aGROUPS().map(g=>`<option value="${g.id}" ${g.id==='g_proj'?'selected':''}>${esc(g.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Checklist template</label><select id="pjTpl">${PROJ_TEMPLATES.map(x=>`<option value="${x.id}" ${x.id==='onboard'?'selected':''}>${esc(x.name)} (${x.tasks.length} tasks)</option>`).join('')}</select></div>
         <div class="field"><label>Billing model</label><select id="pjMode"><option value="hourly">Per task \u2014 hourly (standard rates)</option><option value="flat">Per task \u2014 flat fee each</option><option value="pflat">Single flat rate \u2014 whole project</option></select></div>
@@ -4351,6 +4350,75 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
         .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
     }; };
   wrapTags('addTag'); wrapTags('rmTag');
+
+  /* ---- directory: clients & contacts persist ---- */
+  const PROF_KEYS=['industry','website','phone','fax','addr1','addr2','city','st','zip','tz','since','notes'];
+  const _saveClient=window.saveClient;
+  window.saveClient=function(cid){
+    /* read the form BEFORE the original closes the modal — no demo defaults */
+    const g=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+    const name=g('clName'), dom=g('clDomain');
+    const profile={}; PROF_KEYS.forEach(k=>{ const v=g('cl'+k[0].toUpperCase()+k.slice(1)); if(v) profile[k]=v; });
+    profile.notes=(document.getElementById('clNotes')||{value:''}).value.trim();
+    const before=new Set(CLIENTS.map(c=>c.id));
+    _saveClient(cid);
+    if(!name) return;                              // original refused
+    if(!cid){
+      const t=CLIENTS.find(c=>!before.has(c.id));
+      if(!t) return;
+      $fetch('/api/directory/clients',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name, domains:dom?[dom]:[], profile})})
+        .then(async r=>{ const d=await r.json().catch(()=>({}));
+          if(!r.ok) return oops(d);
+          if(state.clientId===t.id) state.clientId=d.id;
+          hydrate(); });
+    }else{
+      const patch={name, profile}; if(dom) patch.domains=[dom];   // blank leaves server domains untouched
+      $fetch('/api/directory/clients/'+encodeURIComponent(cid),{method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(patch)})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+          hydrate(); });
+    }
+  };
+  const _setClientStatus=window.setClientStatus;
+  window.setClientStatus=function(cid,status){
+    const c=(CLIENTS.find(x=>x.id===cid)||{}), was=c.status;
+    _setClientStatus(cid,status);
+    if(c.status===was) return;                     // sentinel / guard refused
+    $fetch('/api/directory/clients/'+encodeURIComponent(cid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({archived:status==='archived'})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        hydrate(); });
+  };
+  const contactPayload=()=>{const g=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+    return {name:g('acName'), email:g('acEmail'), title:g('acTitle'),
+            department:g('acDept'), phone:g('acPhone'), mobile:g('acMobile')};};
+  const _saveContact=window.saveContact;
+  window.saveContact=function(clientId, fromTicket){
+    const p=contactPayload(); const c=tkc(clientId); const before=c?c.contacts.length:0;
+    _saveContact(clientId, fromTicket);
+    if(!c||c.contacts.length===before) return;     // original refused
+    $fetch('/api/contacts',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({client:clientId}, p))})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        if(!fromTicket) hydrate(); });             // ticket draft flow hydrates on create
+  };
+  const _saveContactEdit=window.saveContactEdit;
+  window.saveContactEdit=function(clientId, pid){
+    const p=contactPayload();
+    const act=document.getElementById('acActive');
+    _saveContactEdit(clientId, pid);
+    if(String(pid).length<10) return;              // demo id — nothing server-side to edit
+    $fetch('/api/contacts/'+encodeURIComponent(pid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({active:act?act.checked:true}, p))})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        hydrate(); });
+  };
+  function tkc(id){ return CLIENTS.find(c=>c.id===id); }
 
   /* ---- client / organization move ---- */
   const _reclient=window.reclientTicket;

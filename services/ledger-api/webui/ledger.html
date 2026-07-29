@@ -1004,7 +1004,7 @@ function viewTimesheets(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note, client${admin?', tech':''}…" value="${esc(f.q)}" oninput="setTF('q',this.value)"></div>
-      <select onchange="setTF('client',this.value)">${opt('all','All clients',f.client)}${state.clients.map(c=>opt(c.id,c.name,f.client)).join('')}</select>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('tfClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], f.client, function(){ setTF('client', document.getElementById('tfClient').value); }, 'All clients')}</span>
       ${admin?`<select onchange="setTF('tech',this.value)">${opt('all','All techs',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>`:''}
       ${typeSel}
       <div class="seg wrap">${statuses.map(s=>`<button class="${f.status===s?'on':''}" onclick="setTF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
@@ -1322,7 +1322,7 @@ function viewApprovals(){
       <select onchange="setAF('period',this.value)">${opt('all','All billing periods',f.period)}${perOpts.map(p=>opt(p.key,p.label+' ('+p.cycle+')',f.period)).join('')}</select>
       <select onchange="setAF('tech',this.value)">${opt('all','All technicians',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>
       <select onchange="setAF('group',this.value)">${opt('all','All groups',f.group)}${state.zammadGroups.map(g=>opt(g.id,g.name,f.group)).join('')}</select>
-      <select onchange="setAF('client',this.value)">${opt('all','All clients',f.client)}${state.clients.map(c=>opt(c.id,c.name,f.client)).join('')}</select>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('afClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], f.client, function(){ setAF('client', document.getElementById('afClient').value); }, 'All clients')}</span>
       ${anyF?`<button class="btn sm ghost" onclick="afClear()">Clear</button>`:''}
     </div>
     <div class="rpt-line"><span class="rpt-lab">Showing</span><div class="mini">${sheets.length} timesheet${sheets.length===1?'':'s'} \u00b7 ${sheets.filter(s=>s.status==='awaiting').length} awaiting your review</div></div>
@@ -1895,7 +1895,7 @@ function viewReports(){
       <label class="mini" style="display:flex;align-items:center;gap:6px">to <input type="date" value="${r.to}" onchange="setRpt('to',this.value)"></label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <select onchange="setRpt('client',this.value)">${opt('all','All clients',r.client)}${state.clients.map(c=>opt(c.id,c.name,r.client)).join('')}</select>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rptClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], r.client, function(){ setRpt('client', document.getElementById('rptClient').value); }, 'All clients')}</span>
       ${admin?`<select onchange="setRpt('tech',this.value)">${opt('all','All techs',r.tech)}${state.techs.map(x=>opt(x.id,x.name,r.tech)).join('')}</select>`:''}
       <select onchange="setRpt('type',this.value)">${opt('all','All activities',r.type)}${state.types.map(a=>opt(a.id,a.name,r.type)).join('')}</select>
       ${money?`<select onchange="setRpt('billable',this.value)">${opt('all','Billable + non',r.billable)}${opt('billable','Billable only',r.billable)}${opt('nonbill','Non-billable only',r.billable)}</select>`:''}
@@ -2172,6 +2172,46 @@ function viewSettings(){
    INTERACTIONS
    ========================================================================== */
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+const jsq = s => esc(String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
+/* searchable dropdown — ported from Docket so every client picker matches.
+   opts: [{v, label, sub?}] · hidden input #<id> carries the picked value */
+const _combos = {};
+function combo(id, opts, val, onpick, placeholder){
+  _combos[id] = { opts, onpick: typeof onpick==='function' ? onpick : null };
+  const cur = opts.find(o=>o.v===val);
+  return `<div class="combo" style="position:relative">
+    <input type="hidden" id="${id}" value="${esc(val||'')}">
+    <input type="text" id="${id}-q" autocomplete="off" placeholder="${esc(placeholder||'Type to search\u2026')}" value="${esc(cur?cur.label:'')}"
+      onfocus="comboOpen('${id}')" oninput="comboFilter('${id}')"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();comboPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');}">
+    <div id="${id}-list" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);z-index:80"></div>
+  </div>`;
+}
+function comboData(id){ return (_combos[id]||{}).opts || []; }
+function comboOpen(id){ comboFilter(id); }
+function comboFilter(id){
+  const q = document.getElementById(id+'-q').value.trim().toLowerCase();
+  const opts = comboData(id).filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q));
+  const box = document.getElementById(id+'-list');
+  box.innerHTML = opts.slice(0,50).map(o=>`<div style="padding:7px 11px;cursor:pointer;font-size:13px" onmousedown="comboPick('${id}','${jsq(String(o.v))}')"><b>${esc(o.label)}</b>${o.sub?` <span class="mini muted">${esc(o.sub)}</span>`:''}</div>`).join('')
+    || `<div class="mini muted" style="padding:9px 11px">No matches.</div>`;
+  box.style.display='block';
+}
+function comboPick(id, v){
+  const o = comboData(id).find(x=>String(x.v)===String(v)); if(!o) return;
+  document.getElementById(id).value = o.v;
+  document.getElementById(id+'-q').value = o.label;
+  comboClose(id);
+  const f = (_combos[id]||{}).onpick;
+  if(f){ try{ f(); }catch(e){} }
+}
+function comboPickFirst(id){
+  const q = document.getElementById(id+'-q').value.trim().toLowerCase();
+  const o = comboData(id).find(x=>!q || x.label.toLowerCase().includes(q) || (x.sub||'').toLowerCase().includes(q));
+  if(o) comboPick(id, o.v);
+}
+function comboClose(id){ const b=document.getElementById(id+'-list'); if(b) b.style.display='none'; }
+document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.combo')) document.querySelectorAll('[id$="-list"]').forEach(b=>b.style.display='none'); });
 function setTF(k,v){ state.tf[k]=v; if(k!=='q') render(); else { /* keep focus on search */ softRerender(); } }
 /* ---- advanced-filter helpers (client-side; the demo has no backend) ---- */
 function _dateRange(f){
@@ -2382,13 +2422,12 @@ const demoPool=[
 let demoI=0;
 function demoNewEntry(){
   const d=demoPool[demoI % demoPool.length]; // a suggestion to pre-fill; fully editable
-  const cO=state.clients.map(c=>`<option value="${c.id}" ${c.id===d.c?'selected':''}>${esc(c.name)}</option>`).join('');
   const tO=state.techs.map(t=>`<option value="${t.id}" ${t.id===d.t?'selected':''}>${esc(t.name)}</option>`).join('');
   const aO=state.types.filter(a=>a.active).map(a=>`<option value="${a.id}" ${a.sentinel?'selected':''}>${esc(a.name)}</option>`).join('');
   openModal(`
     <div class="modal-head"><h3>Simulate a timer entry</h3><p>Mimics Docket's ticket timer writing time to the ledger. Choose the ticket it applies to, then confirm.</p></div>
     <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <label style="grid-column:1/3"><div class="mini muted">Client</div><select id="d_client" style="width:100%;margin-top:5px">${cO}</select></label>
+      <label style="grid-column:1/3"><div class="mini muted">Client</div><div style="margin-top:5px">${combo('d_client', state.clients.map(c=>({v:c.id,label:c.name})), d.c, null, 'Search clients\u2026')}</div></label>
       <label><div class="mini muted">Ticket #</div><input id="d_ticket" type="number" value="${d.ticket}" style="width:100%;margin-top:5px"></label>
       <label><div class="mini muted">Technician</div><select id="d_tech" style="width:100%;margin-top:5px">${tO}</select></label>
       <label style="grid-column:1/3"><div class="mini muted">Ticket title</div><input id="d_title" type="text" value="${esc(d.title)}" style="width:100%;margin-top:5px"></label>

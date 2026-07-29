@@ -27,8 +27,9 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009 in this
-bundle: reclient entry-move fn + ticket_tags DELETE grant); login +
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0010 in this
+bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
+jsonb); login +
 password change; ticket #100000 → then ingested tickets up past #100017;
 notes with time flowing to Ledger; PAT + session auth; Graph ingestion live
 (support@ → Service Desk); both shell UIs; Docket prototype UI live with the
@@ -40,8 +41,14 @@ and the suite pane pointing at it; demo-vestige sweep (Graph card, secrets,
 rules, titles, signatures); live clock fix (both prototypes ran on the pinned
 demo `NOW`, so every "Updated" read *just now* and SLA countdowns were skewed
 — now real-time when `LIVE_MODE`); **client/organization move wired end-to-end**
-(props-panel Client select + unrouted Move banner → `POST
-/api/tickets/{id}/client`, migration 0009).
+(props-panel Client picker + unrouted Move banner → `POST
+/api/tickets/{id}/client`, migration 0009); **directory writes wired** —
+client create/edit/archive and contact create/edit persist (new clients were
+vanishing on the next hydrate; extended modal fields now round-trip via the
+0010 `profile` jsonb; new `PATCH /api/contacts/{id}`); **every client picker
+is now the searchable `combo()`** — Docket queue/report filters, ticket props,
+unrouted banner, new-project modal, plus the component ported into Ledger for
+its timesheet/approvals/reports filters and the entry modal.
 
 ---
 
@@ -158,7 +165,13 @@ places.
       tenant/app-id/rotation; rules/triggers empty; titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes
 - [ ] Updated column shows real ages; SLA countdowns real (bug #14 fix)
-- [ ] Client move: props-panel select re-homes a ticket; unrouted Move claims
+- [ ] New client persists across hydrate (create "Acme Corp" → refresh →
+      still there, with industry/address fields intact); archive/restore
+      sticks; contact add/edit sticks
+- [ ] Client pickers everywhere are type-to-search combos (queue + report
+      filters, ticket props, unrouted banner, project modal; Ledger filters
+      + entry modal)
+- [ ] Client move: props-panel picker re-homes a ticket; unrouted Move claims
       the sender as a contact; open entries follow, approved/locked stay; sys
       article + audit line appear; `unrouted` tag drops
 
@@ -167,7 +180,9 @@ revert on hydrate):**
 1. Docket props panel (state/priority/owner/group — client select IS now
    wired), pending timers, merge
 2. Projects lifecycle in prototype UI (create/tasks/billing/submit/approve/unlock)
-3. Directory + settings edits from prototype UI (endpoints exist; wire them)
+3. Directory + settings edits from prototype UI — clients + contacts now
+   wired (create/edit/archive); remaining: settings pages, agents/groups
+   edits, Entra CSV contact import mirror
 4. Ledger: period-lock display registry (approvePeriod's storage not yet
    auto-located — locked periods render open; backend integrity unaffected),
    entry edit/void/submit wiring, Ledger's own demo-vestige sweep
@@ -240,6 +255,8 @@ revert on hydrate):**
 * Secrets never in compose/env/git; write-only API; KEK is the floor.
 * New features ship behind default-off flags when they touch customers
   (reply-out set the pattern).
+* Client/company pickers are ALWAYS the searchable `combo()` component
+  (both apps), never a bare `<select>` — current and future.
 * UI: two tiers (shell + prototype-parity); prototype conversions hydrate
   via `/api/bootstrap` speaking the prototype's own shape; mutation wiring is
   local-first-then-mirror; hydration failure is always loud.
