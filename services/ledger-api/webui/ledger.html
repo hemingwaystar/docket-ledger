@@ -2108,19 +2108,19 @@ function viewSettings(){
       <div class="card-head"><h3>Global defaults</h3></div>
       <div class="card-pad" style="border-bottom:1px solid var(--line)">
         <label class="mini" style="display:inline-flex;gap:8px;align-items:center;text-transform:none;cursor:pointer">
-          <input type="checkbox" ${state.settings.retainers.enabled?'checked':''} onchange="state.settings.retainers.enabled=this.checked; log('Retainers module '+(this.checked?'enabled':'disabled'),'suite-wide'); render()" style="width:auto;accent-color:var(--brand)">
+          <input type="checkbox" ${state.settings.retainers.enabled?'checked':''} onchange="state.settings.retainers.enabled=this.checked; log('Retainers module '+(this.checked?'enabled':'disabled'),'suite-wide'); render();persistLedgerCfg()" style="width:auto;accent-color:var(--brand)">
           <b>Retainers / block-hour agreements</b></label>
         <div class="mini muted" style="margin-top:4px">Turn off if agreements are managed in Odoo \u2014 per-client configuration and burn-down disappear everywhere, but nothing is deleted.</div>
       </div>
       <div class="card-pad">
         ${row('Default billing cycle','New clients inherit this. Override per client on the Clients page.',
-          `<select onchange="state.settings.defaultCycle=this.value" style="text-transform:capitalize"><option ${s.defaultCycle==='weekly'?'selected':''}>weekly</option><option ${s.defaultCycle==='biweekly'?'selected':''}>biweekly</option><option ${s.defaultCycle==='monthly'?'selected':''}>monthly</option></select>`)}
+          `<select onchange="state.settings.defaultCycle=this.value;persistLedgerCfg()" style="text-transform:capitalize"><option ${s.defaultCycle==='weekly'?'selected':''}>weekly</option><option ${s.defaultCycle==='biweekly'?'selected':''}>biweekly</option><option ${s.defaultCycle==='monthly'?'selected':''}>monthly</option></select>`)}
         ${row('New types billable by default','When a new activity type appears, treat it as billable until reviewed.',
           `<button class="toggle ${s.defaultBillable?'on':''}" onclick="s_toggle('defaultBillable')"></button>`)}
         ${row('Hour display','Hours always show to two decimals (e.g. 1.00 h). Rounding policy applies at pricing.',
-          `<select onchange="state.settings.rounding=this.value"><option value="none" ${s.rounding==='none'?'selected':''}>Exact (2 dp)</option><option value="6" ${s.rounding==='6'?'selected':''}>Nearest 6 min</option><option value="15" ${s.rounding==='15'?'selected':''}>Nearest 15 min</option></select>`)}
+          `<select onchange="state.settings.rounding=this.value;persistLedgerCfg()"><option value="none" ${s.rounding==='none'?'selected':''}>Exact (2 dp)</option><option value="6" ${s.rounding==='6'?'selected':''}>Nearest 6 min</option><option value="15" ${s.rounding==='15'?'selected':''}>Nearest 15 min</option></select>`)}
         ${row('Currency','Used across the ledger and Odoo export.',
-          `<select onchange="state.settings.currency=this.value"><option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option></select>`)}
+          `<select onchange="state.settings.currency=this.value;persistLedgerCfg()"><option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option></select>`)}
       </div>
     </div>
 
@@ -2128,7 +2128,7 @@ function viewSettings(){
       <div class="card-head"><h3>Docket connection</h3></div>
       <div class="card-pad">
         ${row('Docket','The helpdesk this app pairs with. Both apps read one Postgres and share Entra SSO — no API tokens stored here.',
-          `<input type="text" value="${esc(s.host)}" onchange="state.settings.host=this.value" style="width:260px">`)}
+          `<input type="text" value="${esc(s.host)}" onchange="state.settings.host=this.value;persistLedgerCfg()" style="width:260px">`)}
         ${row('Shared data','Clients, agents and activity types are one set of tables; time entries arrive live from Docket\u2019s ticket timer.',
           `<button class="btn sm" onclick="toast('Shared tables verified: 5 clients, '+state.techs.length+' agents ('+state.zammadRoles.filter(r=>r.tech).length+' tech roles), 6 activity types + Unclassified')">Sync now</button>`)}
         <div class="notice info" style="margin-top:6px">${icon(IC.check)}<div>Runs as its own service beside Docket — separate deploys, one shared database, one SSO session.</div></div>
@@ -2151,12 +2151,13 @@ function viewSettings(){
     <div class="card-head"><h3>Odoo export connector</h3><span class="hint">open stub — safe to leave blank; export previews without posting</span></div>
     <div class="card-pad">
       <div class="grid g-2">
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Instance URL</b></div><input type="text" placeholder="https://mycompany.odoo.com" value="${esc(o.url)}" onchange="state.settings.odoo.url=this.value" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Database</b></div><input type="text" placeholder="mycompany-prod" value="${esc(o.db)}" onchange="state.settings.odoo.db=this.value" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API user</b></div><input type="text" placeholder="billing@mycompany.com" value="${esc(o.user)}" onchange="state.settings.odoo.user=this.value" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API key</b></div><input type="text" placeholder="•••••••• (stored server-side)" value="${esc(o.apiKey)}" onchange="state.settings.odoo.apiKey=this.value" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Journal</b></div><input type="text" value="${esc(o.journal)}" onchange="state.settings.odoo.journal=this.value" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Post invoices as</b></div><select onchange="state.settings.odoo.mode=this.value" style="width:100%;margin-top:6px"><option value="draft" ${o.mode==='draft'?'selected':''}>Draft (review in Odoo)</option><option value="posted" ${o.mode==='posted'?'selected':''}>Posted</option></select></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Instance URL</b></div><input type="text" placeholder="https://mycompany.odoo.com" value="${esc(o.url)}" onchange="state.settings.odoo.url=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Database</b></div><input type="text" placeholder="mycompany-prod" value="${esc(o.db)}" onchange="state.settings.odoo.db=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API user</b></div><input type="text" placeholder="billing@mycompany.com" value="${esc(o.user)}" onchange="state.settings.odoo.user=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API key</b> ${state.odooSecret?`<span class="mini muted">rotated ${fmtStamp(state.odooSecret.at)}${state.odooSecret.by?' by '+esc(state.odooSecret.by):''}</span>`:`<span class="mini muted">not set</span>`}</div>
+          <div style="display:flex;gap:8px;margin-top:6px"><input type="password" id="odooKeyIn" placeholder="write-only — sealed under the KEK, never shown again" style="flex:1" autocomplete="new-password"><button class="btn sm" onclick="saveOdooKey()">Save key</button></div></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Journal</b></div><input type="text" value="${esc(o.journal)}" onchange="state.settings.odoo.journal=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Post invoices as</b></div><select onchange="state.settings.odoo.mode=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"><option value="draft" ${o.mode==='draft'?'selected':''}>Draft (review in Odoo)</option><option value="posted" ${o.mode==='posted'?'selected':''}>Posted</option></select></label>
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:16px">
         <button class="toggle ${o.enabled?'on':''}" onclick="s_toggleOdoo()"></button>
@@ -2673,6 +2674,14 @@ window.addEventListener('message', ev=>{
     state.techs.length=0;   d.techs.forEach(t=>state.techs.push(t));
     state.types.length=0;   d.types.forEach(t=>state.types.push(t));
     state.entries.length=0; d.entries.forEach(e=>state.entries.push(e));
+    if(d.cfg){
+      if(d.cfg.ledger) Object.assign(state.settings, d.cfg.ledger);
+      if(d.cfg.odoo)   Object.assign(state.settings.odoo, d.cfg.odoo);
+      if(d.cfg.retainers&&state.settings.retainers!==undefined)
+        Object.assign(state.settings.retainers, d.cfg.retainers);
+    }
+    state.odooSecret=d.odooSecret||null;
+    state.settings.odoo.apiKey='';        /* write-only — never round-trips */
     PERIODS=d.periods||[];
     /* seed the period-lock registry from the server — approved/exported
        periods must LOOK locked, not just refuse edits (gap #4 closed) */
@@ -2831,6 +2840,116 @@ window.addEventListener('message', ev=>{
       const per=PERIODS.find(x=>x.clientId===clientId&&x.key===pk);
       if(per&&srvId(per.id)) post('/api/periods/'+per.id+'/mark-exported');
     }; }
+  /* ---- settings persist: global defaults + Odoo connector ---- */
+  let cfgTimer=null;
+  window.persistLedgerCfg=function(){
+    clearTimeout(cfgTimer);
+    cfgTimer=setTimeout(()=>{
+      const st=state.settings;
+      const gen={currency:st.currency,host:st.host,defaultCycle:st.defaultCycle,
+                 defaultBillable:st.defaultBillable,rounding:st.rounding,minMinutes:st.minMinutes};
+      const od=Object.assign({},st.odoo); delete od.apiKey;   // write-only, separate path
+      $fetch('/api/config/ledger',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({value:gen})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+      $fetch('/api/config/odoo',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({value:od})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    },600);
+  };
+  window.saveOdooKey=function(){
+    const el=document.getElementById('odooKeyIn');
+    const v=el?el.value.trim():'';
+    if(!v){ toast('Paste the key first'); return; }
+    $fetch('/api/secrets/odoo',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({value:v})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        toast('Odoo key sealed — write-only from here on'); hydrate(); });
+  };
+  ['s_toggle','s_toggleOdoo'].forEach(name=>{ if(window[name]){ const orig=window[name];
+    window[name]=function(){ orig.apply(null,arguments); persistLedgerCfg(); }; } });
+
+  /* ---- admin: client billing, activity types, rate overrides, access ---- */
+  const jshort=r=>r.json().catch(()=>0);
+  const _setClientCycle=window.setClientCycle;
+  window.setClientCycle=function(id,v){
+    _setClientCycle(id,v);
+    if(v!=='monthly'&&v!=='weekly'){ toast('Live billing supports monthly or weekly cycles'); hydrate(); return; }
+    $fetch('/api/clients/'+encodeURIComponent(id),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({cycle:v})})
+      .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+  };
+  const _toggleClientBillable=window.toggleClientBillable;
+  window.toggleClientBillable=function(id){
+    const c=client(id), was=c?c.billableDefault:null;
+    _toggleClientBillable(id);
+    if(!c||c.billableDefault===was) return;
+    $fetch('/api/clients/'+encodeURIComponent(id),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({billable_default:c.billableDefault})})
+      .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+  };
+  const _toggleTypeBillable=window.toggleTypeBillable;
+  window.toggleTypeBillable=function(id){
+    const a=atype(id), was=a?{b:a.billable,r:a.rate}:null;
+    _toggleTypeBillable(id);
+    if(!a||!was||a.billable===was.b) return;       // sentinel guard refused
+    $fetch('/api/types/'+encodeURIComponent(id),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({billable:a.billable})})
+      .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+    if(a.rate!==was.r)                              // "billable needs a rate" default
+      $fetch('/api/types/'+encodeURIComponent(id)+'/rate',{method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({rate_cents:Math.round(a.rate*100)})})
+        .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+  };
+  const _setTypeRate=window.setTypeRate;
+  window.setTypeRate=function(id,v,srcEl){
+    const a=atype(id), was=a?a.rate:null;
+    _setTypeRate(id,v,srcEl);
+    if(!a||a.rate===was) return;
+    $fetch('/api/types/'+encodeURIComponent(id)+'/rate',{method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rate_cents:Math.round(a.rate*100)})})
+      .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+  };
+  const clientRatePut=(cid,tid,o)=>
+    $fetch('/api/clients/'+encodeURIComponent(cid)+'/rates',{method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({activity_type:tid,
+        rate_cents:(o&&o.rate!=null)?Math.round(o.rate*100):null,
+        billable:(o&&o.billable!=null)?o.billable:null})})
+      .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+  const _setClientTypeRate=window.setClientTypeRate;
+  window.setClientTypeRate=function(cid,tid,v){
+    _setClientTypeRate(cid,tid,v);
+    clientRatePut(cid,tid,(client(cid).rates||{})[tid]);
+  };
+  const _toggleClientTypeBillable=window.toggleClientTypeBillable;
+  window.toggleClientTypeBillable=function(cid,tid){
+    _toggleClientTypeBillable(cid,tid);
+    clientRatePut(cid,tid,(client(cid).rates||{})[tid]);
+  };
+  const _clearClientTypeOverride=window.clearClientTypeOverride;
+  window.clearClientTypeOverride=function(cid,tid){
+    _clearClientTypeOverride(cid,tid);
+    clientRatePut(cid,tid,null);                    // all-NULL row = inherit, history kept
+  };
+  let accTimers={};
+  const pushAccess=cid=>{
+    clearTimeout(accTimers[cid]);
+    accTimers[cid]=setTimeout(()=>{
+      const a=(client(cid)||{}).access||{mode:'all',techs:[],groups:[]};
+      $fetch('/api/clients/'+encodeURIComponent(cid)+'/access',{method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({mode:a.mode,techs:a.techs||[],groups:a.groups||[]})})
+        .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+    },500);
+  };
+  ['setClientAccessMode','toggleClientAccessTech','toggleClientAccessGroup'].forEach(n=>{
+    if(window[n]){ const orig=window[n];
+      window[n]=function(cid){ orig.apply(null,arguments); pushAccess(cid); }; } });
+
   window.addEventListener('focus',()=>{ if(!window.__h||Date.now()-window.__h>30000){window.__h=Date.now();hydrate();} });
   hydrate();
 })();

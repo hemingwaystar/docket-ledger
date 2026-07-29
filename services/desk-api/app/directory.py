@@ -286,3 +286,47 @@ def patch_contact(contact_id: str, body: PatchContact, request: Request):
         auth.audit(conn, "desk", "Contact updated", f"contact:{contact_id}",
                    f"{row[0]} · " + ", ".join(cols))
         return {"ok": True}
+
+
+class PatchRole(BaseModel):
+    note: str | None = None
+    entra_group: str | None = None     # "" clears
+    add: list[str] = []                # permission ids to grant
+    remove: list[str] = []             # permission ids to revoke
+
+
+@router.patch("/roles/{name}")
+def patch_role(name: str, body: PatchRole, request: Request):
+    """Role edits — permissions replace-style (0017 grants the DELETE), note
+    and Entra group mapping. Sessions snapshot perms at sign-in, so changes
+    take effect on each agent's next login — stated in the audit line."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'manage_roles')
+        with conn.cursor() as cur:
+            rid = helpers.one(cur, "SELECT id FROM shared.roles WHERE name = %s AND active",
+                      (name,), "Unknown role")[0]
+            changes = []
+            if body.note is not None:
+                cur.execute("UPDATE shared.roles SET note = %s WHERE id = %s",
+                            (body.note, rid))
+                changes.append("note updated")
+            if body.entra_group is not None:
+                cur.execute("UPDATE shared.roles SET entra_group = NULLIF(%s, '') WHERE id = %s",
+                            (body.entra_group, rid))
+                changes.append(f"entra map → {body.entra_group or '—'}")
+            for pid in body.add:
+                cur.execute("""INSERT INTO shared.role_permissions (role_id, permission_id)
+                               VALUES (%s, %s) ON CONFLICT DO NOTHING""", (rid, pid))
+            for pid in body.remove:
+                cur.execute("""DELETE FROM shared.role_permissions
+                               WHERE role_id = %s AND permission_id = %s""", (rid, pid))
+            if body.add:
+                changes.append("granted " + ", ".join(body.add))
+            if body.remove:
+                changes.append("revoked " + ", ".join(body.remove))
+        if changes:
+            auth.audit(conn, "desk", "Role updated", f"role:{rid}",
+                       f"{name} · " + " · ".join(changes)
+                       + " — applies at each agent's next sign-in")
+        return {"ok": True}

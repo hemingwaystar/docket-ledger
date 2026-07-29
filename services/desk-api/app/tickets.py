@@ -259,8 +259,8 @@ def bootstrap(request: Request, limit: int = 500):
                     "version": r["version"], "articles": [], "time": []}
             if tickets:
                 ids = list(tickets)
-                cur.execute("""SELECT ticket_id, id, kind, author, body, is_auto,
-                                 mail_from, mail_to, sent_at
+                cur.execute("""SELECT ticket_id, id, kind, author, body, body_html,
+                                 is_auto, mail_from, mail_to, sent_at
                                  FROM desk.articles WHERE ticket_id = ANY(%s)
                                 ORDER BY sent_at""", (ids,))
                 for r in cur.fetchall():
@@ -268,7 +268,8 @@ def bootstrap(request: Request, limit: int = 500):
                         "id": str(r["id"]),
                         "kind": "mail-in" if r["kind"] == "mail_in" else r["kind"],
                         "author": {"name": r["author"]}, "ts": ms(r["sent_at"]),
-                        "body": r["body"], "auto": r["is_auto"],
+                        "body": r["body"], "bodyHtml": r["body_html"],
+                        "auto": r["is_auto"],
                         "mailFrom": r["mail_from"], "mailTo": r["mail_to"]})
                 cur.execute("""SELECT e.ticket_id, e.id, e.tech_id, e.activity_type_id,
                                  e.task_id, e.hours, e.started_at, e.ended_at, e.status,

@@ -27,7 +27,7 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0015 in this
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0017 in this
 bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
 jsonb; DML-grant audit — four grants the code always needed; article↔time
 link + freeze-guard definer rights); login +
@@ -185,6 +185,8 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 23 | (latent, caught by the extended audit) ticket merge with time, project approve with time, and inbound followups on project tickets would each 500 | three cross-schema SELECT joins never granted: desk_api reads billing_periods in merge's time-move and approve's timesheet-queue; mail_worker reads desk.projects for the locked-project followup exception | 0015 grants all three (read-only) | The audit now covers FROM/JOIN reads, not just write verbs — this row is that extension paying for itself |
 
+| 24 | (latent since 0001, caught building the admin layer) client-WIDE rate overrides were unstorable | client_rates' PRIMARY KEY includes activity_type_id → forced NOT NULL, contradicting the documented "NULL = client-wide"; priced() and bootstrap read a branch that could never have rows | 0017 replaces the PK with two partial unique indexes (typed / wide), same-day collapse preserved | A PK is a NOT NULL in disguise — nullable-by-design columns can't live inside one |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -220,6 +222,15 @@ places.
 - [ ] Return a SUBMITTED sheet → entry goes back to the tech (Returned flag +
       reason), server-side, survives refresh — the bug #22 walk
 - [ ] Timesheet rows show the note text as content when the entry rides on one
+- [ ] Admin layer: change a client's cycle + billable default; toggle a
+      type's billable + edit its rate; set/clear a per-client-type override
+      (reset = inherit, priced() follows); set access mode + tech/group lists
+      → all survive refresh; role perm toggle audits and applies at next
+      sign-in
+- [ ] New inbound HTML email renders formatted (no images/scripts), plain-text
+      toggle works, paragraphs survive in the text view; old mails stay text
+- [ ] Ledger Settings: defaults + Odoo fields persist across refresh; Save key
+      seals the Odoo key (card shows rotation stamp, never the value)
 - [ ] Ledger loop: select entries → submit → recall → edit a span →
       reclassify → void; approve timesheet → Revoke un-approves server-side →
       Return sends back with reason; approve period ONLY after modal confirm
@@ -249,13 +260,25 @@ places.
    Entra CSV import creates real contacts; kick-back message now shows
    (return sets returned_by; bootstrap emits the returner's name)
 4. Ledger: entry submit/recall/void/span-edit + export DONE; period-lock
-   display registry DONE (seeded from bootstrap); remaining: admin/settings pages (client cycle,
-   rates & overrides, access rules, role perms, activity types — NO
-   endpoints yet; these are feature builds, not wiring), Ledger
-   demo-vestige sweep (Settings texts/secret cards)
-5. Article↔time linkage DONE (0012); remaining: richer mail body rendering
-   (HTML stripped to text); ticket links (purely navigational — no schema
-   yet, resets on hydrate by design until a links table exists)
+   display registry DONE (seeded from bootstrap); ~~Settings vestige~~ DONE (0016): Ledger's
+   global defaults + Odoo connector hydrate from app_config('ledger'/'odoo')
+   and persist (new PUT /api/config/{key}); the Odoo API key is now a
+   KEK-sealed WRITE-ONLY secret (new PUT /api/secrets/odoo; KEK mounted into
+   ledger-api in compose — regenerate nothing, same kek file) with rotation
+   meta on the card; ~~admin pages~~ BUILT (0017): client billing
+   cycle + billable default (column-scoped grant — "billing config lives in
+   Ledger" is now literally true), activity-type billable + effective-dated
+   base rates, per-client/per-type rate & billable overrides incl. reset
+   (all-NULL row = inherit, history kept), client access rules (new
+   ledger.client_access table, hydrated + persisted), and Docket's role
+   editor (perms/note/Entra map via new PATCH /api/directory/roles — perms
+   apply at next sign-in; role RENAME and type CREATE/ARCHIVE have no UI in
+   the prototype and stay server-API-only for now)
+5. Article↔time linkage DONE (0012); ~~richer mail rendering~~ DONE (0016:
+   articles.body_html stored at ingestion; sandboxed CSP-fenced iframe render
+   — scripts & remote images blocked — with plain-text toggle; text fallback
+   now preserves paragraphs; historical bodies remain text-only); remaining:
+   ticket links (no schema yet, resets on hydrate until a links table exists)
 
 **User-owned ops (flagged, not yet done):**
 - [ ] Lightsail snapshot at "fully configured, pre-real-traffic"

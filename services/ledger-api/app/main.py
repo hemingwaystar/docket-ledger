@@ -10,13 +10,14 @@ Write paths (timesheet chain — DB triggers enforce the freeze):
   POST /api/entries/{id}/submit
   POST /api/timesheets/approve        {tech_email, client, period_key}
 """
+import json
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from psycopg import errors as pg_errors
 from pydantic import BaseModel
-from . import auth, db
+from . import auth, crypto, db
 
 app = FastAPI(title="ledger-api")
 
@@ -67,8 +68,15 @@ def bootstrap(request: Request, limit: int = 1000):
                        "rateOverride": (r["wide_rate"] / 100) if r["wide_rate"] is not None else None,
                        "billableDefault": r["billable_default"],
                        "archived": r["archived_at"] is not None,
-                       "rates": {}, "access": {"mode": "all", "techs": []}}
+                       "rates": {}, "access": {"mode": "all", "techs": [], "groups": []}}
                        for r in cur.fetchall()}
+            cur.execute("SELECT client_id, mode, tech_ids, group_ids FROM ledger.client_access")
+            for r in cur.fetchall():
+                c = clients.get(str(r["client_id"]))
+                if c is not None:
+                    c["access"] = {"mode": r["mode"],
+                                   "techs": [str(t) for t in r["tech_ids"]],
+                                   "groups": [str(g) for g in r["group_ids"]]}
             cur.execute("""SELECT DISTINCT ON (client_id, activity_type_id)
                                   client_id, activity_type_id, rate_cents, billable
                              FROM ledger.client_rates WHERE activity_type_id IS NOT NULL
@@ -93,6 +101,15 @@ def bootstrap(request: Request, limit: int = 1000):
                              "sentinel": r["is_sentinel"], "active": True, "note": "",
                              "rate": (r["rate"] / 100) if r["rate"] is not None else 0}
                             for r in cur.fetchall()]
+            cur.execute("""SELECT key, value FROM shared.app_config
+                            WHERE key IN ('ledger','odoo','retainers')""")
+            cfg = {r["key"]: (r["value"] if isinstance(r["value"], dict) else {})
+                   for r in cur.fetchall()}
+            out["cfg"] = cfg
+            cur.execute("SELECT rotated_at, rotated_by FROM shared.secrets WHERE name = 'odoo'")
+            row = cur.fetchone()
+            out["odooSecret"] = ({"at": ms(row["rotated_at"]), "by": row["rotated_by"]}
+                                 if row else None)
             cur.execute("""SELECT bp.id, bp.client_id, bp.period_key, bp.status,
                                   bp.export_ref, bp.approved_at, bp.exported_at,
                                   ag.name AS approved_by_name
@@ -621,3 +638,208 @@ class NoCacheStatic(StaticFiles):
 
 
 app.mount("/ui", NoCacheStatic(directory="webui", html=True), name="ui")
+
+
+LEDGER_CONFIG_KEYS = ("ledger", "odoo", "retainers")
+
+
+class ConfigValue(BaseModel):
+    value: dict
+
+
+@app.put("/api/config/{key}")
+def put_config(key: str, body: ConfigValue, request: Request):
+    """Ledger-owned settings (global defaults, Odoo connector, retainers)."""
+    if key not in LEDGER_CONFIG_KEYS:
+        raise HTTPException(422, f"Unknown config key — one of {', '.join(LEDGER_CONFIG_KEYS)}")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_settings", "l_export")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO shared.app_config (key, value)
+                           VALUES (%s, %s)
+                           ON CONFLICT (key) DO UPDATE
+                             SET value = EXCLUDED.value, updated_at = now(),
+                                 updated_by = shared.current_actor(),
+                                 version = shared.app_config.version + 1""",
+                        (key, json.dumps(body.value)))
+        auth.audit(conn, "ledger", "Settings changed", f"config:{key}",
+                   f"{key} updated by {who['label']}")
+        return {"ok": True}
+
+
+class SecretValue(BaseModel):
+    value: str
+
+
+@app.put("/api/secrets/{name}")
+def put_secret(name: str, body: SecretValue, request: Request):
+    """Write-only, KEK-sealed — the Odoo API key never comes back out."""
+    if name != "odoo":
+        raise HTTPException(422, "Ledger stores only the 'odoo' secret")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_settings", "l_export")
+        blob = crypto.seal(body.value.encode())
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO shared.secrets (name, ciphertext, nonce, kek_id)
+                           VALUES (%s, %s, ''::bytea, 'kek-file-1')
+                           ON CONFLICT (name) DO UPDATE
+                             SET ciphertext = EXCLUDED.ciphertext,
+                                 rotated_at = now(),
+                                 rotated_by = shared.current_actor()""",
+                        (name, blob))
+        auth.audit(conn, "ledger", "Secret rotated", f"secret:{name}",
+                   f"odoo key stored (envelope-encrypted) by {who['label']} — value not logged")
+        return {"ok": True}
+
+
+class ClientBilling(BaseModel):
+    cycle: str | None = None           # monthly | weekly
+    billable_default: bool | None = None
+
+
+@app.patch("/api/clients/{client_id}")
+def patch_client_billing(client_id: str, body: ClientBilling, request: Request):
+    """The two billing columns Ledger owns on the shared client record."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            sets, args, notes = [], [], []
+            if body.cycle is not None:
+                if body.cycle not in ("monthly", "weekly"):
+                    raise HTTPException(422, "cycle must be monthly or weekly")
+                sets.append("billing_cycle = %s"); args.append(body.cycle)
+                notes.append(f"cycle → {body.cycle}")
+            if body.billable_default is not None:
+                sets.append("billable_default = %s"); args.append(body.billable_default)
+                notes.append(f"billable default → {body.billable_default}")
+            if not sets:
+                return {"ok": True}
+            cur.execute(f"UPDATE shared.clients SET {', '.join(sets)} "
+                        "WHERE id = %s RETURNING name", (*args, client_id))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such client")
+        auth.audit(conn, "ledger", "Client billing changed", f"client:{client_id}",
+                   f"{row[0]} · " + " · ".join(notes))
+        return {"ok": True}
+
+
+class TypePatch(BaseModel):
+    billable: bool | None = None
+    active: bool | None = None
+    name: str | None = None
+
+
+@app.patch("/api/types/{type_id}")
+def patch_type(type_id: str, body: TypePatch, request: Request):
+    """Activity type edits — the sentinel guard trigger has the final word."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        cols = {k: v for k, v in body.model_dump().items() if v is not None}
+        if not cols:
+            return {"ok": True}
+        with conn.cursor() as cur:
+            sets = ", ".join(f"{k} = %s" for k in cols)
+            try:
+                cur.execute(f"UPDATE ledger.activity_types SET {sets} "
+                            "WHERE id = %s RETURNING name", (*cols.values(), type_id))
+            except pg_errors.RaiseException as e:
+                raise HTTPException(409, e.diag.message_primary or "Type is guarded")
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such activity type")
+        auth.audit(conn, "ledger", "Activity type updated", f"type:{type_id}",
+                   f"{row[0]} · " + ", ".join(f"{k}={v}" for k, v in cols.items()))
+        return {"ok": True}
+
+
+class TypeRate(BaseModel):
+    rate_cents: int
+
+
+@app.put("/api/types/{type_id}/rate")
+def put_type_rate(type_id: str, body: TypeRate, request: Request):
+    """Effective-dated base rate — a new row from today; same-day collapses."""
+    if body.rate_cents < 0:
+        raise HTTPException(422, "rate_cents must be >= 0")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO ledger.activity_type_rates
+                             (activity_type_id, valid_from, rate_cents)
+                           VALUES (%s, current_date, %s)
+                           ON CONFLICT (activity_type_id, valid_from)
+                             DO UPDATE SET rate_cents = EXCLUDED.rate_cents""",
+                        (type_id, body.rate_cents))
+        auth.audit(conn, "ledger", "Type rate set", f"type:{type_id}",
+                   f"{body.rate_cents}c/h from today ({who['label']})")
+        return {"ok": True}
+
+
+class ClientRate(BaseModel):
+    activity_type: str | None = None   # uuid; None = client-wide override
+    rate_cents: int | None = None      # None = inherit (clears the override)
+    billable: bool | None = None       # None = inherit
+
+
+@app.put("/api/clients/{client_id}/rates")
+def put_client_rate(client_id: str, body: ClientRate, request: Request):
+    """Per-client (and per-client-type) pricing overrides, effective today.
+    NULLs mean inherit — an all-NULL row IS the reset, history intact."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            if body.activity_type is None:
+                cur.execute("""INSERT INTO ledger.client_rates
+                                 (client_id, activity_type_id, valid_from, rate_cents, billable)
+                               VALUES (%s, NULL, current_date, %s, %s)
+                               ON CONFLICT (client_id, valid_from) WHERE activity_type_id IS NULL
+                                 DO UPDATE SET rate_cents = EXCLUDED.rate_cents,
+                                               billable = EXCLUDED.billable""",
+                            (client_id, body.rate_cents, body.billable))
+            else:
+                cur.execute("""INSERT INTO ledger.client_rates
+                                 (client_id, activity_type_id, valid_from, rate_cents, billable)
+                               VALUES (%s, %s, current_date, %s, %s)
+                               ON CONFLICT (client_id, valid_from, activity_type_id)
+                                 WHERE activity_type_id IS NOT NULL
+                                 DO UPDATE SET rate_cents = EXCLUDED.rate_cents,
+                                               billable = EXCLUDED.billable""",
+                            (client_id, body.activity_type, body.rate_cents, body.billable))
+        auth.audit(conn, "ledger", "Client rate override", f"client:{client_id}",
+                   (f"type {body.activity_type}" if body.activity_type else "client-wide")
+                   + f" · rate {body.rate_cents if body.rate_cents is not None else 'inherit'}"
+                   + f" · billable {body.billable if body.billable is not None else 'inherit'}")
+        return {"ok": True}
+
+
+class ClientAccess(BaseModel):
+    mode: str                          # all | restricted | group
+    techs: list[str] = []
+    groups: list[str] = []
+
+
+@app.put("/api/clients/{client_id}/access")
+def put_client_access(client_id: str, body: ClientAccess, request: Request):
+    if body.mode not in ("all", "restricted", "group"):
+        raise HTTPException(422, "mode must be all, restricted, or group")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO ledger.client_access
+                             (client_id, mode, tech_ids, group_ids)
+                           VALUES (%s, %s, %s::uuid[], %s::uuid[])
+                           ON CONFLICT (client_id) DO UPDATE
+                             SET mode = EXCLUDED.mode, tech_ids = EXCLUDED.tech_ids,
+                                 group_ids = EXCLUDED.group_ids""",
+                        (client_id, body.mode, body.techs, body.groups))
+        auth.audit(conn, "ledger", "Client access changed", f"client:{client_id}",
+                   f"{body.mode} · {len(body.techs)} techs · {len(body.groups)} groups")
+        return {"ok": True}

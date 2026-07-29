@@ -109,12 +109,28 @@ def graph_token(conn, cfg):
     return TOKEN_CACHE["token"]
 
 
+BLOCK_TAGS = re.compile(r"(?i)<\s*(?:br|/p|/div|/tr|/li|/h[1-6])\s*/?\s*>")
+
+
 def body_text(msg) -> str:
+    """Plain-text body. Block-level tags become newlines BEFORE stripping so
+    paragraphs survive; runs of blank lines collapse to one."""
     body = msg.get("body") or {}
     content = body.get("content", "") or msg.get("bodyPreview", "")
     if (body.get("contentType") or "").lower() == "html":
+        content = BLOCK_TAGS.sub("\n", content)
         content = html.unescape(TAG_STRIP.sub(" ", content))
-    return re.sub(r"[ \t]+", " ", content).strip()[:20000]
+    content = re.sub(r"[ \t]+", " ", content)
+    content = re.sub(r"\n\s*\n+", "\n\n", content)
+    return content.strip()[:20000]
+
+
+def body_html(msg) -> str | None:
+    """The original HTML, when the message is HTML — rendered sandboxed."""
+    body = msg.get("body") or {}
+    if (body.get("contentType") or "").lower() != "html":
+        return None
+    return (body.get("content") or "")[:300000] or None
 
 
 def is_auto_mail(msg) -> bool:
@@ -181,11 +197,12 @@ def ingest_message(conn, mailbox, msg) -> str:
                          + (" — unrouted" if unrouted else "")))
         cur.execute("""INSERT INTO desk.articles
                          (ticket_id, kind, author, mail_from, mail_to, message_id,
-                          body, is_auto, sent_at)
+                          body, body_html, is_auto, sent_at)
                        VALUES (%s, 'mail_in', %s, %s, %s, %s, %s, %s,
                                COALESCE(%s, now()))""",
                     (ticket_id, sender or "unknown", sender, mailbox["address"], mid,
-                     body_text(msg), auto, msg.get("receivedDateTime")))
+                     body_text(msg), body_html(msg), auto,
+                     msg.get("receivedDateTime")))
         if status == "followup" and not auto:
             cur.execute("""
                 UPDATE desk.tickets t

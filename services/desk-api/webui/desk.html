@@ -1421,7 +1421,13 @@ function renderArt(t,a){
          <button class="btn sm primary" onclick="saveEditArt(${t.id},'${a.id}')">Save note</button>
          <button class="btn sm ghost" onclick="cancelEditArt()">Cancel</button>
        </div>`
-    : `<div class="art-body">${esc(a.body)}</div>`;
+    : (a.kind==='mail-in' && a.bodyHtml && !state.plainMail?.[a.id]
+        ? `<div class="art-body" style="padding:0">
+             <iframe sandbox="" style="width:100%;height:auto;min-height:120px;max-height:420px;border:0;border-radius:6px;background:#fff"
+               srcdoc="${esc('<!doctype html><meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src \'none\'; style-src \'unsafe-inline\';&quot;><base target=&quot;_blank&quot;><body style=&quot;margin:10px;font:13.5px/1.5 -apple-system,Segoe UI,sans-serif;color:#1c2b33;word-break:break-word&quot;>')}${esc(a.bodyHtml)}"></iframe>
+             <div class="mini muted" style="padding:4px 10px 8px"><a href="#" onclick="(state.plainMail=state.plainMail||{})['${a.id}']=true;render();return false" style="color:inherit">View plain text</a> · images &amp; scripts blocked</div>
+           </div>`
+        : `<div class="art-body" style="white-space:pre-wrap">${esc(a.body)}</div>${a.kind==='mail-in'&&a.bodyHtml?`<div class="mini muted" style="margin-top:4px"><a href="#" onclick="delete (state.plainMail||{})['${a.id}'];render();return false" style="color:inherit">View formatted</a></div>`:''}`);
   return `<div class="art ${a.kind} ${isAgent?'agent':''}">
     <span class="avatar">${esc(av)}</span>
     <div class="art-main">
@@ -4840,6 +4846,36 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       .then(async rs=>{ const bad=rs.find(r=>!r.ok);
         if(bad) return oops(await bad.json().catch(()=>0));
         setTimeout(()=>hydrate(),500); });
+  };
+
+  /* ---- roles: perms, note, entra map (applies at next sign-in) ---- */
+  const _togglePerm=window.togglePerm;
+  window.togglePerm=function(name,pid){
+    const r=state.roleDefs.find(x=>x.name===name), had=r?r.perms.has(pid):null;
+    _togglePerm(name,pid);
+    if(!r||r.perms.has(pid)===had) return;
+    const payload=r.perms.has(pid)?{add:[pid]}:{remove:[pid]};
+    $fetch('/api/directory/roles/'+encodeURIComponent(name),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
+  };
+  const _saveRole=window.saveRole;
+  window.saveRole=function(oldName){
+    const name=(document.getElementById('rlName')||{value:''}).value.trim();
+    const note=(document.getElementById('rlNote')||{value:''}).value.trim();
+    _saveRole(oldName);
+    if(!name||!oldName) return;                    // rename+create stay local: no server rename path yet
+    if(name!==oldName){ toast('Heads up: role RENAME is not server-backed yet — reverts on refresh'); return; }
+    $fetch('/api/directory/roles/'+encodeURIComponent(oldName),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({note})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  const _entraSet=window.entraSet;
+  window.entraSet=function(role,v,srcEl){
+    _entraSet(role,v,srcEl);
+    $fetch('/api/directory/roles/'+encodeURIComponent(role),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({entra_group:v||''})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
   };
 
   /* refresh on focus, throttled */

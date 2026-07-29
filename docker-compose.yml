@@ -78,7 +78,8 @@ services:
       DATABASE_NAME: hemingway
       DATABASE_USER: ledger_api
       DATABASE_PASSWORD_FILE: /run/secrets/pg_ledger_api_password
-    secrets: [pg_ledger_api_password]
+      KEK_FILE: /run/secrets/kek
+    secrets: [pg_ledger_api_password, kek]
     ports:
       - "${BIND_ADDR:-127.0.0.1}:8082:8000"
     networks: [internal]
