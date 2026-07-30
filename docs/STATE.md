@@ -390,6 +390,10 @@ places.
       gets a real attachment; attach a file to an internal NOTE → chip on
       the thread, nothing mailed; a 25 MB file → clean 422, not an nginx
       error page
+- [ ] **Graph card (bug #32):** refresh the Automations page → the card
+      shows the TRUE state; if Disconnected, Authenticate → either
+      "Authenticated" (worker logs show polling within 60s, inbound test
+      mail lands) or the real Microsoft error naming what to fix
 - [ ] **Ticket create title (bug #31):** create a ticket named "Printer
       on fire" → the name shows in the queue immediately AND survives a
       refresh (server has it, not "(no subject)")

@@ -1385,7 +1385,7 @@ function viewTickets(){
     <div class="search">${icon(IC.search)}<input type="text" placeholder="Search title, number, client…" value="${esc(f.q)}" data-fkey="qf-q" oninput="setQF('q',this.value)"></div>
     <select onchange="setQF('group',this.value)">${['all',...GROUPS.map(g=>g.id)].map(g=>`<option value="${g}" ${f.group===g?'selected':''}>${g==='all'?'All groups':grp(g).name}</option>`).join('')}</select>
     <select onchange="setQF('prio',this.value)"><option value="all">Any priority</option>${PRIOS.map(p=>`<option value="${p.id}" ${f.prio==String(p.id)?'selected':''}>${p.label}</option>`).join('')}</select>
-    <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients'},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
+    <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
   </div>
   <div class="card">
     ${rows.length? `<table class="tbl">
@@ -2538,7 +2538,7 @@ function viewReports(){
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" id="rfQ" placeholder="Search number, title, client, article text…" value="${esc(f.q)}" oninput="setRFQ(this)" style="width:250px"></div>
       <select style="width:auto" onchange="setRF('group',this.value)">${opt('all','All groups',f.group)}${GROUPS.map(g=>opt(g.id,g.name+(isArch(g)?' (archived)':''),f.group)).join('')}</select>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rfClient', [{v:'all',label:'All clients'},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setRF('client', document.getElementById('rfClient').value); }, 'All clients')}</span>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setRF('client', document.getElementById('rfClient').value); }, 'All clients')}</span>
       <select style="width:auto" onchange="setRF('tech',this.value)">${opt('all','All technicians',f.tech)}${AGENTS.map(a=>opt(a.id,a.name,f.tech)).join('')}</select>
       <select style="width:auto" onchange="setRF('prio',this.value)">${opt('all','Any priority',f.prio)}${PRIOS.map(p=>opt(p.id,p.label,f.prio)).join('')}</select>
       <select style="width:auto" onchange="setRF('st',this.value)">${opt('all','Any state',f.st)}${opt('type:open','Any open',f.st)}${opt('type:paused','Any paused',f.st)}${opt('type:done','Any done',f.st)}${STATES.map(s=>opt(s.id,'\u2014 '+s.label+(isArch(s)?' (archived)':''),f.st)).join('')}</select>
@@ -3939,7 +3939,7 @@ function combo(id, opts, val, onpick, placeholder){
   const cur = opts.find(o=>o.v===val);
   return `<div class="combo" style="position:relative">
     <input type="hidden" id="${id}" value="${esc(val||'')}">
-    <input type="text" id="${id}-q" autocomplete="off" placeholder="${esc(placeholder||'Type to search\u2026')}" value="${esc(cur?cur.label:'')}"
+    <input type="text" id="${id}-q" autocomplete="off" placeholder="${esc(placeholder||'Type to search\u2026')}" value="${esc(cur&&!cur.blank?cur.label:'')}"
       onfocus="comboOpen('${id}')" oninput="comboFilter('${id}')"
       onkeydown="if(event.key==='Enter'){event.preventDefault();comboPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');}">
     <div id="${id}-list" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);z-index:80"></div>
@@ -3958,7 +3958,7 @@ function comboFilter(id){
 function comboPick(id, v){
   const o = comboData(id).find(x=>String(x.v)===String(v)); if(!o) return;
   document.getElementById(id).value = o.v;
-  document.getElementById(id+'-q').value = o.label;
+  document.getElementById(id+'-q').value = o.blank ? '' : o.label;
   comboClose(id);
   const f = (_combos[id]||{}).onpick;
   if(f){ try{ f(); }catch(e){} }
@@ -3978,7 +3978,7 @@ function newTicketModal(preClient){
     <div class="modal-body">
       <div class="field"><label>Title</label><input type="text" id="ntTitle" placeholder="Short, specific summary"></div>
       <div class="grid g-2" style="gap:12px">
-        <div class="field"><label>Client</label>${combo('ntClient', CLIENTS.filter(c=>c.status!=='archived').map(c=>({v:c.id, label:c.name, sub:c.domain!=='\u2014'?c.domain:''})), preClient||CLIENTS.find(c=>c.status!=='archived').id, ntContacts, 'Search clients\u2026')}</div>
+        <div class="field"><label>Client</label>${combo('ntClient', CLIENTS.filter(c=>c.status!=='archived').map(c=>({v:c.id, label:c.name, sub:c.domain!=='\u2014'?c.domain:''})), preClient||'', ntContacts, 'Search clients\u2026')}</div>
         <div class="field"><label>Contact${can('add_contacts')||can('manage_clients')?` <a href="#" style="float:right;text-transform:none;letter-spacing:0;font-weight:500;color:var(--brand)" onclick="addContactModal(document.getElementById('ntClient').value,true);return false">+ new caller</a>`:''}</label><span id="ntContactWrap">${combo('ntContact', [], '', null, 'Search contacts\u2026')}</span></div>
         <div class="field"><label>Group</label><select id="ntGroup">${aGROUPS().map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Priority</label><select id="ntPrio">${aPRIOS().map(p=>`<option value="${p.id}" ${p.id===2?'selected':''}>${p.label}</option>`).join('')}</select></div>
@@ -4210,6 +4210,7 @@ function reopenTicketDraft(clientId, selContact){
 function createTicket(){
   const title = document.getElementById('ntTitle').value.trim() || 'Untitled ticket';
   const body = document.getElementById('ntBody').value.trim() || 'Ticket opened by agent.';
+  if(!document.getElementById('ntClient').value){ toast('Pick a client first.'); return; }
   if(!document.getElementById('ntContact').value){ toast('This client has no contacts yet \u2014 add a caller first (+ new caller).'); return; }
   const id = state.nextId++;
   const t = mkTicket({ id, clientId:document.getElementById('ntClient').value, contactId:document.getElementById('ntContact').value,
@@ -4429,7 +4430,12 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       put('voipKey','voipms','voip.ms API password');
       put('twilioToken','twilio','Twilio auth token');
     }
-    if(d.graph&&d.graph.tenant){ GRAPH_AUTH.tenant=d.graph.tenant; AUTH_CFG.tenant=AUTH_CFG.tenant||d.graph.tenant; }
+    if(d.graph){
+      if(d.graph.tenant){ GRAPH_AUTH.tenant=d.graph.tenant; AUTH_CFG.tenant=AUTH_CFG.tenant||d.graph.tenant; }
+      if(d.graph.clientId) GRAPH_AUTH.clientId=d.graph.clientId;
+      GRAPH_AUTH.connected=!!d.graph.connected;          /* server truth — was never hydrated (bug #32) */
+      if(d.graph.at){ GRAPH_AUTH.consentedAt=d.graph.at; GRAPH_AUTH.consentedBy=d.graph.by||''; }
+    }
     }catch(err){ console.error('cosmetic hydration failed (core data is live):', err); }
     if(d.roles){
       state.roleDefs.length=0;
@@ -4950,6 +4956,37 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     $fetch('/api/settings/canned/'+encodeURIComponent(cid),{method:'PATCH',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({active:false})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+
+  /* ---- Graph card: authenticate / disconnect / edits persist (bug #32) ---- */
+  window.graphConnect=window.graphReconsent=function(){
+    toast('Testing the app registration against Microsoft\u2026');
+    $fetch('/api/settings/graph/test',{method:'POST'})
+      .then(async r=>{ const d=await r.json().catch(()=>({}));
+        if(!r.ok) return oops(d);                        /* 409 carries the real Microsoft error */
+        toast('Authenticated \u2014 the worker starts polling within a minute.');
+        setTimeout(()=>hydrate(),400); });
+  };
+  const _graphDisconnect=window.graphDisconnect;
+  window.graphDisconnect=function(){
+    _graphDisconnect();
+    $fetch('/api/settings/graph/disconnect',{method:'POST'})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
+  let _graphT=null;
+  const _graphSet=window.graphSet;
+  window.graphSet=function(k,v,srcEl){
+    _graphSet(k,v,srcEl);
+    clearTimeout(_graphT);
+    _graphT=setTimeout(()=>{
+      $fetch('/api/settings/config/graph',{method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({value:{tenant:GRAPH_AUTH.tenant||'',
+          client_id:GRAPH_AUTH.clientId||'',
+          connected:!!GRAPH_AUTH.connected}})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    },600);
   };
 
   /* ---- settings: secrets card — Save actually stores (write-only PUT) ---- */

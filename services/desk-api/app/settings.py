@@ -141,6 +141,23 @@ def graph_test(request: Request):
                 "note": "mail-worker starts polling within one scheduler pass"}
 
 
+@router.post("/graph/disconnect")
+def graph_disconnect(request: Request):
+    """Flip only the connected flag (jsonb_set — never clobbers the rest of
+    the graph config). The worker idles on its next pass; mailboxes stop."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE shared.app_config
+                              SET value = jsonb_set(value, '{connected}', 'false'),
+                                  updated_at = now()
+                            WHERE key = 'graph'""")
+        auth.audit(conn, "desk", "Graph disconnected", "config:graph",
+                   f"ingestion + sending paused ({who['label']})")
+        return {"ok": True, "connected": False}
+
+
 @router.get("/mailboxes")
 def list_mailboxes(request: Request):
     with db.connect() as conn:
