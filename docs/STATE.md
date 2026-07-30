@@ -22,12 +22,15 @@ git (`docs/STATE.md`) so it travels with the code.
 > `Service Ticket: [#id] Title` subjects. The go-live master switch lives in
 > the GUI (Automations → Outbound routing) and genuinely mirrors.
 >
-> **UPDATE (7e, same day evening): verify@ pre-flight PASSED — user
-> confirmed verification emails send.** Build 7e then shipped the
+> **UPDATE (7e+7f, same day evening): verify@ pre-flight PASSED — user
+> confirmed verification emails send.** Build 7e shipped the
 > filter-dropdown archive fix (ledger row 37, verify walk at the top of
 > §5): archived groups/priorities/states/clients/activity-types no longer
 > appear in any filter dropdown in either app unless the filter is
-> currently set to one (then labeled "(archived)").
+> currently set to one (then labeled "(archived)"). Build 7f fixed the
+> mailbox Type select snapping back to Shared (ledger row 38, **migration
+> 0024** — the field had no column, no mirror, and a bootstrap-fabricated
+> constant all at once).
 >
 > **Still open, in order (details in §5):**
 > 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
@@ -260,6 +263,24 @@ resolves to (explicit override → ticket contact → last inbound sender).
     (client), client-page (type), reports (client/type). Bootstrap still
     emits archived rows (hydration-completeness, row 36) — the filtering
     is render-side only. Ledger row 37.
+15. **Build 7f (2026-07-30 evening): the mailbox Type select saves.**
+    User: flipping Shared → Licensed "just switches right back." Ledger
+    row 38 — the partial-mirror sibling of the silent-control class:
+    the Edit dialog's OTHER fields all mirrored (the wrapper PATCHes
+    group/display_name/default_priority/outbound), which camouflaged the
+    one field it dropped; beneath that, `desk.mailboxes` had no type
+    column at all, and the bootstrap emission hard-coded
+    `"type": "shared"` per row — so the post-save hydrate() was
+    guaranteed to repaint Shared even if either other layer had been
+    fixed alone. Fix at all three layers: migration 0024 adds
+    `mailbox_type` ('shared'/'licensed', NOT NULL DEFAULT 'shared',
+    CHECK), settings.py create/patch/list gain a `Literal`-validated
+    `type` field (422 on junk; patch audits `type → licensed`),
+    tickets.py bootstrap emits the real column, and the desk.html
+    mirror wrapper reads `mbType` before the modal closes and sends it
+    on both the PATCH and POST paths. Worker untouched (its mailbox
+    queries name their columns). The type is operator-facing config —
+    ingestion behavior is identical either way.
 
 ---
 
@@ -329,6 +350,7 @@ touched history: entries keep the period they were written into.
 | 35 | Group "Delete" appeared to work, then the group returned on the next refresh | silent-control class, SIXTH instance — with a twist: no server endpoint SHOULD exist (no-delete convention; Archive is the removal), so the button could only ever lie: local splice + suite-bridge post, nothing persisted | the Delete button is REMOVED; Rename + Archive/Restore (both wired, audited) are the group lifecycle | When the convention says an operation must not exist, the UI must not offer it — a button with no legitimate mirror target is a lie by construction |
 | 36 | Archiving a group made it vanish entirely — indistinguishable from a delete; same latent behavior for archived custom ticket states | the archive itself worked (server set active=false, paused its mailboxes, audited) — but bootstrap emitted groups WHERE active with no active field at all, so the post-archive re-hydrate rebuilt GROUPS without the archived row; the UI's archive rendering (dim + chip + Restore) existed and was simply never fed | bootstrap emits ALL groups and ALL ticket_states with their active flag; mapIn carries active onto hydrated custom states; consumer sweep confirmed pickers already filter (aGROUPS/aSTATES) and the deliberate unfiltered spots already label "(archived)" | Hydration must be COMPLETE for every state the UI can render, not just the happy subset — a filtered bootstrap starves correct UI into looking broken; sweep collections-vs-emissions like controls-vs-mirrors |
 | 37 | Archived groups (Security, Test) listed unlabeled in the queue's "All groups" filter — as if never archived | the build-7d archive sweep covered VALUE pickers (aGROUPS/aSTATES/aPRIOS/aATYPES + labeled current-value exceptions) but the FILTER bars were a third consumer category nobody enumerated: Docket queue + reports filters and every Ledger filter iterated the raw collections | build 7e: all 15 filter dropdowns across both apps filter archived/inactive entries, keeping only the entry the filter is CURRENTLY set to, labeled "(archived)" — so hiding never silently breaks an applied filter; trigger-builder client condition lists go active-only (stored values still display via the not-in-list fallback); bootstrap untouched | "Every picker" means every CONSUMER of the collection — enumerate render sites by grepping the collection name, not by remembering the picker kinds; the archived-visibility rule is: management surfaces show all, choosers offer active, current values never vanish |
+| 38 | Mailbox Type select wouldn’t hold — Shared → Licensed flipped locally, then snapped back to Shared | partial-mirror gap, the camouflage variant of the silent-control class: the Edit dialog’s mirror wrapper PATCHed every field EXCEPT type, so the card looked fully wired; beneath it no `mailbox_type` column existed, and bootstrap hard-coded `"type": "shared"` onto every emitted row — three independent layers each sufficient to cause the revert | migration 0024 (`mailbox_type` text NOT NULL DEFAULT ‘shared’ CHECK shared/licensed); settings.py create/patch/list carry a Literal-validated `type` (patch audits `type → …`); bootstrap emits the real column; the mirror reads mbType pre-close and sends it on PATCH and POST | A mostly-mirrored form hides its dropped fields better than a dead card hides dead buttons — diff the PAYLOAD against the modal’s field list, not the card against silence; and a bootstrap that fabricates a constant for a missing column plants the revert in advance: emit real columns or nothing |
 
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
@@ -341,7 +363,8 @@ places.
 
 **Ordering (refreshed 2026-07-30, session end):**
 1. **USER — close the session's tail:** ~~verify@ test-send~~ (DONE —
-   confirmed 2026-07-30 evening) → deploy build 7e → served-UI staleness walk below →
+   confirmed 2026-07-30 evening) → deploy build 7f (RUNS MIGRATION 0024;
+   supersedes 7e — includes it) → served-UI staleness walk below →
    hemingway@ agent create → MFA re-enroll for admin@ + `auth.mfa` back to
    `"required"` → then the accumulated verify walks below on the CURRENT
    desk.html.
@@ -371,6 +394,14 @@ places.
       of the list. Directory/Settings management surfaces still show
       archived rows dimmed with Restore (bootstrap untouched — row 36
       stays fixed)
+- [ ] **Mailbox type saves (build 7f, row 38 — MIGRATION 0024 must run):**
+      Edit support@ → Type: Licensed mailbox → Save → the row's chip reads
+      "Licensed" and STAYS after a hard refresh; audit shows
+      "Mailbox updated … type → licensed"; flip it back to Shared and that
+      persists too; new mailboxes save whichever type was picked. A revert
+      here now means the migration didn't run (bootstrap would 500 on the
+      missing column rather than fabricate "shared", so a silent revert
+      should be impossible post-7f)
 - [ ] **Mail ingestion (bug #33):** with the new worker up, close/merge the
       ghost tickets #100023–100027, unpause support@, send ONE test email →
       exactly one ticket appears WITH the email body as its mail_in article;

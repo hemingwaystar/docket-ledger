@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-30 (build 7e) · migrations 0001–0023 · bundle “hemingway-backend.zip”**
+**As of 2026-07-30 (build 7f) · migrations 0001–0024 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -142,7 +142,7 @@ Adapter conventions (each one paid for by a numbered bug):
 
 ---
 
-## 3. Migration catalog (0001–0020)
+## 3. Migration catalog (0001–0024)
 
 | # | Contents |
 |---|---|
@@ -166,6 +166,10 @@ Adapter conventions (each one paid for by a numbered bug):
 | 0018 | `activity_type_rates.billable`; `priced()` replaced (verbatim 0001 body + as-of billable rung) — billing changes never re-price history |
 | 0019 | **Automations engine**: rule table extensions (events/order/archive), event outbox, notifications, SLA-notice dedupe, SLA + business-hours config seeds; engine grants (incl. two latent gaps: mail_worker round_robin INSERT + ticket_tags SELECT); desk_api column-scoped `INSERT/UPDATE(name, active)` on activity_types |
 | 0020 | Bug #29: normalize 0002's `"HH:MM"`-string business_hours in place (the "416d SLA" + worker-pass rollback); both consumers also parse any historical shape now |
+| 0021 | Caller verification: `desk.verifications` with hashed codes, SMS/email channels, per-ticket supersede semantics |
+| 0022 | Bug #30: `desk.mailboxes.outbound` — per-mailbox send eligibility (distinct from the global `mail.outbound_enabled` master switch) |
+| 0023 | Attachments pipeline: `desk.attachments` + staged uploads with the 20 MB cap and the sanctioned staged-upload sweep |
+| 0024 | Ledger row 38: `desk.mailboxes.mailbox_type` ('shared'/'licensed', default 'shared') — the Edit dialog's Type select finally has a column; bootstrap had been hard-coding "shared" onto every row |
 
 Migrations are append-only, applied exactly once (`public.schema_migrations`),
 run via the `migrate` compose service.
@@ -376,7 +380,7 @@ route-table cross-check. NEW battery member (2026-07-30):
 placeholder-vs-params and INSERT column-vs-VALUES arity across all three
 services (born of STATE ledger row 33; run it on every bundle).
 
-**The 2026-07-30 arc (bugfix-33 → build 7e) — all DONE (7e awaiting deploy):**
+**The 2026-07-30 arc (bugfix-33 → build 7f) — all DONE (7e+7f awaiting deploy):**
 
 * **Mail-duplication bug #33 fixed and confirmed** — the mail_in INSERT's
   dropped `is_auto` placeholder made psycopg3 raise client-side, leaving
@@ -429,6 +433,15 @@ services (born of STATE ledger row 33; run it on every bundle).
   never lies. Verification email pre-flight passed the same evening
   (verify@ confirmed sending), closing that tail item. UI-only change;
   bootstrap still emits archived rows.
+* **Build 7f — the mailbox Type select actually saves** (STATE ledger row
+  38, migration 0024): flipping a mailbox to Licensed snapped back to
+  Shared. Three layers were broken at once — the mirror PATCH dropped the
+  field, `desk.mailboxes` had no column for it, and bootstrap hard-coded
+  `"type": "shared"` onto every row, guaranteeing the revert. Fixed at
+  all three: `mailbox_type` column (CHECK shared/licensed, default
+  shared), create/patch/list accept + return `type` (422 on anything
+  else), bootstrap emits the real value, and the mirror sends it on both
+  save paths. Type changes audit as `type → licensed`.
 * **Operational learnings codified in STATE §6:** MFA lockout recovery
   under the `required` policy (console policy flip — enrollment needs a
   session by design), the VM's own-hostname DNS quirk, the PAT mint
