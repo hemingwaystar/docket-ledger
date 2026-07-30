@@ -1188,7 +1188,12 @@ function render(){
   const __ae=window.__fk_ae, __sel=window.__fk_sel;
   if(__ae){ const el=document.getElementById(__ae)||document.querySelector('[data-fkey="'+__ae+'"]');
     if(el){ window.__fk_restoring=true; el.focus();
-      if(__sel&&el.setSelectionRange){ try{ el.setSelectionRange(__sel[0],__sel[1]); }catch(e){} }
+      let placed=false;
+      if(__sel&&el.setSelectionRange){ try{ el.setSelectionRange(__sel[0],__sel[1]); placed=true; }catch(e){} }
+      if(!placed){ /* number inputs hide their caret API — a fresh focus()
+        parks the caret at position 0, so digits typed mid-render landed
+        BACKWARDS. Reassigning the value walks the caret to the end. */
+        try{ const v=el.value; el.value=''; el.value=v; }catch(e){} }
       window.__fk_restoring=false; } }
   if(window.__fk_view!==state.view){ window.__fk_view=state.view; window.scrollTo(0,0); }
 }
