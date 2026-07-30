@@ -1,4 +1,13 @@
 <!DOCTYPE html>
+<!-- ==========================================================================
+  LEDGER — time & billing UI. Same architecture as Docket: the prototype
+  (stylesheet, demo model, views) up top, and the LIVE ADAPTER as the file's
+  final script block (hydrate from /api/bootstrap, wrap-and-mirror every
+  mutation, LBASE-prefix aware so the same file serves /ledger/ behind nginx
+  AND the direct NetBird port). ledger.priced() on the server is the only
+  pricing authority — the UI's priced() mirrors it for display and must be
+  kept in step. Full tour: docs/CODE-GUIDE.md.
+=========================================================================== -->
 <html lang="en">
 <head>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
@@ -9,6 +18,20 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* ============================================================================
+   LEDGER STYLESHEET — organization map
+   ----------------------------------------------------------------------------
+   1. :root design tokens        — colors incl. billing-status palette
+   2. Shell layout               — rail, content, drawers
+   3. Components                 — cards, tables, chips (period/entry status),
+                                   toggles, inputs, combo dropdowns
+   4. UTILITIES (end of sheet)   — named classes extracted from repeated
+                                   inline patterns
+
+   Same inline-style convention as Docket (see its stylesheet header): one-off
+   tweaks stay inline beside their template markup; a pattern used 3+ times
+   is extracted below with a note. Extraction never changes computed styles.
+   ========================================================================= */
 /* ============================ Design tokens ============================ */
 :root{
   --ink:#152029;          /* primary text / structure (deep petrol) */
@@ -290,6 +313,13 @@ select:focus,input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--br
 .demo-pill b{color:#6b4a0c}
 .mini{font-size:11px;color:var(--ink-3)}
 .right{text-align:right}
+
+/* ============================================================================
+   4. UTILITIES — extracted repeated inline patterns (identical pixels)
+   ========================================================================= */
+/* compact chip for table cells — the default chip padding is sized for
+   card headers; inside dense rows it crowds the line height */
+.chip.slim{padding:1px 8px}
 </style>
 </head>
 <body>
@@ -987,7 +1017,7 @@ function viewDashboardTech(){
       <tbody>
         ${recent.map(e=>`<tr>
           <td><div class="cell-title">${esc(e.ticketTitle)}</div><div class="cell-meta">${esc(client(e.clientId).name)} · #${e.zTicket} · ${fmtDate(e.startedAt)}</div></td>
-          <td>${atype(e.typeId).sentinel?'<span class="chip unclassified" style="padding:1px 8px"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
+          <td>${atype(e.typeId).sentinel?'<span class="chip unclassified slim"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
           <td class="num" style="font-weight:600">${fmtHours(e.hours)}</td>
           <td>${statusChip(e)}</td>
         </tr>`).join('')}
@@ -1149,7 +1179,7 @@ function confirmDeleteSelected(){
   const ents=selectedEntries();
   if(!ents.length){ toast('Nothing selected to delete'); return; }
   const rowsHtml=ents.map(e=>{const c=client(e.clientId),lk=isLocked(e);
-    return `<tr><td><div class="cell-title" style="font-weight:500">${esc(e.ticketTitle)}</div><div class="cell-meta">${esc(c.name)} · #${e.zTicket}</div></td><td class="num">${fmtHours(e.hours)} h</td><td>${lk?'<span class="chip approved" style="padding:1px 8px"><span class="cdot"></span>kept · locked</span>':'<span class="chip void" style="padding:1px 8px"><span class="cdot"></span>voided</span>'}</td></tr>`;}).join('');
+    return `<tr><td><div class="cell-title" style="font-weight:500">${esc(e.ticketTitle)}</div><div class="cell-meta">${esc(c.name)} · #${e.zTicket}</div></td><td class="num">${fmtHours(e.hours)} h</td><td>${lk?'<span class="chip approved slim"><span class="cdot"></span>kept · locked</span>':'<span class="chip void slim"><span class="cdot"></span>voided</span>'}</td></tr>`;}).join('');
   const nLock=ents.filter(e=>isLocked(e)).length, nOpen=ents.length-nLock;
   openModal(`<div class="modal-head"><h3>Remove ${ents.length} time ${ents.length===1?'entry':'entries'} in Docket</h3><p>Simulates an agent removing ${ents.length===1?'this entry':'these entries'} on the Docket side. Review the outcome, then confirm.</p></div>
     <div class="modal-body">
@@ -1222,7 +1252,7 @@ function confirmSubmitSelected(){
   if(!ents.length){ toast('Nothing new to submit'); return; }
   const unclassified=ents.filter(e=>atype(e.typeId).sentinel);
   const rowsHtml=ents.map(e=>{const c=client(e.clientId),u=atype(e.typeId).sentinel;
-    return `<tr><td><div class="cell-title" style="font-weight:500">${esc(e.ticketTitle)}</div><div class="cell-meta">${esc(c.name)} · #${e.zTicket}</div></td><td class="num">${fmtHours(e.hours)} h</td><td>${u?'<span class="chip unclassified" style="padding:1px 8px"><span class="cdot"></span>needs a type</span>':'<span class="chip billable" style="padding:1px 8px"><span class="cdot"></span>ready</span>'}</td></tr>`;}).join('');
+    return `<tr><td><div class="cell-title" style="font-weight:500">${esc(e.ticketTitle)}</div><div class="cell-meta">${esc(c.name)} · #${e.zTicket}</div></td><td class="num">${fmtHours(e.hours)} h</td><td>${u?'<span class="chip unclassified slim"><span class="cdot"></span>needs a type</span>':'<span class="chip billable slim"><span class="cdot"></span>ready</span>'}</td></tr>`;}).join('');
   const blocked = unclassified.length>0;
   openModal(`<div class="modal-head"><h3>Submit ${ents.length} ${ents.length===1?'entry':'entries'} for review</h3><p>Your administrator will review and bill these. You can recall them until they\u2019re approved.</p></div>
     <div class="modal-body">
@@ -1394,7 +1424,7 @@ function viewApprovals(){
     const detail=s.es.slice().sort((a,b)=>a.startedAt-b.startedAt).map(e=>{
       const p=priced(e);
       return `<tr><td><div class="cell-title" style="font-weight:500">${esc(e.ticketTitle)}</div><div class="cell-meta">#${e.zTicket} \u00b7 ${fmtDate(e.startedAt)}</div></td>
-        <td>${atype(e.typeId).sentinel?'<span class="chip unclassified" style="padding:1px 8px"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
+        <td>${atype(e.typeId).sentinel?'<span class="chip unclassified slim"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
         <td class="num">${fmtHours(p.h)} h</td>${money?`<td class="num">${p.billable?fmtMoney(p.amount):'<span class="muted">\u2014</span>'}</td>`:''}
         <td>${statusChip(e)}</td></tr>`; }).join('');
     return main+`<tr class="expand"><td colspan="${colCount}"><div class="expand-inner">
@@ -1418,10 +1448,10 @@ function viewClients(){
     const es=state.entries.filter(e=>e.clientId===c.id && e.status!=='void' && !isLocked(e));
     let h=0,a=0; es.forEach(e=>{const p=priced(e); h+=p.h; a+=p.amount;});
     const acc = (!c.access||c.access.mode==='all')
-      ? '<span class="chip nonbill" style="padding:1px 8px"><span class="cdot"></span>Everyone</span>'
+      ? '<span class="chip nonbill slim"><span class="cdot"></span>Everyone</span>'
       : c.access.mode==='group'
-      ? `<span class="chip submitted" style="padding:1px 8px"><span class="cdot"></span>${(c.access.groups||[]).length} group${(c.access.groups||[]).length===1?'':'s'}</span>`
-      : `<span class="chip submitted" style="padding:1px 8px"><span class="cdot"></span>${(c.access.techs||[]).length} tech${(c.access.techs||[]).length===1?'':'s'}</span>`;
+      ? `<span class="chip submitted slim"><span class="cdot"></span>${(c.access.groups||[]).length} group${(c.access.groups||[]).length===1?'':'s'}</span>`
+      : `<span class="chip submitted slim"><span class="cdot"></span>${(c.access.techs||[]).length} tech${(c.access.techs||[]).length===1?'':'s'}</span>`;
     return `<tr class="clickable" onclick="openClient('${c.id}')">
       <td><div class="cell-title">${esc(c.name)}${c.archivedInDocket?' <span class="chip void" style="padding:1px 8px;margin-left:6px"><span class="cdot"></span>archived in Docket</span>':''}</div><div class="cell-meta">org #${c.zorg} · shared with Docket</div></td>
       <td><span class="chip nonbill" style="text-transform:capitalize;padding:1px 8px"><span class="cdot"></span>${c.cycle}</span></td>
@@ -1459,7 +1489,7 @@ function viewClient(){
       <td><div class="cell-title">${esc(t.name)}</div><div class="cell-meta">${t.note?esc(t.note):'<span class="muted">—</span>'}</div></td>
       <td>${manage
         ? `<div style="display:flex;align-items:center;gap:8px"><button class="toggle ${effBill?'on':''}" onclick="toggleClientTypeBillable('${c.id}','${t.id}')"></button><span class="mini">${effBill?'Billable':'Non-billable'}</span></div>`
-        : `<span class="chip ${effBill?'billable':'nonbill'}" style="padding:1px 8px"><span class="cdot"></span>${effBill?'Billable':'Non-billable'}</span>`}</td>
+        : `<span class="chip ${effBill?'billable':'nonbill'} slim"><span class="cdot"></span>${effBill?'Billable':'Non-billable'}</span>`}</td>
       <td class="num">${!showMoney?'<span class="muted">—</span>':(manage
         ? `<input type="number" min="0" step="5" value="${effBill?effRate:''}" placeholder="${effBill?(c.rateOverride!=null?c.rateOverride:t.rate):'—'}" data-fkey="cr-${c.id}-${t.id}" oninput="setClientTypeRate('${c.id}','${t.id}',this.value)" ${effBill?'':'disabled'} style="width:100px;text-align:right">`
         : (effBill?fmtMoney(effRate)+'/h':'—'))}</td>
@@ -1544,7 +1574,7 @@ function viewClient(){
   </div></div>`;
   const ticketRows=es.map(e=>{const p=priced(e);return `<tr class="${e.status==='void'?'void':(isLocked(e)?'locked-row':'')}">
     <td><div class="cell-title">${esc(e.ticketTitle)}</div><div class="cell-meta">#${e.zTicket}${can('view_all')?' · '+esc(tech(e.techId).name):''} · ${fmtDate(e.startedAt)}</div></td>
-    <td>${atype(e.typeId).sentinel?'<span class="chip unclassified" style="padding:1px 8px"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
+    <td>${atype(e.typeId).sentinel?'<span class="chip unclassified slim"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
     <td class="num" style="font-weight:600">${fmtHours(p.h)}</td>
     ${showMoney?`<td class="num">${p.billable?fmtMoney(p.amount):'<span class="muted">—</span>'}</td>`:''}
     <td>${statusChip(e)}</td></tr>`;}).join('');
@@ -1618,7 +1648,7 @@ function viewTypes(){
     const arch = a.active===false;
     if(arch) return `<tr style="opacity:.55">
       <td><div class="cell-title">${esc(a.name)} <span class="chip" style="margin-left:6px"><span class="cdot"></span>Archived</span></div><div class="cell-meta">hidden from pickers — existing entries keep it and keep pricing</div></td>
-      <td><span class="chip ${a.billable?'billable':'nonbill'}" style="padding:1px 8px"><span class="cdot"></span>${a.billable?'Billable':'Non-billable'}</span></td>
+      <td><span class="chip ${a.billable?'billable':'nonbill'} slim"><span class="cdot"></span>${a.billable?'Billable':'Non-billable'}</span></td>
       <td class="num muted">${a.billable?fmtMoney(a.rate)+'/h':'—'}</td>
       <td class="num">${n}</td>
     </tr>`;
@@ -1837,7 +1867,7 @@ function rcellHTML(k,row){
     case 'tech': return esc(row.tech);
     case 'activity': return esc(row.activity);
     case 'rate': return row.rate?`<span class="tape">${fmtMoney(row.rate)}</span>`:'<span class="muted">—</span>';
-    case 'billable': return row.billable==='Yes'?'<span class="chip billable" style="padding:1px 8px"><span class="cdot"></span>Yes</span>':row.billable==='Unclassified'?'<span class="chip unclassified" style="padding:1px 8px"><span class="cdot"></span>Uncl.</span>':'<span class="muted">No</span>';
+    case 'billable': return row.billable==='Yes'?'<span class="chip billable slim"><span class="cdot"></span>Yes</span>':row.billable==='Unclassified'?'<span class="chip unclassified slim"><span class="cdot"></span>Uncl.</span>':'<span class="muted">No</span>';
     case 'status': return esc(row.status);
     case 'note': return `<span class="cell-meta">${esc((row.note||'').slice(0,70))}${(row.note||'').length>70?'…':''}</span>`;
     case 'zammad': return `<span class="tape cell-meta">${esc(row.zammad)}</span>`;
@@ -2118,12 +2148,12 @@ function viewDirectory(){
   <div class="grid g-2">
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Groups &amp; membership</h3><span class="hint">shared</span></div>
-      ${state.zammadGroups.map(g=>`<div class="setting-row" ${g.archived?'style="opacity:.55"':''}><div class="sl"><b>${esc(g.name)}</b>${g.archived?' <span class="chip void" style="padding:1px 8px"><span class="cdot"></span>archived</span>':''}<p>${state.techs.filter(t=>t.groups.includes(g.id)).map(t=>t.name.split(' ')[0]).join(', ')||'no members'}</p></div></div>`).join('')}
+      ${state.zammadGroups.map(g=>`<div class="setting-row" ${g.archived?'style="opacity:.55"':''}><div class="sl"><b>${esc(g.name)}</b>${g.archived?' <span class="chip void slim"><span class="cdot"></span>archived</span>':''}<p>${state.techs.filter(t=>t.groups.includes(g.id)).map(t=>t.name.split(' ')[0]).join(', ')||'no members'}</p></div></div>`).join('')}
     </div>
     <div>
       <div class="card card-pad">
         <div class="card-head" style="padding:0 0 6px;border:0"><h3>Roles &amp; permissions</h3><span class="hint">managed in Docket's Directory</span></div>
-        ${state.zammadRoles.map(r=>`<div class="setting-row" ${r.archived?'style="opacity:.55"':''}><div class="sl"><b>${esc(r.name)}</b>${r.archived?' <span class="chip void" style="padding:1px 8px"><span class="cdot"></span>archived</span>':''}<p>${esc(r.note||'')}</p></div><span class="mini muted">${r.perms.length} Ledger permission${r.perms.length===1?'':'s'}</span></div>`).join('')}
+        ${state.zammadRoles.map(r=>`<div class="setting-row" ${r.archived?'style="opacity:.55"':''}><div class="sl"><b>${esc(r.name)}</b>${r.archived?' <span class="chip void slim"><span class="cdot"></span>archived</span>':''}<p>${esc(r.note||'')}</p></div><span class="mini muted">${r.perms.length} Ledger permission${r.perms.length===1?'':'s'}</span></div>`).join('')}
       </div>
       <div class="section-gap"></div>
       <div class="card card-pad">
@@ -2136,7 +2166,7 @@ function viewDirectory(){
   <div class="grid g-2">
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Clients</h3><span class="hint">shared directory</span></div>
-      ${state.clients.map(c=>`<div class="setting-row" ${c.archivedInDocket?'style="opacity:.55"':''}><div class="sl"><b>${esc(c.name)}</b>${c.archivedInDocket?' <span class="chip void" style="padding:1px 8px"><span class="cdot"></span>archived in Docket</span>':''}<p>org #${c.zorg} \u00b7 ${c.cycle} cycle</p></div></div>`).join('')}
+      ${state.clients.map(c=>`<div class="setting-row" ${c.archivedInDocket?'style="opacity:.55"':''}><div class="sl"><b>${esc(c.name)}</b>${c.archivedInDocket?' <span class="chip void slim"><span class="cdot"></span>archived in Docket</span>':''}<p>org #${c.zorg} \u00b7 ${c.cycle} cycle</p></div></div>`).join('')}
     </div>
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Activity types</h3><span class="hint">rates set on the Activity Types page</span></div>

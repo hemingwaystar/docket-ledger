@@ -8,7 +8,8 @@ next, and how to operate all of it. Two companion documents stay authoritative
 for their niches: **`docs/STATE.md`** (the living state doc — mirrored at the
 bundle root as `HANDOFF-2-PRODUCTION.md`) carries the current punch list and
 the complete 28-entry bug ledger verbatim; **`HANDOFF.md`** describes the
-original frontend prototypes. When this file and STATE.md disagree, STATE.md
+original frontend prototypes; **`docs/CODE-GUIDE.md`** is the code tour —
+UI architecture, CSS conventions, and the editing checklist. When this file and STATE.md disagree, STATE.md
 wins — it is updated every build round.
 
 ---

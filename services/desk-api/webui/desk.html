@@ -1,4 +1,20 @@
 <!DOCTYPE html>
+<!-- ==========================================================================
+  DOCKET — helpdesk UI. One self-contained file, two halves:
+
+    1) THE PROTOTYPE (top ~4300 lines): design tokens + stylesheet, demo data
+       model, and every view/render function. It still runs standalone as the
+       original clickable demo when window.LIVE_MODE is false.
+    2) THE LIVE ADAPTER (the file's final script block): hydrates state from
+       /api/bootstrap and mirrors every mutation back to desk-api by WRAPPING
+       the prototype's functions (local-first, then mirror, hydrate on error).
+       Server vocabulary intentionally matches the prototype's (bug #22).
+
+  House rules for edits: keep prototype functions pure/local; put server
+  wiring ONLY in the adapter; render() preserves focus/caret/scroll (bug #26)
+  so never innerHTML-rebuild outside it; styling conventions are documented
+  at the top of the stylesheet. Full tour: docs/CODE-GUIDE.md.
+=========================================================================== -->
 <html lang="en">
 <head>
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAK60lEQVR42u2b+3NV13XHP3uffR73hXjYBPFG4WEewWBXwa5x4rQl4+bhNNN28phJfuy/1f7QH9PxuO00NalTSuqHsI0NQbYMFggJAUICve7rnLMf+eGce5AAuVDdjNSifefOnJF096z9XXut9f2udSVO//2vmkKIyDnH07KEEE4IIZyzcwqBEEIInrIlhBDOIiRP+VoDYA2ANQDWAFgDYA2ANQDWAOj6cg66Ra7d/xUAnAPnHEIIlJJ4UuCc43+jMzqfE0LgyYypW+tWLwDOOTxPEIUBWhtm5xo0WzG+UoSB/0QgOOcIAp8wCEhTTasVI4SgXAoRQtBN4aa6dXjfV9QbbT7+/WeMjU/SihOkFGzsqXLscB9f39VLnGrEY+wVhQHDozf56MIQE1P30MZQKUXs79vBieOHCXwfrTXd0HCqG4dXSnF3ep5/e+cjpufq+ErlsWsZvTnJyI0JTvYf4sTx54iTdEnDnXOEQcB7Hw/ym//+EGcdnpLgHHP1BiPjtxgavs5P3zhFrVLuCgjLDgEhBFobfvvuRWbrTcqlECkFQoBAEAZZCJw9d4kvR24uGQ6dw39xbZTTv/uQwPeJogBPSqQn8ZViXbXC6M0J3nr7bJYau3ADlgWAdY4gUFwbvc3E5AxRGGCMzRJY/rLWgQApBOcvffkViUxgrGXg/GdIkQForS2SoXMWrQ2VcsSVkTGujNwgesLc0nUABJmXb01OF17MilanBuYwOIfnSaamZ5lvNPE8b1Fpy8JIMjtXZ/LeDEp5OLugjhaP2YN1lpEbt5BSriwAHeOT1CwoXYuNLYARYEzmRSHymvlAKCVpitb5Xgtenb3cAlbQbif54VcwB7jc8Folwi48kCvuQXFOax1h4FOKQqx1DyQvgbWOUhQSBArn7EN7dXZ0OaC1SinfY4VDwFjLru2b8Tx531u4/OTZW0pBkqTs3LaZSjnCWPuA98EYQ0+tyrYtzxInKVKKfL9FEZWVXOWxb8+O/Dat4A0QQpCmmq1f28iRAztpNNogxALvZ55utWN6amVeOn4wM3qJa2ud5dX+54nCgDhO8aTMqokAKQVSSubqDV78xkF2bdtCkqarowymqebV/kO8cKSPJE0Lz3d+98yGHn78+kl6amW0MY+sXlkO0PRu3sTffu87VMoR9UaTVpzQThKazTbNdpuXjx/hL7/zpyRpd4iQOP0Pv2pJIbsyFyhFIf/5/gU+vHCZKPCJ05QNPVV++sZrRIH/WEZ3+MDsfJ0Ln3/JjVt3SHVKT63Kwb272d+3E60N1trlAOCklMIaM9cVKtwxPE1TDu7dwaeDV3E4tDZ8fWcv1XJEvdHG8+Rj3ag4SaiUS7z20nGMtVibxb11jjhOEELQrVFG1wDoZHLlefjKI9W6EDUPZ/3HYZcarTXK87I8EidYY5Cyuwq+i2rQEgSKVjumXXgJ7k7PopT3ROXKuawk+r5irtHk7swcWmsq5VJGolajGgx8n/l6iw/OD2Fz+hr4iivXxrnw2TCH9++mnaSPoQYhDAIufj7MwKeDTE3PYIwhCkP27dnOt0+8wLpqpSsVoGtq0PcVk3dneev0+8w3Wnm82kIvvHX6Pe7NzHOy/wjtOF2SVgkhicKAt88OcOaD8yhP4nkeALP1Ou9+dJHLV0f55V9/j2c2ridNV4EalDIrdafPnme+3iIMVHZFXYcpQhj6nB24wJWRcaqViFIUUC6Fi96lKCQKfQY+HeS/Bj6hUooIfL8omcrzqFXKTE3P8E+//i3G2JW/AdY5SkHApS+uMzE5TSkK0MYs4O+uYHO+7/Ov77zPJ5eusL6nSikKUHk8x0lKvdniztQ9xicmKYUBzllsh1GRaQxtLeVSxMiN2wwNj/D8wX002zFyGUB0JQfcunO3AOSRWsA5hIA01Vy+NpZRYecK0WOtLSiz8lQGWqEmFwiqBX3H0Zu3OXZof/aDlQJA5CYmqV4gjx7WAh1JLKXIewYG4yzO5o1PlcW5kALX6QE8siecqT8hIEnSHEOxciHgyBodtUqp8L57hBK8T3BSHJZKKSIKfDwlczmtabXa1JsthBD4ysNhi88X3u+A7hw962q545cniZd9A4yx9O3q5cMLl+/X54Xezz3fasfs3r6Fk/3foGddlSjwC1JjjKUVx0zdm+HM++cZu32HMPAxxiyuEgXf8HmubxfpalCDSarZ9rVNHDvUR73RQoj70rXzN612TK1S5o1Tr9C3cyvVUlSUNwClPNZVyxzet4e/+f6fUY5CWu24UINSCEQO1ly9wcn+Y2zv3bx61GCSar710lG+eexAZtSC9JWmmmc3rucnP8wVXrNVEKWFXMJYx1y9yYaeGr/48ets3rSBerNFsxXTbMc0mi20Npx69QTfPXmCdpwsK/t3XQsYa3n9tX7iJOXi0FWiICDVKbVqiZ/96M+pVUq0k0zjLxVOnieJk5RtvZv5u5//FYOXrzJ68zZpqtnQU+Pg3j3s3LqFOElWFxUGcDZTfwf6dvD7oasgIEk1R3b00lOr0Gg+nhqUIuseeVLyJ0cP8s3nDxfxlGpNqx0jpVh9AAiR8QDfV0W3NtP2ftEZepLq4isPHDTbLazNVKWvVNF2X3VyuNP0nJmbJ9UaX3lIKZiansXzvMfmKs45SmHI2K0JBj69xPjEJEYbapUyh/b30X/0EJ6UeWdpleQA5xxRFDB+e4qBT4ZQnoexFt9XXBu7xQfnB3nx6AHSgjB9xT5hwLkLg/zzb35HolOU9BDCMXH3Hp9fvc7g5av87I3vEoUhxpiVrwKdpsfY+B3+8c3/YHp2HpUTnGx6JfiXd97l388M4CvFUlK+0wq7MnKDN98+g5SCcinC9xWeUoRBQE+1wtDwCG++fWbJZLoCalDSasf8+sw5klTj+wpr3SJBVCmVeO/8JS4ODROF/uIZwgMgnD33Cc5lFcEai3P3x2PaGGrVCoNXrvLl9THCMFjZyVAnOX0xPMbU9Bxh4OfC5gFBhMP3PD66OPTIXn42GvOYnpvn1sQUga8emh0sKrnGMnx9HG/FR2P5iOv2nXsZA3T3B6MLBZGzDs/zuDczx1y9gXqE4UII2nFMqnVHZS1Sgw9WnGa73RUxtOzJEIA25v55H/B+9uwKsmSsfaR8dTbL/oH/P098nYNqubRADK0QAC5PcuvXVYsW2EPezw201lAuhVTKpYd6+kIItDFs6FnHti3P5ERIPPpoLus87929oytdoWWKocz7+/ZsJ/BVdrCFPskfPClpJykH9uykUoowxi5BgByvvfQiyvNItM7FUDYDkFLgedlo7Nih/fTt2EacJKtDDfZu3sjLLxymkQudTL1lbykE840mWzdv4pX+oyRLfEWm0y/YvX0rP/nBKZTnUW+2iJOUJE1ptWPqjSbHDx/gR6e+hda6K98QWTYRkrnhr/QfQUjBex9fotFqF70AIWDv7u388C9eoVwKv7KTK4WgFcccPbiPLc9u4tzFz7hxewKts8nx4f19PP/cPqx1GGtW32wwDHwm784wPHqTmdl5gsBne++z9O3cCojH/lKTdY5AKXxfkaQaay2Br4oJEcvXAt2fDQK04oQN69fx8jMbFnGFJE2fSMBIIUi1LhoeWYlMcC5rwyNWoRrsGK61XsT5s/n+kw8zH/xMZ9TW7aW6veEfy9A/1lr7tvgaAGsArAGwBsDTvJRwQkopl1De/2+XkEJiMVI57LxxIny6/n0+I6bA/B8AqRQ4CkAKsX0AAAAASUVORK5CYII=">
@@ -9,6 +25,24 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* ============================================================================
+   DOCKET STYLESHEET — organization map
+   ----------------------------------------------------------------------------
+   1. :root design tokens        — every color/status var; change HERE first
+   2. Shell layout               — rail, topbar, content grid
+   3. Components                 — cards, tables (.tbl), chips, buttons,
+                                   inputs, modals, combo dropdowns
+   4. View-specific bits         — SLA dots, composer, settings rows
+   5. UTILITIES (end of sheet)   — named classes extracted from repeated
+                                   inline patterns; prefer these over new
+                                   inline styles when a pattern repeats
+
+   Inline-style convention: this UI renders through template literals, so
+   ONE-OFF tweaks stay inline next to their markup (locality beats a class
+   nobody can find). A pattern used 3+ times gets extracted to §5 with a
+   comment. Computed styles are identical either way — extraction is
+   organization, never redesign.
+   ========================================================================= */
 /* ============================ Design tokens (shared with Ledger) ============================ */
 :root{
   --ink:#152029;          /* primary text / structure (deep petrol) */
@@ -336,6 +370,16 @@ select:disabled{opacity:.55;cursor:not-allowed}
 .ok-sla .sdot{background:var(--billable)} .ok-sla{color:var(--ink-2)}
 .due-sla .sdot{background:var(--warn)} .due-sla{color:var(--warn)}
 .breach-sla .sdot{background:var(--void)} .breach-sla{color:var(--void);font-weight:600}
+
+/* ============================================================================
+   5. UTILITIES — extracted repeated inline patterns (identical pixels)
+   ========================================================================= */
+/* card header used INSIDE an already-padded card body (.card-pad): the outer
+   pad supplies the spacing, so the head drops its own padding + rule */
+.card-head.flush{padding:0 0 6px;border:0}
+/* monospace data inputs (ids, tenants, URIs, Entra maps) — pair with an
+   inline width when the box needs one; font stack matches .tape */
+.in-mono{font-family:'IBM Plex Mono',monospace;font-size:12px}
 </style>
 </head>
 <body>
@@ -358,6 +402,7 @@ select:disabled{opacity:.55;cursor:not-allowed}
         <div>
           <div class="who-name" id="userName">Jordan Doyle</div>
           <div class="who-meta"><span class="dot"></span><span id="userMeta">Signed in · admin</span></div>
+          <a href="#" onclick="signOut();return false" class="mini" style="color:#8fa0ab;text-decoration:underline;text-underline-offset:2px">Sign out</a>
         </div>
       </div>
     </div>
@@ -776,6 +821,14 @@ const state = {
 };
 
 function log(action, detail){ state.audit.unshift({ ts:nowMs(), who:state.user.name, action, detail }); }
+function signOut(){
+  if(!window.LIVE_MODE){ toast('Demo mode — nothing to sign out of.'); return; }
+  /* one shared session: ending it here signs Ledger out too. Navigate the
+     TOP window so the whole suite leaves, not just this pane. */
+  fetch('/auth/logout',{method:'POST',credentials:'same-origin'})
+    .finally(()=>{ try{ (window.top||window).location.href='/ui/login.html'; }
+                   catch(e){ location.href='/ui/login.html'; } });
+}
 /* in-app notifications (SLA escalations etc.) — in production these fan out
    to email / Teams webhooks; here they land in the bell. */
 function notify(kind, text, ticketId){
@@ -2330,7 +2383,7 @@ function viewClient(){
   <div class="section-gap"></div>
   <div class="grid g-2">
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Organization</h3><span class="hint">shared with Ledger</span></div>
+      <div class="card-head flush"><h3>Organization</h3><span class="hint">shared with Ledger</span></div>
       ${kv('Address', [c.addr1,c.addr2].filter(Boolean).map(esc).join(', ') + (c.city?`<br>${esc(c.city)}, ${esc(c.st)} ${esc(c.zip)}`:''))}
       ${kv('Main phone', esc(c.phone||''), true)}
       ${kv('Fax', esc(c.fax||''), true)}
@@ -2340,7 +2393,7 @@ function viewClient(){
       ${c.notes&&!arch?`<div class="mini muted" style="margin-top:10px;font-style:italic">${esc(c.notes)}</div>`:''}
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Contacts</h3><span class="hint">${c.contacts.filter(p=>p.active!==false).length} active${c.contacts.some(p=>p.active===false)?` · ${c.contacts.filter(p=>p.active===false).length} inactive`:''}</span></div>
+      <div class="card-head flush"><h3>Contacts</h3><span class="hint">${c.contacts.filter(p=>p.active!==false).length} active${c.contacts.some(p=>p.active===false)?` · ${c.contacts.filter(p=>p.active===false).length} inactive`:''}</span></div>
       ${c.contacts.map(contactRow).join('')}
       ${(can('add_contacts')||can('manage_clients'))&&!arch?`<span style="display:inline-flex;gap:8px;margin-top:12px"><button class="btn sm" onclick="addContactModal('${c.id}')">${icon(IC.plus)}Add contact</button><button class="btn sm ghost" onclick="csvImportModal('${c.id}')">${icon(IC.export)}Import from Entra (CSV)</button></span>`:''}
     </div>
@@ -2967,11 +3020,11 @@ function viewAutomations(){
   return `
   <div class="notice info" style="margin-bottom:16px">${icon(IC.mail)}<div><b>One Entra app registration, every mailbox.</b> Ingestion runs on Microsoft Graph change-notification subscriptions with application-type <span class="tape">Mail.Read</span>, scoped by an application access policy to just these mailboxes — the same pattern the verification sender uses for <span class="tape">Mail.Send</span>. Shared mailboxes need no license; licensed mailboxes work identically. A 60s delta-query poll backstops missed webhooks.</div></div>
   <div class="card card-pad" style="margin-bottom:16px">
-    <div class="card-head" style="padding:0 0 6px;border:0"><h3>Microsoft Graph authentication</h3><span class="hint">one app registration \u00b7 every mailbox and the verification sender ride on it</span></div>
+    <div class="card-head flush"><h3>Microsoft Graph authentication</h3><span class="hint">one app registration \u00b7 every mailbox and the verification sender ride on it</span></div>
     <div class="setting-row" style="align-items:flex-start"><div class="sl">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
           <span class="mini muted">tenant</span><span class="tape">${esc(AUTH_CFG.tenant)}</span>
-          <span class="mini muted">app (client) ID</span><input type="text" value="${esc(GRAPH_AUTH.clientId)}" style="width:200px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="graphSet('clientId',this.value,this)" ${GRAPH_AUTH.connected?'disabled title="Disconnect before changing the app registration"':''}>
+          <span class="mini muted">app (client) ID</span><input type="text" value="${esc(GRAPH_AUTH.clientId)}" class="in-mono" style="width:200px" onchange="graphSet('clientId',this.value,this)" ${GRAPH_AUTH.connected?'disabled title="Disconnect before changing the app registration"':''}>
         </div>
         ${secretRow('graphSecret')}
         <p>${GRAPH_AUTH.connected
@@ -3498,7 +3551,7 @@ function viewDirectory(){
   <div class="section-gap"></div>
   <div class="grid g-2">
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Groups &amp; membership</h3><span class="hint">boards, routing and access scopes \u2014 shared</span></div>
+      <div class="card-head flush"><h3>Groups &amp; membership</h3><span class="hint">boards, routing and access scopes \u2014 shared</span></div>
       ${GROUPS.map(g=>{ const arch=isArch(g); return `<div class="setting-row" style="align-items:flex-start;${arch?'opacity:.55':''}"><div class="sl" style="flex:1">
           <b>${esc(g.name)}</b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:7px">${AGENTS.map(a=>`<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" ${a.groups.includes(g.id)?'checked':''} ${arch?'disabled':''} onchange="toggleMembership('${g.id}','${a.id}')" style="width:auto;accent-color:var(--brand)">${esc(a.name.split(' ')[0])}</label>`).join('')}</div>
@@ -3511,7 +3564,7 @@ function viewDirectory(){
     </div>
     <div>
       <div class="card card-pad">
-        <div class="card-head" style="padding:0 0 6px;border:0"><h3>Activity types</h3><span class="hint">the timer logs against these \u2014 shared</span></div>
+        <div class="card-head flush"><h3>Activity types</h3><span class="hint">the timer logs against these \u2014 shared</span></div>
         ${ATYPES.filter(x=>x.id!=='a0').map(x=>{ const arch=isArch(x); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${esc(x.name)}</b>${arch?' <span class="chip st-closed"><span class="cdot"></span>Archived</span>':''}<p>${x.billable?'billable \u2014 rate set in Ledger':'non-billable'}</p></div>
           <button class="rowbtn" onclick="typeModal('${x.id}')">Rename</button>
           <button class="rowbtn" onclick="archiveType('${x.id}')">${arch?'Restore':'Archive'}</button></div>`;}).join('')}
@@ -3520,13 +3573,13 @@ function viewDirectory(){
       </div>
       <div class="section-gap"></div>
       <div class="card card-pad">
-        <div class="card-head" style="padding:0 0 6px;border:0"><h3>Clients</h3><span class="hint">shared directory</span></div>
+        <div class="card-head flush"><h3>Clients</h3><span class="hint">shared directory</span></div>
         <div class="mini" style="margin-bottom:8px">${CLIENTS.filter(c=>c.status!=='archived').length} active \u00b7 ${CLIENTS.filter(c=>c.status==='archived').length} archived \u2014 created or edited in the Clients tab, visible in Ledger the moment they're saved, with billing defaults applied there.</div>
         <button class="btn sm" onclick="go('clients')">Manage in Clients \u2192</button>
       </div>
       <div class="section-gap"></div>
       <div class="card card-pad">
-        <div class="card-head" style="padding:0 0 6px;border:0"><h3>Agents</h3><span class="hint">Entra-synced \u2014 shared</span></div>
+        <div class="card-head flush"><h3>Agents</h3><span class="hint">Entra-synced \u2014 shared</span></div>
         ${AGENTS.map(a=>`<div class="setting-row"><div class="sl" style="display:flex;gap:10px;align-items:center">${avatarOf(a)}<span><b>${esc(a.name)}</b><p style="margin:2px 0 0">${a.groups.map(gid=>esc(grp(gid)?.name||gid)).join(' \u00b7 ')}</p></span></div>
           ${AUTH_CFG.localPasswords?(()=>{ const au=AGENT_AUTH[a.id]||{pw:false,mfa:false}; return `
             <span class="chip ${au.pw?'st-solved':'st-closed'}" style="padding:1px 8px" title="${au.mustChange?'temporary — must change at next sign-in':''}"><span class="cdot"></span>${au.pw?(au.mustChange?'temp pw':'password'):'no pw'}</span>
@@ -3544,20 +3597,20 @@ function viewSettings(){
   return `
   <div class="grid g-2">
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Groups</h3><span class="hint">shared — managed in the Directory</span></div>
+      <div class="card-head flush"><h3>Groups</h3><span class="hint">shared — managed in the Directory</span></div>
       <div class="mini" style="margin-bottom:10px">${aGROUPS().length} active group${aGROUPS().length===1?'':'s'}${GROUPS.some(isArch)?` \u00b7 ${GROUPS.filter(isArch).length} archived`:''} \u2014 groups, membership and archiving live in the shared <b>Directory</b>, so Docket and Ledger always agree.</div>
       <button class="btn sm" onclick="go('directory')">Open Directory \u2192</button>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>API access</h3><span class="hint">script reports &amp; automations \u00b7 <span class="tape">window.DocketAPI</span> in the prototype, REST + PATs in production</span></div>
+      <div class="card-head flush"><h3>API access</h3><span class="hint">script reports &amp; automations \u00b7 <span class="tape">window.DocketAPI</span> in the prototype, REST + PATs in production</span></div>
       ${API_TOKENS.map(k=>`<div class="setting-row"><div class="sl"><b>${esc(k.label)}</b><p><span class="tape">${esc(k.token)}</span> \u00b7 ${k.lastUsed?'last used '+fmtDT(k.lastUsed):'never used'}</p></div><button class="rowbtn" onclick="apiRevoke('${k.id}')">Revoke</button></div>`).join('')}
       <button class="btn sm" style="margin:10px 0 14px" onclick="apiNewToken()">+ New token</button>
       <div class="mini muted" style="margin-bottom:6px">Endpoints: <span class="tape">GET /api/tickets?state=open&amp;client=c4</span> \u00b7 <span class="tape">GET /api/tickets/:id</span> \u00b7 <span class="tape">GET /api/reports/queue</span> \u00b7 <span class="tape">GET /api/audit</span></div>
-      <div style="display:flex;gap:8px"><input type="text" id="apiPath" value="/api/reports/queue" style="flex:1;font-family:'IBM Plex Mono',monospace;font-size:12px"><button class="btn sm" onclick="apiTry()">Try it</button></div>
+      <div style="display:flex;gap:8px"><input type="text" id="apiPath" value="/api/reports/queue" class="in-mono" style="flex:1"><button class="btn sm" onclick="apiTry()">Try it</button></div>
       <pre id="apiOut" style="background:#152029;color:#d7e4e2;padding:10px;border-radius:8px;font-size:11px;max-height:220px;overflow:auto;margin-top:8px">\u2192 responses appear here</pre>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Email signatures</h3><span class="hint">appended to every outbound reply: your line, then the board's block</span></div>
+      <div class="card-head flush"><h3>Email signatures</h3><span class="hint">appended to every outbound reply: your line, then the board's block</span></div>
       <div class="field"><label>My signature (${esc(state.user.name)})</label>
         <input type="text" value="${esc(AGENT_SIGS[state.meId]||'')}" onchange="AGENT_SIGS[state.meId]=this.value; log('Personal signature updated', state.user.name); toast('Signature saved.');" placeholder="Name \u00b7 Title"></div>
       ${can('manage_settings')?aGROUPS().map(g=>`<div class="field"><label>${esc(g.name)} board signature</label>
@@ -3565,12 +3618,12 @@ function viewSettings(){
       <div class="mini muted">Rendered at send time \u2014 the sent article shows exactly what the customer received.</div>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Canned responses</h3><span class="hint">insert from the composer \u00b7 template variables render per ticket</span></div>
+      <div class="card-head flush"><h3>Canned responses</h3><span class="hint">insert from the composer \u00b7 template variables render per ticket</span></div>
       ${CANNED.map(c=>`<div class="setting-row"><div class="sl"><b>${esc(c.name)}</b><p>${esc(c.body.slice(0,80))}\u2026</p></div><button class="rowbtn" onclick="cannedModal('${c.id}')">Edit</button></div>`).join('')}
       <button class="btn sm" style="margin-top:12px" onclick="cannedModal()">+ Add canned response</button>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Business hours</h3><span class="hint">SLA clocks only run inside these</span></div>
+      <div class="card-head flush"><h3>Business hours</h3><span class="hint">SLA clocks only run inside these</span></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
         ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i)=>`<label class="mini" style="display:inline-flex;gap:4px;align-items:center;text-transform:none;cursor:pointer"><input type="checkbox" ${BIZ.days.includes(i)?'checked':''} onchange="bizDay(${i},this.checked)" style="width:auto;accent-color:var(--brand)">${d}</label>`).join('')}
       </div>
@@ -3582,7 +3635,7 @@ function viewSettings(){
       <div class="mini muted" style="margin-top:8px">A ticket opened Friday 5 PM won't breach on Saturday — due dates walk only working minutes.</div>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Ticket states</h3><span class="hint">editable vocabulary — behavior comes from the type</span></div>
+      <div class="card-head flush"><h3>Ticket states</h3><span class="hint">editable vocabulary — behavior comes from the type</span></div>
       ${STATES.map(s=>{ const arch=isArch(s); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b><span class="chip ${s.cls}"><span class="cdot"></span>${esc(s.label)}</span></b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}<p>${esc(s.desc||'')}</p></div>
         <span class="mini muted">${s.type==='open'?'SLA runs':s.type==='paused'?'SLA paused':'resolved'}</span>
         <button class="rowbtn" onclick="stateModal('${s.id}')">Edit</button>
@@ -3592,7 +3645,7 @@ function viewSettings(){
       <div class="mini muted" style="margin-top:8px">Any state can be archived — tickets already in it keep it until moved. At least one running-SLA state and one resolved state must stay active. Core states can't be hard-deleted (history references them); custom ones can once empty.</div>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Priorities & SLA</h3><span class="hint">tiers are editable — targets in hours drive the SLA column</span></div>
+      <div class="card-head flush"><h3>Priorities & SLA</h3><span class="hint">tiers are editable — targets in hours drive the SLA column</span></div>
       ${PRIOS.slice().sort((a,b)=>b.id-a.id).map(p=>{ const arch=isArch(p); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${prioTag(p.id)}</b>${arch?` <span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Archived</span>`:''}</div>
         <label class="mini muted">first response <input type="number" value="${SLA[p.id]?.fr??''}" min="1" style="width:64px;margin-left:6px" onchange="SLA[${p.id}]=SLA[${p.id}]||{};SLA[${p.id}].fr=Number(this.value)||SLA[${p.id}].fr;log('SLA changed','${esc(p.label)} · first response');render()"></label>
         <label class="mini muted">resolution <input type="number" value="${SLA[p.id]?.res??''}" min="1" style="width:64px;margin-left:6px" onchange="SLA[${p.id}]=SLA[${p.id}]||{};SLA[${p.id}].res=Number(this.value)||SLA[${p.id}].res;log('SLA changed','${esc(p.label)} · resolution');render()"></label>
@@ -3604,21 +3657,21 @@ function viewSettings(){
       <div class="mini muted" style="margin-top:8px">Higher tiers sort above lower ones in every queue; escalation rules ("at least High") compare by tier order. Archiving hides a tier from pickers while tickets that carry it keep their SLA; delete needs the tier fully unused.</div>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Caller verification</h3><span class="hint">one-time codes for sensitive requests</span></div>
+      <div class="card-head flush"><h3>Caller verification</h3><span class="hint">one-time codes for sensitive requests</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>SMS</b>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
             <select style="width:auto" onchange="vcfgSet('sms.provider',this.value,this)"><option ${VCFG.sms.provider==='voip.ms'?'selected':''}>voip.ms</option><option ${VCFG.sms.provider==='Twilio'?'selected':''}>Twilio</option></select>
-            <span class="mini muted">sending DID</span><input type="text" value="${esc(VCFG.sms.did)}" style="width:140px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="vcfgSet('sms.did',this.value,this)">
+            <span class="mini muted">sending DID</span><input type="text" value="${esc(VCFG.sms.did)}" class="in-mono" style="width:140px" onchange="vcfgSet('sms.did',this.value,this)">
           </div>
           ${VCFG.sms.provider==='voip.ms'
-            ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">voip.ms API username</span><input type="text" value="${esc(VCFG.sms.apiUser||'api@hemingwaytech.io')}" style="width:220px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="vcfgSet('sms.apiUser',this.value,this)"></div>${secretRow('voipKey')}`
-            : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">Twilio account SID</span><input type="text" value="${esc(VCFG.sms.twilioSid||'')}" placeholder="AC\u2026" style="width:220px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="vcfgSet('sms.twilioSid',this.value,this)"></div>${secretRow('twilioToken')}`}
+            ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">voip.ms API username</span><input type="text" value="${esc(VCFG.sms.apiUser||'api@hemingwaytech.io')}" class="in-mono" style="width:220px" onchange="vcfgSet('sms.apiUser',this.value,this)"></div>${secretRow('voipKey')}`
+            : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">Twilio account SID</span><input type="text" value="${esc(VCFG.sms.twilioSid||'')}" placeholder="AC\u2026" class="in-mono" style="width:220px" onchange="vcfgSet('sms.twilioSid',this.value,this)"></div>${secretRow('twilioToken')}`}
         </div>
         <button class="rowbtn" onclick="vcfgToggle('sms')">${VCFG.sms.enabled?'Disable':'Enable'}</button>
         <span class="chip ${VCFG.sms.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.sms.enabled?'Connected':'Off'}</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Email</b>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
-            <span class="mini muted">Microsoft Graph \u00b7 sends from</span><input type="text" value="${esc(VCFG.email.from)}" style="width:280px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="vcfgSet('email.from',this.value,this)">
+            <span class="mini muted">Microsoft Graph \u00b7 sends from</span><input type="text" value="${esc(VCFG.email.from)}" class="in-mono" style="width:280px" onchange="vcfgSet('email.from',this.value,this)">
             <span class="mini muted">(app-scoped Mail.Send)</span>
           </div></div>
         <button class="rowbtn" onclick="vcfgToggle('email')">${VCFG.email.enabled?'Disable':'Enable'}</button>
@@ -3631,20 +3684,20 @@ function viewSettings(){
         <span class="chip ${VCFG.postToThread?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.postToThread?'Posting to thread':'Audit Log only'}</span></div>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Channels</h3><span class="hint">how tickets arrive</span></div>
+      <div class="card-head flush"><h3>Channels</h3><span class="hint">how tickets arrive</span></div>
       <div class="setting-row"><div class="sl"><b>Microsoft Graph mail</b><p>${MAILBOXES.length} mailboxes (${MAILBOXES.filter(m=>m.type==='shared').length} shared, ${MAILBOXES.filter(m=>m.type==='licensed').length} licensed) · webhook subscriptions + 60s delta poll · outbound routed per ticket/board${can('manage_automations')?` — <a href="#" onclick="go('automations');return false" style="color:var(--brand)">authenticate &amp; manage in Automations</a>`:''}</p></div><span class="chip ${GRAPH_AUTH.connected?'st-solved':'st-closed'}"><span class="cdot"></span>${GRAPH_AUTH.connected?'Connected':'Not authenticated'}</span></div>
       <div class="setting-row"><div class="sl"><b>Ledger link</b><p>Time entries stream to the timesheet ledger over the shared database — no sync job, no extension</p></div><span class="chip st-solved"><span class="cdot"></span>Native</span></div>
       <div class="setting-row"><div class="sl"><b>Customer portal</b><p>Kept in the schema in case it's ever wanted — not being built</p></div><span class="chip st-closed"><span class="cdot"></span>Not planned</span></div>
     </div>
     <div class="card card-pad">
-      <div class="card-head" style="padding:0 0 6px;border:0"><h3>Authentication</h3><span class="hint">who gets in, and as what</span></div>
+      <div class="card-head flush"><h3>Authentication</h3><span class="hint">who gets in, and as what</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Microsoft Entra ID SSO</b>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
-            <span class="mini muted">OIDC \u00b7 tenant</span><input type="text" value="${esc(AUTH_CFG.tenant)}" style="width:260px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('tenant',this.value,this)">
-            <span class="mini muted">client ID</span><input type="text" value="${esc(AUTH_CFG.clientId||'')}" placeholder="Graph app's ID by default" style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('clientId',this.value,this)">
-            <span class="mini muted">redirect URI</span><input type="text" value="${esc(AUTH_CFG.redirectUri||'')}" placeholder="https://\u2026/auth/oidc/callback (blank = derive from request)" style="width:290px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('redirectUri',this.value,this)">
-            <span class="mini muted">\u00b7 sessions shared with Ledger</span>
+          <div style="display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 10px;align-items:center;margin:8px 0 2px;max-width:560px">
+            <span class="mini muted">OIDC \u00b7 tenant</span><input type="text" value="${esc(AUTH_CFG.tenant)}" class="in-mono" style="width:100%" onchange="authSet('tenant',this.value,this)">
+            <span class="mini muted">client ID</span><input type="text" value="${esc(AUTH_CFG.clientId||'')}" placeholder="Graph app's ID by default" class="in-mono" style="width:100%" onchange="authSet('clientId',this.value,this)">
+            <span class="mini muted">redirect URI</span><input type="text" value="${esc(AUTH_CFG.redirectUri||'')}" placeholder="https://\u2026/auth/oidc/callback (blank = derive from request)" class="in-mono" style="width:100%" onchange="authSet('redirectUri',this.value,this)">
           </div>
+          <div class="mini muted" style="margin-bottom:4px">Sessions are shared with Ledger \u2014 one sign-in, both apps.</div>
           ${secretRow('entraSecret')}
           <div class="mini muted">Secrets live encrypted in the shared database \u2014 never in compose files or env vars; rotate here, both apps pick it up live.</div>
         </div>
@@ -3656,7 +3709,7 @@ function viewSettings(){
             : 'Disabled \u2014 every user\u2019s role is assigned manually in the <b>Directory \u2192 Agents</b> card; Entra only authenticates.'}</p>
           <div style="${AUTH_CFG.roleMapping?'':'opacity:.45;pointer-events:none'}">
           ${state.roleDefs.filter(r=>r.active!==false).map(r=>`<div style="display:flex;gap:8px;align-items:center;margin:4px 0">
-            <input type="text" value="${esc(ENTRA_MAP[r.name]||'')}" placeholder="SG-\u2026" style="width:200px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="entraSet('${jsq(r.name)}',this.value,this)">
+            <input type="text" value="${esc(ENTRA_MAP[r.name]||'')}" placeholder="SG-\u2026" class="in-mono" style="width:200px" onchange="entraSet('${jsq(r.name)}',this.value,this)">
             <span class="mini muted">\u2192 ${esc(r.name)}</span></div>`).join('')}
           </div>
         </div>

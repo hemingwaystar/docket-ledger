@@ -12,6 +12,7 @@ git (`docs/STATE.md`) so it travels with the code.
 > inventory, done/not-done/roadmap, deploy + ops instructions — lives in
 > **docs/DOCUMENTATION.md** (mirrored in the bundle as DOCUMENTATION.md).
 > This file remains the living state doc: punch list + bug ledger win here.
+> Reading or editing the code itself? Start with **docs/CODE-GUIDE.md**.
 
 ## 1. Executive state
 
