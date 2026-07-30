@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-29 (build 6) · migrations 0001–0023 · bundle “hemingway-backend.zip”**
+**As of 2026-07-30 (build 7e) · migrations 0001–0023 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -371,7 +371,69 @@ INSERT/UPDATE/DELETE **and** cross-schema FROM/JOIN in all three services vs
 migrations, view- and function-aware, DEFAULT-PRIVILEGES-aware); dependency
 audit (third-party imports vs each service’s requirements.txt); `node --check`
 on every script block; `py_compile` on every Python file; fetch-URL vs
-route-table cross-check.
+route-table cross-check. NEW battery member (2026-07-30):
+`scripts/sql_arity_audit.py` — AST-audits every literal `execute()` for
+placeholder-vs-params and INSERT column-vs-VALUES arity across all three
+services (born of STATE ledger row 33; run it on every bundle).
+
+**The 2026-07-30 arc (bugfix-33 → build 7e) — all DONE (7e awaiting deploy):**
+
+* **Mail-duplication bug #33 fixed and confirmed** — the mail_in INSERT's
+  dropped `is_auto` placeholder made psycopg3 raise client-side, leaving
+  the transaction alive: ticket committed, article never landed, dedup and
+  threading starved, delta cursor frozen → one ghost ticket per pass. One
+  character to fix; the arity audit makes the class extinct.
+  `apply_mail_rules` additionally fenced with a savepoint (bug-#29 class).
+* **Outbound proven and LIVE** — `POST /api/settings/graph/test-send`
+  (admin-only pre-flight, no ticket, not gated on the master switch)
+  proved Mail.Send consent + access-policy membership for support@ with a
+  real 202+Message-ID; `mail.outbound_enabled` flipped; agent replies
+  transmit. Reply/trigger articles now record `mail_from` (was silently
+  NULL); an outbound reply whose MIME would exceed Graph's 4 MB sendMail
+  limit gets a clear 413 instead of Graph's opaque refusal;
+  `GET /api/settings/mailboxes` now includes the per-mailbox `outbound`
+  flag. verify@ (actual sender: verification@) still needs its own
+  test-send before email verification is trusted.
+* **Outbound subject prefix** — replies and trigger emails go out as
+  `Service Ticket: [#100xxx] Title`; the ingestion matcher finds `[#id]`
+  anywhere in a subject, so threading and RE:/FW: chains are unaffected.
+* **OR condition groups** — mail rules and triggers both accept OR-of-AND
+  condition groups: the `conditions` jsonb is either a flat list (legacy —
+  all must match, exactly as before) or a list of lists (each inner list
+  ANDs; any group matching fires). The builders grew "+ OR group" with
+  "— or —" dividers; a single group saves FLAT so every pre-existing rule
+  round-trips byte-identical; the worker's `_match()` normalizes both
+  shapes; the list columns render "(a and b) or (c)".
+* **Master send switch in the GUI** — Automations → Outbound routing card
+  header: "Sending live"/"Recorded-only" chip + toggle, confirmation on
+  enable, mirrored via `POST /api/settings/mail/outbound` (jsonb_set on
+  the one key, audited), hydrated from bootstrap, local rollback if the
+  server refuses.
+* **Verification fixes** — verified tickets keep a "Verify again" button
+  (server side was always re-verify-safe); the verification card's channel
+  Enable/Disable and thread-post toggles now actually mirror (silent
+  control #5 — the email channel had been flipping locally while the
+  server stayed disabled, so email codes 409'd forever).
+* **Directory truth** — the group Delete button is removed (silent control
+  #6: no delete endpoint exists by convention; Archive/Restore is the
+  lifecycle); bootstrap now emits ALL groups and ALL ticket states with
+  their `active` flag so archived rows survive hydration and render
+  dimmed with Restore instead of vanishing (STATE ledger row 36).
+* **Build 7e — archived entries leave the FILTER dropdowns** (STATE ledger
+  row 37): the archive-aware sweep had covered value pickers but not
+  filter bars. All 15 filter dropdowns in both apps (Docket queue +
+  reports: group/priority/state/client; trigger-builder client condition
+  lists; Ledger timesheet/approvals/client-page/reports: types + clients)
+  now hide archived/inactive entries — except the entry a filter is
+  currently set to, which stays labeled "(archived)" so an applied filter
+  never lies. Verification email pre-flight passed the same evening
+  (verify@ confirmed sending), closing that tail item. UI-only change;
+  bootstrap still emits archived rows.
+* **Operational learnings codified in STATE §6:** MFA lockout recovery
+  under the `required` policy (console policy flip — enrollment needs a
+  session by design), the VM's own-hostname DNS quirk, the PAT mint
+  script, the served-UI staleness check, and the outbound pre-flight as
+  the standard gate for any new sender mailbox.
 
 ---
 
@@ -510,17 +572,23 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
 * Off-instance copies of `secrets/` + `.env`; ship `./backups/` dumps off-VM.
 * Commit `deploy.sh` and use it for every drop.
 * Pre-launch archiving of test tickets.
-* Flip `mail.outbound_enabled` + one live reply test at launch.
+* ~~Flip `mail.outbound_enabled` + one live reply test~~ — DONE
+  2026-07-30 (test-send pre-flight → flip → live replies confirmed).
+  Still open here: the verify@ (`verification@…`) test-send, and the
+  served-UI staleness walk from STATE §5.
 
 ---
 
 ## 8. WILL be done — recommended order
 
-0. **OPEN: mail-duplication investigation + outbound proof** — see the
-   banner at the top of STATE.md; mailbox paused until resolved. Also
-   pending: the **silent-controls audit** (three demo-only controls found
-   so far — secrets Save, mailbox outbound, Graph card — sweep every
-   button/field for missing mirrors).
+0. **CLOSED 2026-07-30: mail-duplication (bug #33) fixed + outbound
+   proven and flipped LIVE** — see STATE.md banner + ledger rows 33–36.
+   NOW FIRST IN LINE: the **silent-controls + hydration-completeness
+   sweep** — SIX unmirrored controls found by collision (secrets Save,
+   mailbox outbound checkbox, Graph card, verification channel toggles,
+   thread-post toggle, group Delete) plus one hydration-starvation bug
+   (archived groups/states) — audit every control against its mirror AND
+   every rendered collection against its bootstrap emission, both apps.
 1. **Your verify pass** on this bundle (STATE.md §5 — automations + OIDC
    walks).
 2. **Your ops list** (§7 above) — snapshot, access policy, off-instance

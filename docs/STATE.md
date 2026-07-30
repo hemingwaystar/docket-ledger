@@ -13,63 +13,48 @@ git (`docs/STATE.md`) so it travels with the code.
 > **docs/DOCUMENTATION.md** (mirrored in the bundle as DOCUMENTATION.md).
 > This file remains the living state doc: punch list + bug ledger win here.
 >
-> ✅ **MAIL-DUPLICATION BUG DIAGNOSED — fix in THIS bundle (bug #33). Deploy,
-> confirm, unpause.** Root cause: `ingest_message`'s mail_in article INSERT
-> listed 10 columns but only 9 VALUES expressions / 8 `%s` (the `is_auto`
-> placeholder was dropped in a build-6-era edit). psycopg3 raises the
-> placeholder/param mismatch **client-side, before any SQL is sent**, so the
-> transaction was NEVER aborted — the ticket INSERT that ran just before it
-> survived and COMMITTED, while the article never landed. Ghost tickets with
-> no mail_in article mean: dedup (`SELECT … WHERE message_id=…`) finds
-> nothing next pass, `find_thread` has no message-ids to thread against, and
-> the exception exits `poll_mailbox` before the deltaLink save — cursor never
-> advances, the same message returns every pass, and each pass mints another
-> identical ticket. One arity slip explains all three symptoms at once.
-> Prior review "found no smoking gun in delta/dedup paths" because those
-> paths ARE correct.
+> ✅ **SESSION WRAP 2026-07-30 — the mail arc is CLOSED.** Bug #33 (the
+> arity slip that minted a ghost ticket every worker pass) is fixed,
+> deployed, and confirmed: inbound ingests once per message and threads.
+> Outbound is **proven and LIVE**: the `graph/test-send` pre-flight returned
+> 202 + Message-ID for support@ (Mail.Send consented, access policy right),
+> `mail.outbound_enabled` was flipped, and agent replies now transmit with
+> `Service Ticket: [#id] Title` subjects. The go-live master switch lives in
+> the GUI (Automations → Outbound routing) and genuinely mirrors.
 >
-> Confirm on the VM (expected results now known):
+> **UPDATE (7e, same day evening): verify@ pre-flight PASSED — user
+> confirmed verification emails send.** Build 7e then shipped the
+> filter-dropdown archive fix (ledger row 37, verify walk at the top of
+> §5): archived groups/priorities/states/clients/activity-types no longer
+> appear in any filter dropdown in either app unless the filter is
+> currently set to one (then labeled "(archived)").
 >
-> ```bash
-> cd ~/docket-ledger
-> sudo docker compose logs mail-worker --tail 60
-> #   → expect repeating: poll failed for support@…: the query has 8
-> #     placeholders but 9 parameters were passed
-> sudo docker compose exec postgres psql -U postgres -d hemingway -c \
->   "SELECT t.id, a.message_id, a.sent_at FROM desk.tickets t
->      LEFT JOIN desk.articles a ON a.ticket_id=t.id AND a.kind='mail_in'
->     WHERE t.id BETWEEN 100023 AND 100027 ORDER BY t.id;"
-> #   → expect FIVE rows with NULL message_id/sent_at (ghost tickets,
-> #     no mail_in article ever landed)
-> sudo docker compose exec postgres psql -U postgres -d hemingway -c \
->   "SELECT m.address, s.last_delta_at, s.delta_link IS NOT NULL AS has_cursor
->      FROM desk.mailboxes m
->      LEFT JOIN desk.graph_subscriptions s ON s.mailbox_id=m.id;"
-> #   → expect stale/NULL last_delta_at for support@
-> ```
+> **Still open, in order (details in §5):**
+> 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
+> 2. **USER: served-UI staleness check** — the live Directory rendered a
+>    card ("Entra-synced") that exists in no current bundle: run the §5
+>    disk-vs-served grep for "Add person" and fix the layer it names
+>    (repo merge / image rebuild / hard refresh). Most of §5's walks are
+>    only meaningful on the current desk.html.
+> 3. **USER: identity cleanup** — create the `hemingway@` agent
+>    (POST /api/directory/agents, role name exactly `Admin`) so OIDC
+>    sign-in works; re-enroll MFA for `admin@` and flip `auth.mfa` back to
+>    `"required"` (it sits at `"optional"` from the console lockout
+>    recovery — see §6 runbook).
+> 4. **NEXT CLAUDE BUILD: the silent-controls + hydration-completeness
+>    sweep** — SIX unmirrored controls have now been found by collision
+>    (secrets Save, mailbox outbound, Graph card, verification channel +
+>    thread-post toggles, group Delete) plus one hydration-starvation bug
+>    (archived groups/states vanished because bootstrap emitted only
+>    active rows). Sweep every control against its mirror AND every
+>    rendered collection against its bootstrap emission, both apps.
+> 5. Then: **backups + restore drill**, then the post-launch tail
+>    (Zammad import → portal → retainers → ticket links).
 >
-> If instead the five tickets DO carry mail_in articles with **distinct**
-> message_ids, a sender-side loop also exists — but the arity fix ships
-> regardless (this bundle's worker could never insert a mail_in article).
-> Then: push this bundle → `git pull` on the VM → rebuild/restart
-> (`deploy.sh` or `sudo docker compose up -d --build mail-worker`; migrate
-> runs 0023 if build 6 never deployed). Keep support@ **PAUSED** until the
-> new worker is up. Cleanup: close (or merge-then-close) #100023–100027 —
-> no deletes, per conventions. Then unpause and send ONE test email:
-> exactly one ticket with the body present, `last_delta_at` fresh within
-> ~60 s, and the next passes log nothing new. Also new in this bundle:
-> `scripts/sql_arity_audit.py` (battery member — would have caught this
-> pre-ship; run it on every bundle) and a savepoint fence around
-> `apply_mail_rules` (bug-#29-class hole: a SQL failure in rules would have
-> aborted the ingestion tx and killed the pass's commit + cursor save).
-> For outbound: the Authenticate button only proves the TOKEN (secret /
-> tenant / app id) — Mail.Send consent and the application access policy
-> only fail on a real send. This bundle adds the pre-flight for that:
-> `POST /api/settings/graph/test-send` `{"to": "you@…", "sender": "support@…"}`
-> sends one test message through the exact reply path (admin-only, no
-> ticket, not gated on outbound_enabled) and surfaces Graph's own error
-> naming the cause. Run it for support@ AND verify@ before the go-live flip.
-> Reading or editing the code itself? Start with **docs/CODE-GUIDE.md**.
+> Bug #33's full anatomy, the diagnostic transcript expectations, and the
+> outbound pre-flight walk are preserved in §3 (chronology), §4 (ledger
+> rows 33–36), and §5. Reading or editing the code itself? Start with
+> **docs/CODE-GUIDE.md**.
 
 ## 1. Executive state
 
@@ -177,8 +162,10 @@ resolves to (explicit override → ticket contact → last inbound sender).
   locked projects; routing ladder contact → domain (auto-contact) → sentinel
   + `unrouted` tag. Reply-out sends AS the group mailbox via base64-MIME
   `sendMail` (real In-Reply-To/References), gated by
-  `app_config('mail').outbound_enabled` — **currently false**; replies are
-  recorded and audited "RECORDED ONLY" until flipped.
+  `app_config('mail').outbound_enabled` — **flipped LIVE 2026-07-30** after
+  the test-send pre-flight proved Mail.Send + access policy for support@;
+  the GUI master switch (Automations → Outbound routing) now mirrors it.
+  Outbound subjects carry the `Service Ticket: [#id] Title` prefix.
 * **UI strategy — two tiers, deliberately:**
   1. *Functional shells* (`/ui/index.html` on 8081, `/ui/index.html` on
      8082): small, fully wired, always-true fallbacks.
@@ -227,6 +214,52 @@ resolves to (explicit override → ticket contact → last inbound sender).
     funnels; uvicorn --proxy-headers both APIs; cookie secure flag now
     env-driven (COOKIE_SECURE); DNS-01 + NetBird-IP DNS keeps the suite
     overlay-only with a public-CA cert.
+12. **Bugfix-33 + outbound lookover (2026-07-30 morning):** diagnosed and
+    fixed the ghost-ticket storm (ledger row 33 — a one-character arity
+    slip with three-symptom blast radius); `scripts/sql_arity_audit.py`
+    joins the pre-ship battery; `apply_mail_rules` gets the bug-#29
+    savepoint fence. Same session, a full outbound code walk: verified the
+    send path sound end-to-end, fixed reply/trigger articles recording
+    `mail_from` as NULL, added the 4 MB Graph-MIME guard (413 with the
+    real reason), `list_mailboxes` now returns `outbound`, and shipped
+    `POST /api/settings/graph/test-send` — the pre-flight that proves
+    Mail.Send consent + access policy with one real send, no ticket, not
+    gated on the master switch. Deployed live: inbound confirmed clean,
+    test-send returned 202 + Message-ID for support@, and
+    `mail.outbound_enabled` was flipped — **replies transmit for real**.
+13. **Build 7 → 7d (2026-07-30 afternoon):** outbound subjects prefixed
+    `Service Ticket: [#id] Title` (threading unaffected — the matcher
+    searches anywhere); **OR condition groups** in mail rules AND triggers
+    (conditions jsonb accepts list-of-lists: inner=AND, outer=OR; flat
+    list = legacy single group; the builders save one group flat so
+    existing rules re-save byte-identical; worker `_match()` normalizes;
+    both builders rebuilt draft-based with "+ OR group"); the **master
+    outbound switch entered the GUI** (Outbound routing card chip+toggle,
+    confirm-on-enable, mirrors via `POST /api/settings/mail/outbound`,
+    rolls back on refusal); verified tickets keep a **"Verify again"**
+    button; silent-controls #5 (verification channel + thread-post
+    toggles, ledger row 34) and #6 (group Delete button, row 35) found
+    and fixed; the **served-UI staleness** diagnosis (an "Entra-synced"
+    caption from no known bundle → disk-vs-served walk in §5); and the
+    **archive-vanish hydration bug** (row 36) — bootstrap now emits ALL
+    groups and ticket states with their `active` flag, so archived rows
+    survive refresh. Console recoveries documented in §6: PAT mint, MFA
+    lockout under the `required` policy, the VM's own-hostname DNS quirk.
+14. **Build 7e (2026-07-30 evening): archived entries leave the FILTER
+    dropdowns too.** verify@ pre-flight passed (user confirmed —
+    verification emails send), then the user spotted archived groups
+    listed unlabeled in the queue's "All groups" filter. The build-7d
+    archive-aware sweep had covered value pickers but not filter bars.
+    UI-only fix, both apps, one rule everywhere: archived
+    groups/priorities/states/clients/activity-types leave every filter
+    dropdown, EXCEPT the entry the filter is currently set to, which
+    stays labeled "(archived)" so an active filter never lies. 15
+    dropdowns touched: Docket queue filters (group/prio/client), Docket
+    reports filters (group/client/prio/state), trigger-builder client
+    condition lists (2), Ledger timesheet (type/client), approvals
+    (client), client-page (type), reports (client/type). Bootstrap still
+    emits archived rows (hydration-completeness, row 36) — the filtering
+    is render-side only. Ledger row 37.
 
 ---
 
@@ -292,6 +325,11 @@ touched history: entries keep the period they were written into.
 
 | 33 | One inbound email minted an identical NEW ticket every pass (#100023–100027), forever; dedup, threading, AND the delta cursor all appeared broken at once | the mail_in article INSERT listed 10 columns but 9 VALUES / 8 `%s` (is_auto's placeholder dropped in an edit); psycopg3 raises the mismatch CLIENT-SIDE, so the tx stayed ALIVE — the ticket INSERT before it committed while the article never did: no article ⇒ no dedup row, nothing to thread against, and the exception skipped the deltaLink save so the same message returned every pass | one-char fix (restore the `%s`); `scripts/sql_arity_audit.py` joins the pre-ship battery (AST-audits every literal execute() for placeholder-vs-params and INSERT column-vs-expression arity — found exactly this one across all 3 services); apply_mail_rules gets the bug-#29 savepoint fence found during the same review | A client-side driver error is NOT a SQL error — the transaction survives it, so everything executed before the bad statement can still commit; partial-commit ghosts are what "impossible" multi-symptom bugs look like. Arity is statically checkable: audit it, don't eyeball it |
 
+| 34 | Email caller-verification always refused: "The EMAIL channel is disabled" even after clicking Enable; the chip showed Connected until a refresh flipped it back Off | silent-control class, FIFTH instance: the verification card's field edits (vcfgSet) mirrored via a debounced PUT, but the channel Enable/Disable buttons (vcfgToggle) and the thread-post toggle never did — the chip flipped locally while the server's verification.email.enabled stayed false, so /verify/start 409'd forever | both toggles wrapped with an IMMEDIATE full-VCFG PUT (no debounce — single-click state) and local rollback + honest toast on refusal; also: sender is verification@hemingwaytechsolutions.com and needs the Exchange access policy like support@ (prove via graph/test-send) | On a card where SOME controls mirror, the wired ones camouflage the dead ones — audit per CONTROL, not per card; and toggles must mirror immediately, debounce is for typing |
+| 35 | Group "Delete" appeared to work, then the group returned on the next refresh | silent-control class, SIXTH instance — with a twist: no server endpoint SHOULD exist (no-delete convention; Archive is the removal), so the button could only ever lie: local splice + suite-bridge post, nothing persisted | the Delete button is REMOVED; Rename + Archive/Restore (both wired, audited) are the group lifecycle | When the convention says an operation must not exist, the UI must not offer it — a button with no legitimate mirror target is a lie by construction |
+| 36 | Archiving a group made it vanish entirely — indistinguishable from a delete; same latent behavior for archived custom ticket states | the archive itself worked (server set active=false, paused its mailboxes, audited) — but bootstrap emitted groups WHERE active with no active field at all, so the post-archive re-hydrate rebuilt GROUPS without the archived row; the UI's archive rendering (dim + chip + Restore) existed and was simply never fed | bootstrap emits ALL groups and ALL ticket_states with their active flag; mapIn carries active onto hydrated custom states; consumer sweep confirmed pickers already filter (aGROUPS/aSTATES) and the deliberate unfiltered spots already label "(archived)" | Hydration must be COMPLETE for every state the UI can render, not just the happy subset — a filtered bootstrap starves correct UI into looking broken; sweep collections-vs-emissions like controls-vs-mirrors |
+| 37 | Archived groups (Security, Test) listed unlabeled in the queue's "All groups" filter — as if never archived | the build-7d archive sweep covered VALUE pickers (aGROUPS/aSTATES/aPRIOS/aATYPES + labeled current-value exceptions) but the FILTER bars were a third consumer category nobody enumerated: Docket queue + reports filters and every Ledger filter iterated the raw collections | build 7e: all 15 filter dropdowns across both apps filter archived/inactive entries, keeping only the entry the filter is CURRENTLY set to, labeled "(archived)" — so hiding never silently breaks an applied filter; trigger-builder client condition lists go active-only (stored values still display via the not-in-list fallback); bootstrap untouched | "Every picker" means every CONSUMER of the collection — enumerate render sites by grepping the collection name, not by remembering the picker kinds; the archived-visibility rule is: management surfaces show all, choosers offer active, current values never vanish |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -301,7 +339,38 @@ places.
 
 ## 5. Punch list & known gaps (prioritized)
 
+**Ordering (refreshed 2026-07-30, session end):**
+1. **USER — close the session's tail:** ~~verify@ test-send~~ (DONE —
+   confirmed 2026-07-30 evening) → deploy build 7e → served-UI staleness walk below →
+   hemingway@ agent create → MFA re-enroll for admin@ + `auth.mfa` back to
+   `"required"` → then the accumulated verify walks below on the CURRENT
+   desk.html.
+2. **USER — ops list (unchanged, now urgent with outbound live):**
+   Lightsail snapshot, off-VM `secrets/` + `.env` + dumps, `deploy.sh`
+   committed and used, test-ticket archiving.
+3. **CLAUDE — silent-controls + hydration-completeness sweep:** every
+   control vs its mirror (6 instances found by collision so far) AND every
+   rendered collection vs its bootstrap emission (1 instance), both apps —
+   kill both classes as categories.
+4. **CLAUDE — backups + restore drill** (dumps off-VM, KEK custody,
+   scripted + drilled restore).
+5. **Post-launch tail:** Zammad import → customer portal → retainers →
+   ticket links. Known cosmetic: Ledger Swagger behind the proxy fetches
+   Docket's spec (use NetBird ports).
+
 **Verify after next deploy (latest bundle):**
+- [ ] **Archived entries out of filter dropdowns (build 7e, row 37):** with
+      Security + Test groups archived, the queue's "All groups" dropdown
+      lists only All groups + Service Desk (+ any other active groups) —
+      no archived rows, no "(archived)" clutter; same for priority, state,
+      and client filters in the queue and reports bars, and Ledger's
+      timesheet/approvals/client-page/reports filters for types + clients.
+      Exception check: set a filter to a group, archive that group in the
+      Directory, return — the filter still shows it labeled "(archived)"
+      and still filters correctly; switch the filter away and it drops out
+      of the list. Directory/Settings management surfaces still show
+      archived rows dimmed with Restore (bootstrap untouched — row 36
+      stays fixed)
 - [ ] **Mail ingestion (bug #33):** with the new worker up, close/merge the
       ghost tickets #100023–100027, unpause support@, send ONE test email →
       exactly one ticket appears WITH the email body as its mail_in article;
@@ -630,6 +699,29 @@ places.
 * **Debug habit (from bug #10):** check the file **on disk** and the file
   **being served** as two separate facts; `docker compose logs --tail 20
   <svc>` before theorizing; hydration failures now announce themselves.
+* **MFA lockout recovery (learned 2026-07-30):** clearing an agent's TOTP
+  (`UPDATE shared.agents SET totp_secret_enc=NULL, totp_enrolled_at=NULL
+  WHERE lower(email)=…`) is NOT enough while `auth.mfa` is `"required"` —
+  login 403s "enroll first" and `/auth/mfa/enroll` needs a session
+  (chicken-and-egg by design; another admin is the intended rescuer). The
+  console IS the second admin in a one-admin shop: flip the policy
+  (`UPDATE shared.app_config SET value=jsonb_set(value,'{mfa}','"optional"')
+  WHERE key='auth'`), sign in, re-enroll, flip back to `"required"`. Write
+  an audit.events row alongside any console surgery.
+* **VM hostname quirk:** the VM cannot resolve its own public hostname
+  (DNS A record → NetBird IP). VM-side curls go to `http://$BIND_ADDR:8081`
+  directly, or add an `/etc/hosts` line mapping the hostname to $BIND_ADDR
+  (TLS then validates normally through nginx).
+* **Outbound pre-flight:** before trusting any NEW sender mailbox, prove
+  it: `POST /api/settings/graph/test-send {"to":…, "sender":…}` — 202 +
+  Message-ID = Mail.Send consented AND that sender is in the Exchange
+  application access policy; a 403 names which is missing. Admin-only, no
+  ticket, deliberately not gated on the master switch.
+* **Served-UI staleness check:** when a UI feature "doesn't exist" that
+  the bundle says it does, grep the marker string on disk AND in
+  `curl -s http://$BIND_ADDR:8081/ui/desk.html` — disk=0 means the
+  bundle→repo merge dropped `webui/`; disk>0 served=0 means rebuild
+  desk-api; both>0 means hard-refresh.
 
 ---
 
