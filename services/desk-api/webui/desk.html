@@ -2160,6 +2160,11 @@ function vcfgToggle(chan){
   log('Verification channel '+(VCFG[chan].enabled?'enabled':'disabled'), chan.toUpperCase());
   render();
 }
+function vcfgTogglePost(){
+  VCFG.postToThread=!VCFG.postToThread;
+  log('Verification audit posting '+(VCFG.postToThread?'enabled':'disabled'), 'thread posting \u2014 the Audit Log itself always records outcomes');
+  render();
+}
 function authSet(k, v, srcEl){
   const was = AUTH_CFG[k]; AUTH_CFG[k]=v;
   log('Authentication config changed', `${k}: ${was} \u2192 ${v}`);
@@ -2322,7 +2327,8 @@ function renderProps(t){
             : `<div class="mini muted">Clock paused — ${st8(t.st).label.toLowerCase()}</div>`}</div>
       <div class="prop"><div class="pk">Identity</div>
         ${t.tags.includes(VERIFIED_TAG)
-          ? `<div class="sla-line ok-sla"><span class="sdot"></span>Caller verified</div><div class="mini muted" style="margin-top:3px">audit note in the thread</div>`
+          ? `<div class="sla-line ok-sla"><span class="sdot"></span>Caller verified</div><div class="mini muted" style="margin-top:3px;margin-bottom:${can('verify_identity')?'8px':'0'}">audit note in the thread</div>
+             ${can('verify_identity')? `<button class="btn sm" onclick="verifyModal(${t.id})">${icon(IC.shield)}Verify again</button>`:''}`
           : `<div class="mini muted" style="margin-bottom:${can('verify_identity')?'8px':'0'}">Not verified this ticket</div>
              ${can('verify_identity')? `<button class="btn sm" onclick="verifyModal(${t.id})">${icon(IC.shield)}Verify caller</button>`:''}`}
       </div>
@@ -3542,6 +3548,51 @@ function deletePrio(pid){
    DIRECTORY — the shared control plane. One set of records for Docket,
    Ledger and any future app. Every change here broadcasts live.
    ========================================================================== */
+function agentModal(){
+  if(!can('manage_settings')) return;
+  const m=document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>Add person</h3><p>Creates the agent record sign-in matches on \u2014 SSO users can sign in the moment they\u2019re added. Group membership drives ticket visibility here and client access in Ledger.</p></div>
+    <div class="modal-body">
+      <div class="grid g-2" style="gap:12px">
+        <div class="field"><label>Full name</label><input type="text" id="agName" placeholder="Jordan Doyle"></div>
+        <div class="field"><label>Email (sign-in identity)</label><input type="text" id="agEmail" placeholder="person@hemingwaytechsolutions.com"></div>
+        <div class="field"><label>Initials</label><input type="text" id="agInit" placeholder="auto from the name" maxlength="3"></div>
+        <div class="field"><label>Role</label><select id="agRole">${state.roleDefs.filter(r=>r.active!==false&&r.name!=='Customer').map(r=>`<option ${r.name==='Technician'?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div>
+      </div>
+      <div class="field" style="margin-top:8px"><label>Groups</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${aGROUPS().map((g,i)=>`<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="agGrp" value="${g.id}" ${i===0?'checked':''} style="width:auto;accent-color:var(--brand)">${esc(g.name)}</label>`).join('')}</div></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveAgent()">Add person</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('agName').focus();
+}
+function saveAgent(){
+  const name=document.getElementById('agName').value.trim();
+  const email=document.getElementById('agEmail').value.trim().toLowerCase();
+  if(!name){ toast('Give them a name.'); return; }
+  if(!email.includes('@')){ toast('The email is what sign-in matches \u2014 it needs to be real.'); return; }
+  if(AGENTS.some(x=>(x.email||'').toLowerCase()===email)){ toast('That email is already in the directory.'); return; }
+  let initials=document.getElementById('agInit').value.trim().toUpperCase();
+  if(!initials) initials=name.split(/\s+/).map(w=>w[0]).join('').slice(0,3).toUpperCase();
+  const role=document.getElementById('agRole').value;
+  const groups=[...document.querySelectorAll('.agGrp:checked')].map(el=>el.value);
+  if(!groups.length){ toast('Pick at least one group \u2014 membership drives visibility.'); return; }
+  AGENTS.push({ id:'ag'+Date.now(), name, email, initials, role, groups });
+  log('Agent added', `${name} <${email}> \u00b7 ${role} \u00b7 ${groups.map(g=>grp(g)?.name||g).join(', ')}`);
+  toast(`${name.split(' ')[0]} added \u2014 they can sign in now.`);
+  closeModal(); render();
+}
+function deactivateAgent(tid){
+  if(!can('manage_settings')) return;
+  const a=agent(tid); if(!a) return;
+  if(tid===state.meId){ toast('You can\u2019t deactivate yourself \u2014 another admin has to.'); return; }
+  if(!confirm(`Deactivate ${a.name}? They can\u2019t sign in and leave the pickers; their tickets and time stay. Re-adding the same email restores them.`)) return;
+  AGENTS.splice(AGENTS.findIndex(x=>x.id===tid),1);
+  log('Agent deactivated', a.name);
+  toast(`${a.name.split(' ')[0]} deactivated.`);
+  render();
+}
 function toggleMembership(gid, tid){
   if(!can('manage_settings')) return;
   const a = agent(tid); const has = a.groups.includes(gid);
@@ -3601,8 +3652,7 @@ function viewDirectory(){
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:7px">${AGENTS.map(a=>`<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" ${a.groups.includes(g.id)?'checked':''} ${arch?'disabled':''} onchange="toggleMembership('${g.id}','${a.id}')" style="width:auto;accent-color:var(--brand)">${esc(a.name.split(' ')[0])}</label>`).join('')}</div>
         </div>
         <button class="rowbtn" onclick="groupModal('${g.id}')">Rename</button>
-        <button class="rowbtn" onclick="archiveGroup('${g.id}')">${arch?'Restore':'Archive'}</button>
-        <button class="rowbtn" onclick="deleteGroup('${g.id}')">Delete</button></div>`;}).join('')}
+        <button class="rowbtn" onclick="archiveGroup('${g.id}')">${arch?'Restore':'Archive'}</button></div>`;}).join('')}
       <button class="btn sm" style="margin-top:12px" onclick="groupModal()">+ Add group</button>
       <div class="mini muted" style="margin-top:8px">Membership drives ticket visibility here and client access in Ledger \u2014 one checkbox, both apps.</div>
     </div>
@@ -3623,15 +3673,17 @@ function viewDirectory(){
       </div>
       <div class="section-gap"></div>
       <div class="card card-pad">
-        <div class="card-head flush"><h3>Agents</h3><span class="hint">Entra-synced \u2014 shared</span></div>
+        <div class="card-head flush"><h3>Agents</h3><span class="hint">shared \u2014 sign-in matches by email</span></div>
         ${AGENTS.map(a=>`<div class="setting-row"><div class="sl" style="display:flex;gap:10px;align-items:center">${avatarOf(a)}<span><b>${esc(a.name)}</b><p style="margin:2px 0 0">${a.groups.map(gid=>esc(grp(gid)?.name||gid)).join(' \u00b7 ')}</p></span></div>
           ${AUTH_CFG.localPasswords?(()=>{ const au=AGENT_AUTH[a.id]||{pw:false,mfa:false}; return `
             <span class="chip ${au.pw?'st-solved':'st-closed'}" style="padding:1px 8px" title="${au.mustChange?'temporary — must change at next sign-in':''}"><span class="cdot"></span>${au.pw?(au.mustChange?'temp pw':'password'):'no pw'}</span>
             <button class="rowbtn" onclick="pwReset('${a.id}')">${au.pw?'Reset pw':'Set pw'}</button>
             <span class="chip ${au.mfa?'st-solved':'st-closed'}" style="padding:1px 8px"><span class="cdot"></span>${au.mfa?'MFA':'no MFA'}</span>
             ${au.mfa?`<button class="rowbtn" onclick="mfaReset('${a.id}')">Reset MFA</button>`:''}`; })():''}
-          <select style="width:auto" onchange="setAgentRole('${a.id}',this.value)" title="${AUTH_CFG.roleMapping?'Entra mapping is ON \u2014 manual changes are overwritten at next sign-in':'Manual assignment \u2014 this IS the role'}">${state.roleDefs.filter(r=>r.active!==false && r.name!=='Customer').map(r=>`<option ${a.role===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div>`).join('')}
-        <div class="mini muted" style="margin-top:8px">${AUTH_CFG.roleMapping?'Roles assigned automatically from Entra groups \u2014 the selects preview, but the mapping wins at sign-in.':'Entra mapping is off: these selects are the source of truth for each person\u2019s role.'}</div>
+          <select style="width:auto" onchange="setAgentRole('${a.id}',this.value)" title="${AUTH_CFG.roleMapping?'Entra mapping is ON \u2014 manual changes are overwritten at next sign-in':'Manual assignment \u2014 this IS the role'}">${state.roleDefs.filter(r=>r.active!==false && r.name!=='Customer').map(r=>`<option ${a.role===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}</select>
+          ${can('manage_settings')&&a.id!==state.meId?`<button class="rowbtn" onclick="deactivateAgent('${a.id}')">Deactivate</button>`:''}</div>`).join('')}
+        ${can('manage_settings')?`<button class="btn sm" style="margin-top:12px" onclick="agentModal()">+ Add person</button>`:''}
+        <div class="mini muted" style="margin-top:8px">${AUTH_CFG.roleMapping?'Roles assigned automatically from Entra groups \u2014 the selects preview, but the mapping wins at sign-in.':'Entra mapping is off: these selects are the source of truth for each person\u2019s role.'} Deactivated people can\u2019t sign in and leave the pickers; their tickets and time stay. Re-adding the same email restores them.</div>
       </div>
     </div>
   </div>`;
@@ -3724,7 +3776,7 @@ function viewSettings(){
         <label class="mini muted">expires <input type="number" value="${VCFG.ttlMin}" min="1" max="60" style="width:56px;margin-left:6px" onchange="vcfgSet('ttlMin',this.value,this)"> min</label>
         <label class="mini muted">attempts <input type="number" value="${VCFG.attempts}" min="1" max="5" style="width:56px;margin-left:6px" onchange="vcfgSet('attempts',this.value,this)"></label></div>
       <div class="setting-row"><div class="sl"><b>Audit</b><p>Pass or fail, the outcome lands in the Audit Log always; this controls whether it's also posted to the ticket thread and tagged</p></div>
-        <button class="rowbtn" onclick="VCFG.postToThread=!VCFG.postToThread; log('Verification audit posting '+(VCFG.postToThread?'enabled':'disabled'), 'thread posting \u2014 the Audit Log itself always records outcomes'); render()">${VCFG.postToThread?'Disable thread posts':'Enable thread posts'}</button>
+        <button class="rowbtn" onclick="vcfgTogglePost()">${VCFG.postToThread?'Disable thread posts':'Enable thread posts'}</button>
         <span class="chip ${VCFG.postToThread?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.postToThread?'Posting to thread':'Audit Log only'}</span></div>
     </div>
     <div class="card card-pad">
@@ -4890,6 +4942,43 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
   wrapProjMove('relockProject','relock',(p,w)=>!p.unlocked&&w.unlocked);
 
   /* ---- directory: agents & groups ---- */
+  /* group-membership checkboxes never mirrored (bug-#30 class, instance
+     six): the tick flipped locally and vanished on refresh. The mirror
+     sends the FULL groups list; a refusal re-hydrates so the checkboxes
+     tell the truth. */
+  const _toggleMembership=window.toggleMembership;
+  window.toggleMembership=function(gid,tid){
+    const a=AGENTS.find(x=>x.id===tid), before=a?a.groups.slice().sort().join():null;
+    _toggleMembership(gid,tid);
+    if(!a||a.groups.slice().sort().join()===before) return;   /* guard refused */
+    $fetch('/api/directory/agents/'+encodeURIComponent(a.email),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:a.groups.slice()})})
+      .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); } });
+  };
+  const _saveAgent=window.saveAgent;
+  window.saveAgent=function(){
+    const before=AGENTS.length;
+    _saveAgent();
+    if(AGENTS.length===before) return;                        /* validation refused */
+    const a=AGENTS[AGENTS.length-1];
+    $fetch('/api/directory/agents',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:a.name,email:a.email,initials:a.initials,
+                           role:a.role,groups:a.groups.slice()})})
+      .then(async r=>{ if(!r.ok) oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });                    /* swap temp id for server truth */
+  };
+  const _deactivateAgent=window.deactivateAgent;
+  window.deactivateAgent=function(tid){
+    const a=AGENTS.find(x=>x.id===tid), email=a?a.email:null, before=AGENTS.length;
+    _deactivateAgent(tid);
+    if(!email||AGENTS.length===before) return;                /* refused or cancelled */
+    $fetch('/api/directory/agents/'+encodeURIComponent(email),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({active:false})})
+      .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); } });
+  };
   const _setAgentRole=window.setAgentRole;
   window.setAgentRole=function(tid,role){
     const a=AGENTS.find(x=>x.id===tid), was=a?a.role:null;
@@ -5135,6 +5224,36 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
         headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
         .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
     },600);
+  };
+
+  /* ---- the channel Enable/Disable + thread-post toggles never mirrored
+     (bug-#30 class, instance five): the chip flipped locally while the
+     server's verification config stayed put, so email codes 409'd forever.
+     Toggles mirror IMMEDIATELY (no debounce — they're single-click state),
+     and a refusal rolls the chip back so the card never lies. */
+  const _vcfgToggle=window.vcfgToggle;
+  window.vcfgToggle=function(chan){
+    const was=VCFG[chan].enabled;
+    _vcfgToggle(chan);
+    if(VCFG[chan].enabled===was) return;             /* guard refused locally */
+    $fetch('/api/settings/config/verification',{method:'PUT',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
+      .then(async r=>{ if(!r.ok){ VCFG[chan].enabled=was; render();
+        return oops(await r.json().catch(()=>0)); } })
+      .catch(()=>{ VCFG[chan].enabled=was; render();
+        toast('Live sync failed \u2014 the channel was NOT changed on the server.'); });
+  };
+  const _vcfgTogglePost=window.vcfgTogglePost;
+  window.vcfgTogglePost=function(){
+    const was=VCFG.postToThread;
+    _vcfgTogglePost();
+    if(VCFG.postToThread===was) return;
+    $fetch('/api/settings/config/verification',{method:'PUT',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
+      .then(async r=>{ if(!r.ok){ VCFG.postToThread=was; render();
+        return oops(await r.json().catch(()=>0)); } })
+      .catch(()=>{ VCFG.postToThread=was; render();
+        toast('Live sync failed \u2014 thread posting was NOT changed on the server.'); });
   };
 
   /* ---- Entra CSV import → real contacts ---- */

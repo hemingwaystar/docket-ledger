@@ -116,15 +116,34 @@ def create_agent(body: NewAgent, request: Request):
         with conn.cursor() as cur:
             role = helpers.one(cur, "SELECT id FROM shared.roles WHERE name = %s AND active",
                                (body.role,), "Unknown role")[0]
-            cur.execute("""INSERT INTO shared.agents (name, email, initials, role_id)
-                           VALUES (%s, %s, %s, %s) RETURNING id""",
-                        (body.name, body.email, body.initials, role))
-            (aid,) = cur.fetchone()
+            cur.execute("SELECT id, active FROM shared.agents WHERE lower(email) = lower(%s)",
+                        (body.email,))
+            row = cur.fetchone()
+            if row and row[1]:
+                raise HTTPException(409, "That email is already an active agent")
+            revived = bool(row)
+            if row:
+                # deactivated agent — adding the same email REVIVES it with
+                # the new details (email is UNIQUE; no-DELETE means the row
+                # is still there, history intact)
+                (aid, _) = row
+                cur.execute("""UPDATE shared.agents
+                                  SET active = true, name = %s, initials = %s,
+                                      role_id = %s WHERE id = %s""",
+                            (body.name, body.initials, role, aid))
+                cur.execute("DELETE FROM shared.agent_groups WHERE agent_id = %s", (aid,))
+            else:
+                cur.execute("""INSERT INTO shared.agents (name, email, initials, role_id)
+                               VALUES (%s, %s, %s, %s) RETURNING id""",
+                            (body.name, body.email, body.initials, role))
+                (aid,) = cur.fetchone()
             for g in body.groups:
                 cur.execute("INSERT INTO shared.agent_groups (agent_id, group_id) VALUES (%s, %s)",
                             (aid, helpers.group_id(cur, g)))
-        auth.audit(conn, "desk", "Agent added", f"agent:{aid}",
-                   f"{body.name} <{body.email}> · role {body.role}")
+        auth.audit(conn, "desk", "Agent reactivated" if revived else "Agent added",
+                   f"agent:{aid}",
+                   f"{body.name} <{body.email}> · role {body.role}"
+                   + (" · revived with fresh details" if revived else ""))
         return {"id": str(aid)}
 
 
