@@ -509,6 +509,11 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
 
 ## 8. WILL be done — recommended order
 
+0. **OPEN: mail-duplication investigation + outbound proof** — see the
+   banner at the top of STATE.md; mailbox paused until resolved. Also
+   pending: the **silent-controls audit** (three demo-only controls found
+   so far — secrets Save, mailbox outbound, Graph card — sweep every
+   button/field for missing mirrors).
 1. **Your verify pass** on this bundle (STATE.md §5 — automations + OIDC
    walks).
 2. **Your ops list** (§7 above) — snapshot, access policy, off-instance

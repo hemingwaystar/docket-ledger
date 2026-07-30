@@ -12,6 +12,63 @@ git (`docs/STATE.md`) so it travels with the code.
 > inventory, done/not-done/roadmap, deploy + ops instructions — lives in
 > **docs/DOCUMENTATION.md** (mirrored in the bundle as DOCUMENTATION.md).
 > This file remains the living state doc: punch list + bug ledger win here.
+>
+> ✅ **MAIL-DUPLICATION BUG DIAGNOSED — fix in THIS bundle (bug #33). Deploy,
+> confirm, unpause.** Root cause: `ingest_message`'s mail_in article INSERT
+> listed 10 columns but only 9 VALUES expressions / 8 `%s` (the `is_auto`
+> placeholder was dropped in a build-6-era edit). psycopg3 raises the
+> placeholder/param mismatch **client-side, before any SQL is sent**, so the
+> transaction was NEVER aborted — the ticket INSERT that ran just before it
+> survived and COMMITTED, while the article never landed. Ghost tickets with
+> no mail_in article mean: dedup (`SELECT … WHERE message_id=…`) finds
+> nothing next pass, `find_thread` has no message-ids to thread against, and
+> the exception exits `poll_mailbox` before the deltaLink save — cursor never
+> advances, the same message returns every pass, and each pass mints another
+> identical ticket. One arity slip explains all three symptoms at once.
+> Prior review "found no smoking gun in delta/dedup paths" because those
+> paths ARE correct.
+>
+> Confirm on the VM (expected results now known):
+>
+> ```bash
+> cd ~/docket-ledger
+> sudo docker compose logs mail-worker --tail 60
+> #   → expect repeating: poll failed for support@…: the query has 8
+> #     placeholders but 9 parameters were passed
+> sudo docker compose exec postgres psql -U postgres -d hemingway -c \
+>   "SELECT t.id, a.message_id, a.sent_at FROM desk.tickets t
+>      LEFT JOIN desk.articles a ON a.ticket_id=t.id AND a.kind='mail_in'
+>     WHERE t.id BETWEEN 100023 AND 100027 ORDER BY t.id;"
+> #   → expect FIVE rows with NULL message_id/sent_at (ghost tickets,
+> #     no mail_in article ever landed)
+> sudo docker compose exec postgres psql -U postgres -d hemingway -c \
+>   "SELECT m.address, s.last_delta_at, s.delta_link IS NOT NULL AS has_cursor
+>      FROM desk.mailboxes m
+>      LEFT JOIN desk.graph_subscriptions s ON s.mailbox_id=m.id;"
+> #   → expect stale/NULL last_delta_at for support@
+> ```
+>
+> If instead the five tickets DO carry mail_in articles with **distinct**
+> message_ids, a sender-side loop also exists — but the arity fix ships
+> regardless (this bundle's worker could never insert a mail_in article).
+> Then: push this bundle → `git pull` on the VM → rebuild/restart
+> (`deploy.sh` or `sudo docker compose up -d --build mail-worker`; migrate
+> runs 0023 if build 6 never deployed). Keep support@ **PAUSED** until the
+> new worker is up. Cleanup: close (or merge-then-close) #100023–100027 —
+> no deletes, per conventions. Then unpause and send ONE test email:
+> exactly one ticket with the body present, `last_delta_at` fresh within
+> ~60 s, and the next passes log nothing new. Also new in this bundle:
+> `scripts/sql_arity_audit.py` (battery member — would have caught this
+> pre-ship; run it on every bundle) and a savepoint fence around
+> `apply_mail_rules` (bug-#29-class hole: a SQL failure in rules would have
+> aborted the ingestion tx and killed the pass's commit + cursor save).
+> For outbound: the Authenticate button only proves the TOKEN (secret /
+> tenant / app id) — Mail.Send consent and the application access policy
+> only fail on a real send. This bundle adds the pre-flight for that:
+> `POST /api/settings/graph/test-send` `{"to": "you@…", "sender": "support@…"}`
+> sends one test message through the exact reply path (admin-only, no
+> ticket, not gated on outbound_enabled) and surfaces Graph's own error
+> naming the cause. Run it for support@ AND verify@ before the go-live flip.
 > Reading or editing the code itself? Start with **docs/CODE-GUIDE.md**.
 
 ## 1. Executive state
@@ -233,6 +290,8 @@ touched history: entries keep the period they were written into.
 | 28 | override field showed 150 but the entry priced $51 — looked like the caret bug returned | display staleness introduced by 0018's history emission: local edits updated the CURRENT value but not the history row, and the ladder consulted history first — so the $51 from the earlier backwards-typing write kept pricing until a re-hydrate (the prototype "fixed itself instantly" only because the demo had no history rows to go stale) | UI ladder now resolves overrides as-of via effRateN (null = inherit, before-first-row AND after-reset, matching priced()'s COALESCE exactly); local edits keep the today history row in step; saves hydrate softly once the PUT lands | When you add a second source of truth to a display path, every write path that fed the first must feed the second |
 | 29 | Every ticket's SLA showed "in 416d"; worker logs "worker pass failed: could not convert string to float: '08:00'" every 30s — and each failing pass ROLLED BACK its ingested mail | 0002 seeded business_hours with "HH:MM" STRINGS; 0019's numeric seed lost to ON CONFLICT DO NOTHING; the UI's number-vs-string compare was always false → the 40,000-step walk guard capped out (40,000×15 min = 416d); worker's float() raised BEFORE commit, poisoning the whole pass | 0020 normalizes the row in place; both consumers now parse 8 / "8" / "08:00" / "18:30"; worker commits ingestion+wakes FIRST, engine passes fenced with their own commit/rollback | A config consumer is only as correct as every historical writer of that key — test against the SEEDED value, not the value you wish was there; and never let an optional subsystem sit between required work and its commit |
 
+| 33 | One inbound email minted an identical NEW ticket every pass (#100023–100027), forever; dedup, threading, AND the delta cursor all appeared broken at once | the mail_in article INSERT listed 10 columns but 9 VALUES / 8 `%s` (is_auto's placeholder dropped in an edit); psycopg3 raises the mismatch CLIENT-SIDE, so the tx stayed ALIVE — the ticket INSERT before it committed while the article never did: no article ⇒ no dedup row, nothing to thread against, and the exception skipped the deltaLink save so the same message returned every pass | one-char fix (restore the `%s`); `scripts/sql_arity_audit.py` joins the pre-ship battery (AST-audits every literal execute() for placeholder-vs-params and INSERT column-vs-expression arity — found exactly this one across all 3 services); apply_mail_rules gets the bug-#29 savepoint fence found during the same review | A client-side driver error is NOT a SQL error — the transaction survives it, so everything executed before the bad statement can still commit; partial-commit ghosts are what "impossible" multi-symptom bugs look like. Arity is statically checkable: audit it, don't eyeball it |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -243,6 +302,29 @@ places.
 ## 5. Punch list & known gaps (prioritized)
 
 **Verify after next deploy (latest bundle):**
+- [ ] **Mail ingestion (bug #33):** with the new worker up, close/merge the
+      ghost tickets #100023–100027, unpause support@, send ONE test email →
+      exactly one ticket appears WITH the email body as its mail_in article;
+      `graph_subscriptions.last_delta_at` refreshes within ~60 s; the next
+      few worker passes log no new tickets; reply to that email from the
+      outside → it lands as a follow-up on the SAME ticket (threading now
+      has message_ids to work with)
+- [ ] **Battery addition:** `python3 scripts/sql_arity_audit.py` runs clean
+      (exit 0) — run it as part of every future bundle's pre-ship checks
+- [ ] **Outbound pre-flight (lookover pass, this bundle):** on the VM,
+      `curl -s -X POST https://helpdesk…/api/settings/graph/test-send \
+      -H 'Content-Type: application/json' -H "Authorization: Bearer $PAT" \
+      -d '{"to":"YOUR@address","sender":"support@hemingwaytechsolutions.com"}'`
+      → the test mail arrives (Message-ID in the JSON), audit shows
+      "Outbound test sent". Repeat with `"sender":"verify@…"`. A 502 here
+      names the real blocker: Mail.Send not consented, or the sender not in
+      the Exchange application access policy — fix in Entra/Exchange and
+      re-run. Only after both pass: flip `mail.outbound_enabled`, reply on a
+      real ticket, and confirm the article shows the sending mailbox as its
+      From (mail_from now recorded; it was silently NULL before this pass)
+- [ ] **Outbound size guard:** a reply whose staged attachments push the
+      encoded MIME past 4 MB now returns a clear 413 (Graph's sendMail hard
+      limit) instead of Graph's opaque refusal — optional spot-check
 - [ ] desk.html hydrates real data again (bug #13 fix); Graph card shows real
       tenant/app-id/rotation; rules/triggers hydrate from the server (empty until you create some); titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes
