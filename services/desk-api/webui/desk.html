@@ -4426,7 +4426,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       put('graphSecret','graph','Graph app client secret');
       put('entraSecret','entra_oidc','Entra OIDC client secret');
       put('voipKey','voipms','voip.ms API password');
-      if(SECRETS.twilioKey!==undefined) put('twilioKey','twilio','Twilio auth token');
+      put('twilioToken','twilio','Twilio auth token');
     }
     if(d.graph&&d.graph.tenant){ GRAPH_AUTH.tenant=d.graph.tenant; AUTH_CFG.tenant=AUTH_CFG.tenant||d.graph.tenant; }
     }catch(err){ console.error('cosmetic hydration failed (core data is live):', err); }
@@ -4932,7 +4932,84 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
   };
 
-  /* ---- settings: verification config (feature ships later; settings persist now) ---- */
+  /* ---- settings: secrets card — Save actually stores (write-only PUT) ---- */
+  const SECRET_NAMES={graphSecret:'graph', entraSecret:'entra_oidc',
+                      voipKey:'voipms', twilioToken:'twilio'};
+  const _secretSave=window.secretSave;
+  window.secretSave=function(key){
+    const el=document.getElementById('sec-'+key);
+    const val=el?el.value:'';
+    _secretSave(key);                               // local UX (masking, toast)
+    if(!val||!SECRET_NAMES[key]) return;
+    $fetch('/api/settings/secrets/'+SECRET_NAMES[key],{method:'PUT',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({value:val})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });          // pull real rotation meta
+  };
+
+  /* ---- caller verification: LIVE flow — the server sends the code and the
+     agent NEVER sees it; only the caller reading it back can verify ---- */
+  window.vfySend=function(tid, method, masked){
+    const b=document.getElementById('vfyBody'); if(!b) return;
+    b.innerHTML='<div class="mini muted">Sending code\u2026</div>';
+    $fetch('/api/tickets/'+tid+'/verify/start',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:method})})
+      .then(async r=>{
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){
+          b.innerHTML='<div class="notice lock">'+icon(IC.shield)+
+            '<div><b>Could not send.</b> '+esc(d.detail||'Unknown error')+'</div></div>';
+          return;
+        }
+        state.verify[tid]={vid:d.id, method, masked:d.masked};
+        const chan=method==='sms'?'SMS':'email';
+        b.innerHTML=`
+          <div class="notice info" style="margin-bottom:12px">${icon(IC.shield)}<div>Code sent via <b>${chan}</b> to <span class="tape">${esc(d.masked)}</span>. Ask the caller to read it back to you \u2014 it is never shown here.</div></div>
+          <div class="field"><label>Code the caller reads back</label>
+            <input type="text" id="vfyCode" maxlength="6" placeholder="6 digits" style="letter-spacing:.3em;font-size:16px" onkeydown="if(event.key==='Enter')vfyCheck(${tid})"></div>
+          <div class="mini muted" id="vfyMsg">${d.attempts} attempts \u00b7 expires in ${d.ttl_min} min</div>
+          <div style="display:flex;gap:10px;margin-top:12px">
+            <button class="btn primary" onclick="vfyCheck(${tid})">Verify code</button>
+            <button class="btn ghost sm" onclick="vfySend(${tid},'${method}','${esc(masked)}')">Resend</button>
+          </div>`;
+        document.getElementById('vfyCode').focus();
+      });
+  };
+  window.vfyCheck=function(tid){
+    const ch=state.verify[tid]; if(!ch) return;
+    const entered=(document.getElementById('vfyCode')||{value:''}).value.trim();
+    if(!entered) return;
+    $fetch('/api/tickets/'+tid+'/verify/check',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({verification_id:ch.vid, code:entered})})
+      .then(async r=>{
+        const d=await r.json().catch(()=>({}));
+        const body=document.getElementById('vfyBody'), msg=document.getElementById('vfyMsg');
+        if(!r.ok){ if(msg) msg.innerHTML='<span style="color:var(--void)">'+esc(d.detail||'Check failed')+'</span>'; return; }
+        if(d.result==='verified'){
+          delete state.verify[tid];
+          body.innerHTML='<div class="notice info" style="border-color:var(--brand)">'+icon(IC.shield)+
+            '<div><b>Verified.</b> An audit note was posted to the thread and the ticket is tagged <span class="chip tagchip">identity-verified</span>. Proceed with the sensitive request.</div></div>';
+          document.querySelector('#modal .modal-foot').innerHTML=
+            '<button class="btn primary" onclick="closeModal()">Back to ticket</button>';
+          setTimeout(()=>hydrate(),400);
+        } else if(d.result==='failed'){
+          delete state.verify[tid];
+          body.innerHTML='<div class="notice lock" style="border-color:var(--void)">'+icon(IC.shield)+
+            '<div><b>Verification failed.</b> The attempt budget is spent \u2014 a FAILED note is on the ticket so the attempt is on the record. Do not action sensitive requests for this caller.</div></div>';
+          document.querySelector('#modal .modal-foot').innerHTML=
+            '<button class="btn primary" onclick="closeModal()">Back to ticket</button>';
+          setTimeout(()=>hydrate(),400);
+        } else if(d.result==='expired'){
+          if(msg) msg.innerHTML='<span style="color:var(--void)">Code expired \u2014 send a new one.</span>';
+        } else {
+          if(msg) msg.innerHTML='<span style="color:var(--void)">Not a match \u2014 '+d.attempts_left+' attempt'+(d.attempts_left===1?'':'s')+' remaining.</span>';
+          const inp=document.getElementById('vfyCode'); if(inp){ inp.value=''; inp.focus(); }
+        }
+      });
+  };
+
+  /* ---- settings: verification config (settings persist; flows are LIVE above) ---- */
   let vcfgTimer=null;
   const _vcfgSet=window.vcfgSet;
   window.vcfgSet=function(path,v,srcEl){

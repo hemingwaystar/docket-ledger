@@ -368,6 +368,17 @@ places.
 - [ ] **Full SSO on the domain:** add the https redirect URI in Entra → the
       Microsoft button round-trips on https://helpdesk.… (no port-forward)
 
+- [ ] **Verification (build 5):** enable a channel in Settings → Caller
+      verification (SMS needs DID + API user + voipms secret; email needs
+      from-address inside the Graph access policy) → on a ticket with a
+      real contact, Verify caller → code arrives on the CONTACT's
+      phone/inbox, never shown in the UI → correct read-back → Verified
+      chip on the ticket, ✅ sys article, identity-verified tag, audit
+      line; wrong code ×3 → ❌ FAILED article; expired code → distinct
+      "send a new one" message; disabled channel → clear 409 in the modal
+- [ ] **Secrets card:** Save on any slot → "rotated just now by you"
+      metadata appears after refresh (it PUTs for real now)
+
 **Prototype-parity wiring queue:**
 1. ~~Docket props panel, pending timers, merge~~ DONE
 2. ~~Projects lifecycle in prototype UI~~ DONE (incl. new reopen endpoint)

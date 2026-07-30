@@ -33,9 +33,7 @@ body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:var(--
 .pane iframe{width:100%;height:100%;border:0;display:block;background:var(--paper)}
 .stage.split .pane{display:block;flex:1}
 .stage.split .pane + .pane{border-left:3px solid var(--ink)}
-.pane .cap{position:absolute;top:0;left:0;right:0;height:0;overflow:visible;pointer-events:none;display:none}
-.stage.split .pane .cap{display:block}
-.pane .cap b{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:var(--ink);color:#e8edf0;font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:3px 12px;border-radius:99px;opacity:.85}
+/* (pane caps removed — each app's own rail already names it) */
 @media (max-width: 1100px){ .stage.split{flex-direction:column} .stage.split .pane + .pane{border-left:0;border-top:3px solid var(--ink)} }
 </style>
 </head>
@@ -50,8 +48,8 @@ body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:var(--
   <div class="hint"><span class="dot"></span><span id="hintTxt">Log time on a ticket in Docket — watch it land in Ledger live</span></div>
 </div>
 <div class="stage" id="stage">
-  <div class="pane show" id="pane-docket"><div class="cap"><b>Docket</b></div><iframe id="fr-docket" src="desk.html" title="Docket"></iframe></div>
-  <div class="pane" id="pane-ledger"><div class="cap"><b>Ledger</b></div><iframe id="fr-ledger" src="about:blank" data-live-ledger="1" title="Ledger"></iframe></div>
+  <div class="pane show" id="pane-docket"><iframe id="fr-docket" src="desk.html" title="Docket"></iframe></div>
+  <div class="pane" id="pane-ledger"><iframe id="fr-ledger" src="about:blank" data-live-ledger="1" title="Ledger"></iframe></div>
 </div>
 <script>
 /* Both iframes stay mounted the whole time, so each app keeps its state while

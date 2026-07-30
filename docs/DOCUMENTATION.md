@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-29 (build 4) · migrations 0001–0020 · bundle “hemingway-backend.zip”**
+**As of 2026-07-29 (build 5) · migrations 0001–0021 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -288,6 +288,27 @@ overlay-only with a real public-CA certificate. Known cosmetic limit:
 Ledger's Swagger behind the proxy fetches Docket's spec — use the NetBird
 ports for Ledger's Swagger.
 
+**Caller verification (build 5 — NEW, migration 0021):** the prototype's
+verify modal is live. From any ticket, `Verify caller` sends a one-time
+6-digit code to the contact info **on file** (mobile-then-phone for SMS, the
+stored address for email — the client never supplies a destination), stored
+server-side as a sha256 hash with the configured TTL and attempt budget; a
+fresh send supersedes any pending code. **The agent never sees the code** —
+only the caller reading it back can verify. Success tags the ticket
+`identity-verified` and posts the ✅ system article; a spent attempt budget
+posts the ❌ FAILED article (gated by the post-to-thread setting); every
+outcome audits. SMS goes via **voip.ms** (API username + the `voipms`
+secret) or **Twilio** (account SID + the `twilio` secret) per the provider
+picked in Settings; email rides the same Graph mailer as agent replies,
+from the configured verification address. Channels seed **default-OFF**
+(customer-touching convention) — enabling one in Settings → Caller
+verification is the go-live flip. The Settings **secrets card now actually
+stores**: Save on any slot PUTs to the write-only secrets API and re-pulls
+rotation metadata (previously the card was demo-only — which is why a
+working secret could show "not set"); the Twilio slot's metadata hydration
+bug is fixed. Suite polish: the floating DOCKET/LEDGER pane pills in split
+view are gone.
+
 **Ledger, end to end:** live entry feed with note-content fallback; submit →
 recall → span-edit → reclassify → void with all gates; timesheet
 approve/return-with-reason/revoke (the kick-back message shows who and why);
@@ -414,6 +435,13 @@ One-time cleanups, if not already done:
    `https://helpdesk.hemingwaytechsolutions.com/auth/oidc/callback`, then
    run the OIDC walk on the real domain.
 
+**Enabling caller verification (one-time):** for email codes, add the
+verification from-address mailbox to the same Exchange **application access
+policy** that scopes the Graph app (codes send via Graph like any reply);
+for SMS, save the voip.ms API password (or Twilio token) in the secrets
+card, fill DID + API username (or SID), then Enable the channel. Channels
+are off until you flip them.
+
 Then run the **verification walks in STATE.md §5** — they cover the
 directory round-trip, the Docket working loop, project lifecycle, time
 survival, the full Ledger loop (including the bug-#22 Return walk),
@@ -467,8 +495,7 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
    uncovered.
 5. **Go-live flips:** `mail.outbound_enabled` → live reply test → real
    traffic.
-6. Post-launch tail: Zammad import → portal → attachments → verification
-   flows → retainers → ticket links.
+6. Post-launch tail: Zammad import → portal → attachments → retainers → ticket links.
 
 ---
 
