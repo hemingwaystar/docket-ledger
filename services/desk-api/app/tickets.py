@@ -222,8 +222,11 @@ def bootstrap(request: Request, limit: int = 500):
             cur.execute("SELECT value FROM shared.app_config WHERE key = 'mail'")
             row = cur.fetchone()
             mail_cfg = row["value"] if row else {}
-            outbound = bool((mail_cfg or {}).get("outbound_enabled"))
+            # the GLOBAL send switch (go-live flip) — distinct from each
+            # mailbox's own eligibility flag emitted per row below (0022)
+            out["outboundEnabled"] = bool((mail_cfg or {}).get("outbound_enabled"))
             cur.execute("""SELECT m.id, m.address, m.display_name, m.group_id, m.paused,
+                             m.outbound,
                              COALESCE(p.rank, 2) AS prio,
                              (SELECT count(*) FROM desk.articles ar
                                WHERE ar.mail_to = m.address AND ar.kind = 'mail_in'
@@ -233,7 +236,7 @@ def bootstrap(request: Request, limit: int = 500):
                             ORDER BY m.address""")
             out["mailboxes"] = [{"id": str(r["id"]), "addr": r["address"],
                                  "type": "shared", "groupId": str(r["group_id"]),
-                                 "prio": r["prio"], "outbound": outbound,
+                                 "prio": r["prio"], "outbound": r["outbound"],
                                  "desc": r["display_name"] or "",
                                  "status": "paused" if r["paused"] else "connected",
                                  "today": r["today"]} for r in cur.fetchall()]
@@ -306,14 +309,29 @@ def bootstrap(request: Request, limit: int = 500):
                                  is_auto, mail_from, mail_to, sent_at
                                  FROM desk.articles WHERE ticket_id = ANY(%s)
                                 ORDER BY sent_at""", (ids,))
+                art_index = {}
                 for r in cur.fetchall():
-                    tickets[r["ticket_id"]]["articles"].append({
-                        "id": str(r["id"]),
-                        "kind": "mail-in" if r["kind"] == "mail_in" else r["kind"],
-                        "author": {"name": r["author"]}, "ts": ms(r["sent_at"]),
-                        "body": r["body"], "bodyHtml": r["body_html"],
-                        "auto": r["is_auto"],
-                        "mailFrom": r["mail_from"], "mailTo": r["mail_to"]})
+                    art = {"id": str(r["id"]),
+                           "kind": "mail-in" if r["kind"] == "mail_in" else r["kind"],
+                           "author": {"name": r["author"]}, "ts": ms(r["sent_at"]),
+                           "body": r["body"], "bodyHtml": r["body_html"],
+                           "auto": r["is_auto"],
+                           "mailFrom": r["mail_from"], "mailTo": r["mail_to"]}
+                    art_index[str(r["id"])] = art
+                    tickets[r["ticket_id"]]["articles"].append(art)
+                if art_index:
+                    cur.execute("""SELECT at.article_id, at.id, at.filename,
+                                     at.byte_size, at.mime_type
+                                     FROM desk.attachments at
+                                     JOIN desk.articles ar ON ar.id = at.article_id
+                                    WHERE ar.ticket_id = ANY(%s) AND NOT at.is_inline
+                                    ORDER BY at.created_at""", (ids,))
+                    for r in cur.fetchall():
+                        a = art_index.get(str(r["article_id"]))
+                        if a is not None:
+                            a.setdefault("atts", []).append(
+                                {"id": str(r["id"]), "name": r["filename"],
+                                 "size": r["byte_size"], "type": r["mime_type"]})
                 cur.execute("""SELECT e.ticket_id, e.id, e.tech_id, e.activity_type_id,
                                  e.task_id, e.hours, e.started_at, e.ended_at, e.status,
                                  e.submitted_at, e.ts_approved_at, e.article_id, e.version
@@ -800,6 +818,7 @@ class TimeSpec(BaseModel):
 
 
 class NewArticle(BaseModel):
+    attachment_ids: list[str] = []
     kind: str
     body: str
     author_email: str
@@ -836,15 +855,16 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 (mail_to,) = cur.fetchone()
                 if not mail_to:
                     raise HTTPException(409, "No recipient — the ticket has no contact or inbound mail")
-                cur.execute("""SELECT m.address, m.display_name
+                cur.execute("""SELECT m.address, m.display_name, m.outbound
                                  FROM desk.mailboxes m
                                  JOIN desk.tickets t ON t.group_id = m.group_id
                                 WHERE t.id = %s AND NOT m.paused
-                                ORDER BY m.address LIMIT 1""", (ticket_id,))
+                                ORDER BY m.outbound DESC, m.address LIMIT 1""",
+                            (ticket_id,))
                 mbrow = cur.fetchone()
                 if mbrow is None:
                     raise HTTPException(409, "No mailbox is attached to this ticket's group")
-                mb_addr, mb_name = mbrow
+                mb_addr, mb_name, mb_outbound = mbrow
                 cur.execute("""SELECT t.title, t.cc,
                                  (SELECT ar.message_id FROM desk.articles ar
                                    WHERE ar.ticket_id = t.id AND ar.message_id IS NOT NULL
@@ -854,12 +874,21 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                                   WHERE ar.ticket_id = t.id AND ar.message_id IS NOT NULL), '{}')
                                 FROM desk.tickets t WHERE t.id = %s""", (ticket_id,))
                 title, cc_list, last_mid, all_mids = cur.fetchone()
-                if mailer.outbound_enabled(cur):
+                if mailer.outbound_enabled(cur) and mb_outbound:
+                    files = []
+                    if body.attachment_ids:
+                        cur.execute("""SELECT filename, mime_type, content
+                                         FROM desk.attachments
+                                        WHERE id = ANY(%s::uuid[])
+                                          AND article_id IS NULL""",
+                                    (body.attachment_ids,))
+                        files = [(f, m, bytes(c)) for f, m, c in cur.fetchall()]
                     out_mid = mailer.send_reply(
                         cur, mailbox_address=mb_addr, display_name=mb_name or "",
                         to=mail_to, cc=list(cc_list or []),
                         subject=f"[#{ticket_id}] {title}", body=body.body,
-                        in_reply_to=last_mid, references=list(all_mids or []))
+                        in_reply_to=last_mid, references=list(all_mids or []),
+                        attachments=files)
                     sent = True
             cur.execute("""INSERT INTO desk.articles
                              (ticket_id, kind, author, author_id, body,
@@ -869,6 +898,11 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                          None if body.kind != "reply" else None,
                          mail_to, out_mid))
             (article_id,) = cur.fetchone()
+            if body.attachment_ids:
+                cur.execute("""UPDATE desk.attachments
+                                  SET article_id = %s, staged_by = NULL
+                                WHERE id = ANY(%s::uuid[]) AND article_id IS NULL""",
+                            (article_id, body.attachment_ids))
             entry_id, hours = None, None
             if body.time:
                 t = body.time
@@ -885,7 +919,8 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
         detail = f"#{ticket_id} · {body.kind} by {author_name}"
         if body.kind == "reply":
             detail += (f" · mailed to {mail_to}" if sent
-                       else f" · to {mail_to} — RECORDED ONLY (outbound disabled)")
+                       else f" · to {mail_to} — RECORDED ONLY "
+                            f"({'sender mailbox is receive-only' if not mb_outbound else 'outbound disabled'})")
         if entry_id:
             detail += f" · {hours} h → Ledger"
         auth.audit(conn, "desk",

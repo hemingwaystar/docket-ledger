@@ -160,6 +160,7 @@ def list_mailboxes(request: Request):
 
 class NewMailbox(BaseModel):
     address: str
+    outbound: bool = True
     group: str
     display_name: str = ""
     default_priority: str | None = None
@@ -175,9 +176,11 @@ def create_mailbox(body: NewMailbox, request: Request):
             gid = helpers.group_id(cur, body.group)
             pid = helpers.priority_id(cur, body.default_priority) if body.default_priority else None
             cur.execute("""INSERT INTO desk.mailboxes
-                             (address, display_name, group_id, default_priority_id, paused)
-                           VALUES (%s, %s, %s, %s, %s) RETURNING id""",
-                        (body.address.lower().strip(), body.display_name, gid, pid, body.paused))
+                             (address, display_name, group_id, default_priority_id,
+                              paused, outbound)
+                           VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                        (body.address.lower().strip(), body.display_name, gid, pid,
+                         body.paused, body.outbound))
             (mid,) = cur.fetchone()
         auth.audit(conn, "desk", "Mailbox added", f"mailbox:{mid}",
                    f"{body.address} → {body.group} ({who['label']})")
@@ -186,6 +189,7 @@ def create_mailbox(body: NewMailbox, request: Request):
 
 class PatchMailbox(BaseModel):
     paused: bool | None = None
+    outbound: bool | None = None
     group: str | None = None
     address: str | None = None         # rename — path param is the OLD address
     display_name: str | None = None
@@ -209,19 +213,23 @@ def patch_mailbox(address: str, body: PatchMailbox, request: Request):
                 cur.execute("UPDATE desk.mailboxes SET paused = %s WHERE id = %s",
                             (body.paused, mid))
                 notes.append("paused" if body.paused else "resumed")
+            if body.outbound is not None:
+                cur.execute("UPDATE desk.mailboxes SET outbound = %s WHERE id = %s",
+                            (body.outbound, mid))
+                notes.append("send-eligible" if body.outbound else "receive-only")
             if body.address is not None:
                 cur.execute("UPDATE desk.mailboxes SET address = %s WHERE id = %s",
                             (body.address.lower().strip(), mid))
-                changes.append(f"address → {body.address}")
+                notes.append(f"address → {body.address}")
             if body.display_name is not None:
                 cur.execute("UPDATE desk.mailboxes SET display_name = %s WHERE id = %s",
                             (body.display_name, mid))
-                changes.append("display name set")
+                notes.append("display name set")
             if body.default_priority is not None:
                 pid = helpers.priority_id(cur, body.default_priority)
                 cur.execute("UPDATE desk.mailboxes SET default_priority_id = %s WHERE id = %s",
                             (pid, mid))
-                changes.append(f"priority → {body.default_priority}")
+                notes.append(f"priority → {body.default_priority}")
             if body.group is not None:
                 cur.execute("UPDATE desk.mailboxes SET group_id = %s WHERE id = %s",
                             (helpers.group_id(cur, body.group), mid))

@@ -25,6 +25,7 @@ import json
 import re
 import time
 
+import base64
 import httpx
 
 from . import automations, crypto, db
@@ -165,7 +166,7 @@ def find_thread(cur, msg):
     return None
 
 
-def ingest_message(conn, mailbox, msg) -> str:
+def ingest_message(conn, mailbox, msg, token=None) -> str:
     mid = msg.get("internetMessageId")
     sender = (((msg.get("from") or {}).get("emailAddress")) or {}).get("address", "")
     subject = (msg.get("subject") or "").strip() or "(no subject)"
@@ -202,10 +203,14 @@ def ingest_message(conn, mailbox, msg) -> str:
                          (ticket_id, kind, author, mail_from, mail_to, message_id,
                           body, body_html, is_auto, sent_at)
                        VALUES (%s, 'mail_in', %s, %s, %s, %s, %s, %s,
-                               COALESCE(%s, now()))""",
+                               COALESCE(%s, now())) RETURNING id""",
                     (ticket_id, sender or "unknown", sender, mailbox["address"], mid,
                      body_text(msg), body_html(msg), auto,
                      msg.get("receivedDateTime")))
+        (article_id,) = cur.fetchone()
+        if msg.get("hasAttachments") and token:
+            ingest_attachments(cur, mailbox["address"], msg.get("id"),
+                               article_id, token)
         if status == "followup" and not auto:
             cur.execute("""
                 UPDATE desk.tickets t
@@ -239,9 +244,71 @@ def ingest_message(conn, mailbox, msg) -> str:
     return status
 
 
+MAX_ATTACHMENT = 20 * 1024 * 1024
+
+
+def ingest_attachments(cur, address, graph_msg_id, article_id, token):
+    """Store the message's fileAttachments on its article. Fenced (bug #29
+    discipline): attachments are optional work — a Graph hiccup here logs
+    and moves on, it never takes the already-inserted article down with it.
+    Oversized and non-file (item/reference) attachments are skipped."""
+    try:
+        resp = httpx.get(
+            f"https://graph.microsoft.com/v1.0/users/{address}/messages/"
+            f"{graph_msg_id}/attachments",
+            headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        resp.raise_for_status()
+        items = resp.json().get("value", [])
+    except Exception as exc:                              # noqa: BLE001
+        print(f"[attach] fetch failed for article {article_id}: {exc}", flush=True)
+        return
+    for a in items:
+        if a.get("@odata.type") != "#microsoft.graph.fileAttachment":
+            continue                                      # item/reference kinds
+        if int(a.get("size") or 0) > MAX_ATTACHMENT:
+            print(f"[attach] skipped oversized {a.get('name')!r} "
+                  f"({a.get('size')} bytes)", flush=True)
+            continue
+        try:
+            data = base64.b64decode(a.get("contentBytes") or "")
+        except Exception:
+            continue
+        if not data:
+            continue
+        # savepoint per file: a bad INSERT must not poison the ingestion
+        # transaction it rides in (bug #29's failure class — a caught
+        # exception still leaves the tx failed without one)
+        cur.execute("SAVEPOINT att")
+        try:
+            cur.execute("""INSERT INTO desk.attachments
+                             (article_id, filename, mime_type, byte_size, content,
+                              content_id, is_inline)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                        (article_id, a.get("name") or "attachment",
+                         a.get("contentType") or "application/octet-stream",
+                         len(data), data, a.get("contentId"),
+                         bool(a.get("isInline"))))
+            cur.execute("RELEASE SAVEPOINT att")
+        except Exception as exc:                          # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT att")
+            print(f"[attach] insert failed for {a.get('name')!r}: {exc}",
+                  flush=True)
+
+
+def sweep_staged_uploads(conn) -> int:
+    """Delete composer uploads never linked to an article after a day —
+    the ONE sanctioned DELETE (0023): staged orphans are internal garbage,
+    not business data."""
+    with conn.cursor() as cur:
+        cur.execute("""DELETE FROM desk.attachments
+                        WHERE article_id IS NULL
+                          AND created_at < now() - interval '24 hours'""")
+        return cur.rowcount
+
+
 def poll_mailbox(conn, token, mailbox) -> dict:
     select = ("subject,from,receivedDateTime,body,bodyPreview,"
-              "internetMessageId,internetMessageHeaders")
+              "internetMessageId,internetMessageHeaders,hasAttachments")
     with conn.cursor() as cur:
         cur.execute("SELECT delta_link FROM desk.graph_subscriptions WHERE mailbox_id = %s",
                     (mailbox["id"],))
@@ -262,7 +329,7 @@ def poll_mailbox(conn, token, mailbox) -> dict:
         for msg in page.get("value", []):
             if "@removed" in msg:
                 continue
-            counts[ingest_message(conn, mailbox, msg)] += 1
+            counts[ingest_message(conn, mailbox, msg, token)] += 1
         if "@odata.nextLink" in page:
             url = page["@odata.nextLink"]
             continue
@@ -325,6 +392,15 @@ def main():
                     conn.commit()
                 except Exception as exc:
                     print("automation pass failed:", exc)
+                    conn.rollback()
+                # housekeeping, fenced the same way
+                try:
+                    swept = sweep_staged_uploads(conn)
+                    if swept:
+                        print(f"swept {swept} stale staged upload(s)")
+                    conn.commit()
+                except Exception as exc:
+                    print("staged-upload sweep failed:", exc)
                     conn.rollback()
         except Exception as exc:
             print("worker pass failed:", exc)

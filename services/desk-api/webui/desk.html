@@ -1503,7 +1503,7 @@ function renderArt(t,a){
     <div class="art-main">
       <div class="art-top" style="display:flex;align-items:center;gap:8px"><b>${esc(a.author.name)}</b>${kindLab}${a.editedAt?`<span class="mini muted" title="Edited ${fmtDT(a.editedAt)} — original preserved in the audit log">· edited</span>`:''}${noteActions}<span class="art-ts">${fmtDT(a.ts)}</span></div>
       ${bodyHtml}
-      ${a.atts&&a.atts.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${a.atts.map(f=>`<span class="chip" style="background:#eef2f1;cursor:pointer" onclick="toast('In production this downloads from object storage (AV-scanned).')" title="${esc(f.type)}">\ud83d\udcce ${esc(f.name)} <span class="mini muted">${fmtKB(f.size)}</span></span>`).join('')}</div>`:''}
+      ${a.atts&&a.atts.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${a.atts.map(f=>`<span class="chip" style="background:#eef2f1;cursor:pointer" onclick="attOpen('${f.id||''}')" title="${esc(f.type)}">\ud83d\udcce ${esc(f.name)} <span class="mini muted">${fmtKB(f.size)}</span></span>`).join('')}</div>`:''}
       ${timeChip}
     </div>
   </div>`;
@@ -1747,6 +1747,7 @@ function saveEditArt(tid, aid){
   }
   state.editArt = null; render();
 }
+function attOpen(id){ toast('Demo mode \u2014 in the live app this downloads the file.'); }
 function attachTime(tid, aid){
   const t = tk(tid), a = t.articles.find(x=>x.id===aid); if(!a || a.time || a.auto || (a.kind!=='note'&&a.kind!=='reply')) return;
   if(!can('log_time')) return;
@@ -1864,7 +1865,7 @@ function removeTimeEntry(tid, i){
 const fmtKB = b => b>=1048576? (b/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(b/1024))+' KB';
 function addAtts(inp){
   const cm = state.composer; cm.atts = cm.atts||[];
-  [...inp.files].forEach(f=>{ if(!cm.atts.some(x=>x.name===f.name && x.size===f.size)) cm.atts.push({ name:f.name, size:f.size, type:f.type||'application/octet-stream' }); });
+  [...inp.files].forEach(f=>{ if(!cm.atts.some(x=>x.name===f.name && x.size===f.size)) cm.atts.push({ name:f.name, size:f.size, type:f.type||'application/octet-stream', _file:f }); });
   inp.value='';
   const body = document.getElementById('composeBody')?.value; render();
   const b2 = document.getElementById('composeBody'); if(b2 && body!=null) b2.value = body;
@@ -4470,6 +4471,10 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     : 'Live sync failed \u2014 check desk-api logs'); await hydrate(); };
 
   /* ---- composer: let the prototype do its local thing, then mirror ---- */
+  window.attOpen=function(id){                       /* live: real download */
+    if(id) window.open('/api/attachments/'+id,'_blank');
+    else toast('This file is still uploading \u2014 try again in a moment.');
+  };
   const _sendArticle=window.sendArticle;
   window.sendArticle=function(tid){
     const t=tk(tid), before=t?t.articles.length:0;
@@ -4482,10 +4487,22 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       ended_at:iso(a.time.endedAt||Date.now()),
       activity_type:typeName(a.time.typeId), technician_email:ME.email,
       task_id:a.time.taskId&&a.time.taskId.length>10?a.time.taskId:null};
-    $fetch('/api/tickets/'+tid+'/articles',{method:'POST',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
-        setTimeout(()=>hydrate(),700); });
+    /* staged files first (each returns its row id), then the article that
+       claims them — the server links the rows and mails them on replies */
+    const staged=(a.atts||[]).filter(f=>f._file);
+    const uploads=staged.map(f=>{
+      const fd=new FormData(); fd.append('file', f._file, f.name);
+      return $fetch('/api/uploads',{method:'POST',body:fd})
+        .then(async r=>{ if(!r.ok) throw await r.json().catch(()=>0);
+          const d=await r.json(); f.id=d.id; delete f._file; return d.id; });
+    });
+    Promise.all(uploads).then(ids=>{
+      if(ids.length) payload.attachment_ids=ids;
+      return $fetch('/api/tickets/'+tid+'/articles',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    }).then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),700); })
+      .catch(d=>oops(d));
   };
 
   /* ---- tags ---- */
@@ -4868,13 +4885,15 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
   window.saveMailbox=function(id){
     const g=k=>{const el=document.getElementById(k);return el?el.value:'';};
     const addr=g('mbAddr').trim().toLowerCase(), groupId=g('mbGroup'),
-          prio=g('mbPrio'), desc=g('mbDesc').trim();
+          prio=g('mbPrio'), desc=g('mbDesc').trim(),
+          mbOut=(document.getElementById('mbOut')||{checked:true}).checked;  /* read BEFORE the modal closes */
     const oldAddr=id?(MAILBOXES.find(x=>x.id===id)||{}).addr:null;
     const before=MAILBOXES.length;
     _saveMailbox(id);
     if(!addr.includes('@')) return;                // original refused
     if(id){
-      const patch={group:groupId, display_name:desc, default_priority:prioLabel(prio)};
+      const patch={group:groupId, display_name:desc, default_priority:prioLabel(prio),
+                   outbound:mbOut};
       if(oldAddr&&oldAddr!==addr) patch.address=addr;
       $fetch('/api/settings/mailboxes/'+encodeURIComponent(oldAddr||addr),{method:'PATCH',
         headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
@@ -4885,7 +4904,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       $fetch('/api/settings/mailboxes',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({address:addr, group:groupId, display_name:desc,
-                             default_priority:prioLabel(prio)})})
+                             default_priority:prioLabel(prio), outbound:mbOut})})
         .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
           setTimeout(()=>hydrate(),400); });
     }

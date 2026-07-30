@@ -4,3 +4,4 @@ psycopg[binary]==3.2.*
 argon2-cffi==23.*
 cryptography==43.*
 httpx==0.27.*
+python-multipart==0.0.9

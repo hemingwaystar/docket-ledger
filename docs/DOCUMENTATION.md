@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-29 (build 5) · migrations 0001–0021 · bundle “hemingway-backend.zip”**
+**As of 2026-07-29 (build 6) · migrations 0001–0023 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -309,6 +309,32 @@ working secret could show "not set"); the Twilio slot's metadata hydration
 bug is fixed. Suite polish: the floating DOCKET/LEDGER pane pills in split
 view are gone.
 
+**Bug #30 — mailbox editing (build 5b, migration 0022):** saving the
+mailbox Edit dialog 500'd (a variable-name slip in `patch_mailbox`), and
+the dialog's "Outbound enabled" checkbox turned out to have no column
+behind it. 0022 adds per-mailbox `outbound` (send **eligibility** — uncheck
+for alert-only inboxes like noc@), distinct from the global
+`mail.outbound_enabled` **master switch** (the go-live flip). Both send
+paths honor it: a receive-only mailbox records instead of sending, with
+the reason audited.
+
+**Attachments (build 6 — NEW, migration 0023):** the full pipeline, using
+the desk.attachments table that's waited since 0001 (bytea by reviewed
+decision — one database, atomic backups). **Inbound:** the worker fetches
+each mail's fileAttachments from Graph and stores them on the article
+(item/reference kinds and files over 20 MB are skipped with a log line;
+every insert rides its own savepoint so a bad file can never roll back
+mail ingestion — bug #29's class). Inline-image metadata (contentId) is
+stored now; rendering cid: images in the mail iframe is a later nicety.
+**Outbound + notes:** the composer's paperclip stage is real — files
+upload first (20 MB/file cap; nginx's 25m body limit leaves multipart
+headroom), then the reply/note claims them; replies carry them as real
+MIME attachments through the same Graph send, notes just keep them on the
+thread. Attachment chips on any article download through an authenticated
+endpoint (images/PDFs open inline). Staged uploads never claimed are swept
+by the worker after a day — the system's one sanctioned DELETE, because an
+orphaned upload is internal garbage, not business data.
+
 **Ledger, end to end:** live entry feed with note-content fallback; submit →
 recall → span-edit → reclassify → void with all gates; timesheet
 approve/return-with-reason/revoke (the kick-back message shows who and why);
@@ -495,7 +521,7 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
    uncovered.
 5. **Go-live flips:** `mail.outbound_enabled` → live reply test → real
    traffic.
-6. Post-launch tail: Zammad import → portal → attachments → retainers → ticket links.
+6. Post-launch tail: Zammad import → portal → retainers → ticket links.
 
 ---
 

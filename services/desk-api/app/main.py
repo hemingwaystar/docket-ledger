@@ -6,7 +6,7 @@ Auth: Bearer PAT (auth.py). Invariants live in the DB; routers stay thin."""
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from . import automations, db, oidc, sessions, settings, tickets, directory, projects, verification
+from . import attachments, automations, db, oidc, sessions, settings, tickets, directory, projects, verification
 
 app = FastAPI(title="desk-api")
 app.include_router(sessions.router)
@@ -17,6 +17,7 @@ app.include_router(projects.router)
 app.include_router(automations.router)
 app.include_router(oidc.router)
 app.include_router(verification.router)
+app.include_router(attachments.router)
 
 
 @app.get("/healthz")

@@ -304,7 +304,7 @@ def _trigger_email(cur, ctx, body_tpl):
     if not to:
         return None
     cur.execute("""SELECT m.address, m.display_name FROM desk.mailboxes m
-                    WHERE m.group_id = %s AND NOT m.paused
+                    WHERE m.group_id = %s AND NOT m.paused AND m.outbound
                     ORDER BY m.address LIMIT 1""", (ctx["group_id"],))
     mb = cur.fetchone()
     if mb is None:

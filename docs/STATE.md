@@ -376,8 +376,22 @@ places.
       chip on the ticket, ✅ sys article, identity-verified tag, audit
       line; wrong code ×3 → ❌ FAILED article; expired code → distinct
       "send a new one" message; disabled channel → clear 409 in the modal
+- [ ] **Mailbox edit (bug #30):** Edit the support@ mailbox, tick/untick
+      Outbound, Save → no error, chip flips between Enabled and
+      Receive-only, survives refresh; with outbound flipped ON globally
+      later, a reply from a receive-only-mailbox group records with
+      "sender mailbox is receive-only" in the audit line
 - [ ] **Secrets card:** Save on any slot → "rotated just now by you"
       metadata appears after refresh (it PUTs for real now)
+
+- [ ] **Attachments (build 6):** email yourself a ticket with a PDF +
+      image → chips appear on the mail-in article, both download (image
+      opens inline); reply with a file attached (outbound ON) → recipient
+      gets a real attachment; attach a file to an internal NOTE → chip on
+      the thread, nothing mailed; a 25 MB file → clean 422, not an nginx
+      error page
+- [ ] **Orphan sweep:** upload in the composer, close without sending →
+      worker log shows "swept 1 stale staged upload(s)" the day after
 
 **Prototype-parity wiring queue:**
 1. ~~Docket props panel, pending timers, merge~~ DONE

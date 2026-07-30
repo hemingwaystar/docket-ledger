@@ -63,7 +63,8 @@ def _token(cur) -> str:
 
 def send_reply(cur, *, mailbox_address: str, display_name: str,
                to: str, cc: list[str], subject: str, body: str,
-               in_reply_to: str | None, references: list[str]) -> str:
+               in_reply_to: str | None, references: list[str],
+               attachments: list[tuple[str, str, bytes]] | None = None) -> str:
     """Sends and returns our outbound Message-ID. Raises HTTPException on
     any failure — callers treat a raise as 'not sent'."""
     msg = EmailMessage()
@@ -80,6 +81,10 @@ def send_reply(cur, *, mailbox_address: str, display_name: str,
     if references:
         msg["References"] = " ".join(references[-10:])
     msg.set_content(body)
+    for fname, mime_t, data in (attachments or []):
+        maintype, _, subtype = (mime_t or "application/octet-stream").partition("/")
+        msg.add_attachment(data, maintype=maintype or "application",
+                           subtype=subtype or "octet-stream", filename=fname)
 
     token = _token(cur)
     mime = base64.b64encode(msg.as_bytes()).decode()
