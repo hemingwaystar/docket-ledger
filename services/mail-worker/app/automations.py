@@ -35,6 +35,28 @@ from . import mailer
 
 MAX_DEPTH = 3
 
+
+def _hournum(v, default):
+    """Business-hours boundary as fractional hours. Tolerates every shape any
+    writer has ever produced (bug #29): 8, 8.5, "8", "08:00", "18:30"."""
+    try:
+        if isinstance(v, str) and ":" in v:
+            h, m = (v.split(":") + ["0"])[:2]
+            return float(h) + (float(m) if m else 0) / 60
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _daynums(v):
+    out = []
+    for d in (v if isinstance(v, list) else []):
+        try:
+            out.append(int(d))
+        except (TypeError, ValueError):
+            pass
+    return out or [1, 2, 3, 4, 5]
+
 # prototype state ids by lowercased label — the reverse of desk-api's ST_MAP
 PROTO_STATE = {"new": "new", "open": "open", "pending reminder": "pending",
                "on hold": "hold", "solved": "solved", "closed": "closed",
@@ -428,8 +450,11 @@ def process_events(conn) -> int:
 def _add_biz_hours(start, hours, biz, tz):
     """15-minute-step walk inside working time — same algorithm and 40k-step
     guard as the prototype's addBizHours, in the shop's timezone."""
-    days = set(biz.get("days", [1, 2, 3, 4, 5]))
-    h0, h1 = float(biz.get("start", 8)), float(biz.get("end", 18))
+    days = set(_daynums(biz.get("days")))
+    h0 = _hournum(biz.get("start"), 8)
+    h1 = _hournum(biz.get("end"), 18)
+    if h1 <= h0:
+        h1 = h0 + 1
     holidays = set(biz.get("holidays", []))
     remaining = hours * 60.0
     t = start.astimezone(tz)

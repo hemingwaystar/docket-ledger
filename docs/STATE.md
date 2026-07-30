@@ -218,6 +218,7 @@ touched history: entries keep the period they were written into.
 | 27 | Approvals grew a ghost "July 1930" timesheet with an unclassified entry — Ledger felt broken | a mistyped year in a span editor's datetime-local field sailed through with no bounds anywhere; the server accepted it, minted a 1930 billing period, and the sheet appeared | _sane_span() 422-guards every span write path (ledger classify, desk add/patch time: year >= 2020, <= now+400d); span inputs carry min/max; bootstrap hides empty OPEN periods, so voiding the garbage entry removes the ghost sheet AND the ghost period from every page | Any user-typed timestamp is untrusted input — bound it at the API, not just the widget |
 
 | 28 | override field showed 150 but the entry priced $51 — looked like the caret bug returned | display staleness introduced by 0018's history emission: local edits updated the CURRENT value but not the history row, and the ladder consulted history first — so the $51 from the earlier backwards-typing write kept pricing until a re-hydrate (the prototype "fixed itself instantly" only because the demo had no history rows to go stale) | UI ladder now resolves overrides as-of via effRateN (null = inherit, before-first-row AND after-reset, matching priced()'s COALESCE exactly); local edits keep the today history row in step; saves hydrate softly once the PUT lands | When you add a second source of truth to a display path, every write path that fed the first must feed the second |
+| 29 | Every ticket's SLA showed "in 416d"; worker logs "worker pass failed: could not convert string to float: '08:00'" every 30s — and each failing pass ROLLED BACK its ingested mail | 0002 seeded business_hours with "HH:MM" STRINGS; 0019's numeric seed lost to ON CONFLICT DO NOTHING; the UI's number-vs-string compare was always false → the 40,000-step walk guard capped out (40,000×15 min = 416d); worker's float() raised BEFORE commit, poisoning the whole pass | 0020 normalizes the row in place; both consumers now parse 8 / "8" / "08:00" / "18:30"; worker commits ingestion+wakes FIRST, engine passes fenced with their own commit/rollback | A config consumer is only as correct as every historical writer of that key — test against the SEEDED value, not the value you wish was there; and never let an optional subsystem sit between required work and its commit |
 
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
@@ -312,6 +313,11 @@ places.
 - [ ] **Builder round-trip:** edit/disable/reorder rules and triggers →
       refresh → everything sticks; Delete on a trigger archives it (gone from
       the list, runs history kept in the DB)
+- [ ] **SLA fix (bug #29):** after 0020 + rebuild, the queue's SLA column
+      shows real countdowns (hours, not "in 416d"); worker logs are clean of
+      "could not convert string to float"; a fresh test mail to support@
+      becomes a ticket again within a pass (ingestion was rolling back while
+      the bug was live)
 - [ ] **SLA:** Settings → change a priority's first-response target and a
       business-hours day → refresh → sticks; a ticket left un-replied past
       its (short, for testing) target puts a warn then breach notice in the

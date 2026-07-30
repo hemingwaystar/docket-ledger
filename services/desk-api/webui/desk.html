@@ -4336,8 +4336,20 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     }
     if(d.sla) Object.keys(d.sla).forEach(k=>{ const p=d.sla[k];
       if(p&&p.fr!=null) SLA[Number(k)]={fr:Number(p.fr),res:Number(p.res)}; });
-    if(d.biz){ ['days','start','end','holidays','tz'].forEach(k=>{
-      if(d.biz[k]!=null) BIZ[k]=d.biz[k]; }); }
+    if(d.biz){
+      /* bug #29: tolerate every shape any writer produced — 8, "8", "08:00".
+         A string here made isBizTime() always-false and guard-capped SLA at 416d */
+      const hn=v=>{ if(typeof v==='string'&&v.includes(':')){ const p=v.split(':');
+          const h=parseFloat(p[0]); return isNaN(h)?null:h+((parseFloat(p[1])||0)/60); }
+        const n=Number(v); return isNaN(n)?null:n; };
+      if(Array.isArray(d.biz.days)){ const ds=d.biz.days.map(Number).filter(n=>!isNaN(n));
+        if(ds.length) BIZ.days=ds; }
+      const _s=hn(d.biz.start), _e=hn(d.biz.end);
+      if(_s!=null) BIZ.start=_s;
+      if(_e!=null) BIZ.end=(_e>(_s!=null?_s:BIZ.start))?_e:BIZ.start+1;
+      if(Array.isArray(d.biz.holidays)) BIZ.holidays=d.biz.holidays;
+      if(d.biz.tz) BIZ.tz=d.biz.tz;
+    }
     if(d.notifs){ state.notifs.length=0; d.notifs.forEach(n=>state.notifs.push(n)); }
     d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });
     AGENTS.forEach(a=>{ AGENT_SIGS[a.id]=a.name+(a.role?' \u00b7 '+a.role:''); });

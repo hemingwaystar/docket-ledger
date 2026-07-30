@@ -312,13 +312,20 @@ def main():
                 if n:
                     print(f"reopened {n} pending ticket(s)")
                 poll_all(conn)
-                fired = automations.process_events(conn)
-                if fired:
-                    print(f"evaluated {fired} automation event(s)")
-                sla = automations.sla_pass(conn)
-                if sla:
-                    print(f"sent {sla} SLA notice(s)")
-                conn.commit()
+                conn.commit()          # ingestion + wakes land NO MATTER WHAT
+                # engine passes are fenced (bug #29): a failure here must
+                # never poison — let alone roll back — the mail pass above
+                try:
+                    fired = automations.process_events(conn)
+                    if fired:
+                        print(f"evaluated {fired} automation event(s)")
+                    sla = automations.sla_pass(conn)
+                    if sla:
+                        print(f"sent {sla} SLA notice(s)")
+                    conn.commit()
+                except Exception as exc:
+                    print("automation pass failed:", exc)
+                    conn.rollback()
         except Exception as exc:
             print("worker pass failed:", exc)
         time.sleep(INTERVAL)

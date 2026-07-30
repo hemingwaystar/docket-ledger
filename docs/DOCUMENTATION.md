@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-29 (build 2) · migrations 0001–0019 · bundle “hemingway-backend.zip”**
+**As of 2026-07-29 (build 2, rev b) · migrations 0001–0020 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -141,7 +141,7 @@ Adapter conventions (each one paid for by a numbered bug):
 
 ---
 
-## 3. Migration catalog (0001–0019)
+## 3. Migration catalog (0001–0020)
 
 | # | Contents |
 |---|---|
@@ -164,6 +164,7 @@ Adapter conventions (each one paid for by a numbered bug):
 | 0017 | Admin layer: client_rates PK → partial unique indexes (bug #24 — client-wide lane storable); `ledger.client_access`; column-scoped clients UPDATE → ledger_api; role_permissions DELETE → desk_api |
 | 0018 | `activity_type_rates.billable`; `priced()` replaced (verbatim 0001 body + as-of billable rung) — billing changes never re-price history |
 | 0019 | **Automations engine**: rule table extensions (events/order/archive), event outbox, notifications, SLA-notice dedupe, SLA + business-hours config seeds; engine grants (incl. two latent gaps: mail_worker round_robin INSERT + ticket_tags SELECT); desk_api column-scoped `INSERT/UPDATE(name, active)` on activity_types |
+| 0020 | Bug #29: normalize 0002's `"HH:MM"`-string business_hours in place (the "416d SLA" + worker-pass rollback); both consumers also parse any historical shape now |
 
 Migrations are append-only, applied exactly once (`public.schema_migrations`),
 run via the `migrate` compose service.
@@ -285,7 +286,7 @@ route-table cross-check.
 # VM:
 cd ~/docket-ledger
 git restore . && git pull
-sudo docker compose run --rm migrate            # applies through 0019
+sudo docker compose run --rm migrate            # applies through 0020
 sudo docker compose up -d --build desk-api ledger-api mail-worker
 sudo docker compose ps                          # all Up
 ```
@@ -307,6 +308,9 @@ One-time cleanups, if not already done:
    mail-worker gained modules and a pinned `tzdata`; a stale worker image
    would run the old loop with no engine (bug #25’s dependency audit ran
    clean on this bundle).
+5. After the worker restarts, confirm its logs are clean — while bug #29 was
+   live every pass rolled back, so any mail received in that window arrives
+   in a burst on the first healthy pass (idempotent on Message-ID; expected).
 
 Then run the **verification walks in STATE.md §5** — they cover the
 directory round-trip, the Docket working loop, project lifecycle, time
@@ -376,7 +380,7 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
 * **Secrets:** write-only via the UIs/API; the KEK file + `secrets/` +
   `.env` are the only non-reproducible files besides pgdata — back them up
   separately from dumps (a dump without the KEK reveals nothing, by design).
-* **Bug archaeology:** STATE.md §4 holds all 28 production bugs with root
+* **Bug archaeology:** STATE.md §4 holds all 29 production bugs with root
   cause, fix, and lesson. The meta-lesson has held the whole way: every
   DB-layer failure was least-privilege refusing an unprovisioned path —
   never corruption, never a broken invariant.
