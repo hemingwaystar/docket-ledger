@@ -610,9 +610,8 @@ const RULES = [
 let nextRuleIx = 6;
 
 function ruleWhen(r){
-  if(!r.conds.length) return 'every inbound message';
   const F = {from:'from address', fromDomain:'sender domain', to:'to mailbox', subject:'subject', text:'subject or body'};
-  return r.conds.map(c=>`${F[c.field]} ${c.op} \u201c${c.value}\u201d`).join(' and ');
+  return groupsWhen(r.conds, c=>`${F[c.field]||c.field} ${c.op} \u201c${c.value}\u201d`) || 'every inbound message';
 }
 function ruleThen(r){
   const a = r.act, out = [];
@@ -1061,6 +1060,26 @@ const AGENT_AUTH = { t1:{pw:true, mfa:true}, t2:{pw:true, mfa:true}, t3:{pw:fals
 /* the ONE Entra app registration that every mailbox + the verification
    sender authenticate through — consent is granted or revoked here */
 const GRAPH_AUTH = { connected:true, clientId:'ap-4f21c9e0-desk', consentedAt: Date.now()-14*86400000, consentedBy:'Jordan Doyle', scopes:['Mail.Read (application)','Mail.Send (application)','offline_access'] };
+/* master send switch — mail.outbound_enabled on the server; hydrated from
+   bootstrap's outboundEnabled. false = recorded-only (replies stored, not sent) */
+const MAILCFG = { outboundEnabled:false };
+/* rule/trigger conditions: rows AND within a group, groups OR together.
+   Legacy flat list = one group; one group saves FLAT so old rules keep shape. */
+function condGroups(conds){
+  const c = JSON.parse(JSON.stringify(conds||[]));
+  if(!c.length) return [];
+  return c.every(x=>Array.isArray(x)) ? c.filter(g=>g.length) : [c];
+}
+function packGroups(groups){
+  const g = (groups||[]).map(grp=>grp.filter(c=>String(c.value||'').trim())).filter(grp=>grp.length);
+  return g.length===0 ? [] : (g.length===1 ? g[0] : g);
+}
+function groupsWhen(conds, fmt){
+  const gs = condGroups(conds);
+  if(!gs.length) return '';
+  const parts = gs.map(g=>g.map(fmt).join(' and '));
+  return gs.length>1 ? parts.map(s=>`(${s})`).join(' or ') : parts[0];
+}
 /* secrets are WRITE-ONLY: the UI stores them encrypted (KMS envelope) in the
    shared DB and keeps only set/rotated metadata readable. Nothing lives in
    compose files or environment variables. */
@@ -3058,7 +3077,10 @@ function viewAutomations(){
   </div>
   <div class="section-gap"></div>
   <div class="card">
-    <div class="card-head"><h3>Outbound routing</h3><span class="hint">which address each board replies from</span></div>
+    <div class="card-head"><h3>Outbound routing</h3><span class="hint">which address each board replies from</span><span class="spacer"></span>
+      ${MAILCFG.outboundEnabled
+        ? `<span class="chip st-solved"><span class="cdot"></span>Sending live</span>${can('manage_automations')?`<button class="rowbtn" onclick="toggleOutboundMaster()">Switch to recorded-only</button>`:''}`
+        : `<span class="chip st-hold"><span class="cdot"></span>Recorded-only</span>${can('manage_automations')?`<button class="btn sm primary" onclick="toggleOutboundMaster()">Enable live sending</button>`:''}`}</div>
     <div style="padding:4px 16px 6px">
       ${aGROUPS().map(g=>`<div class="setting-row"><div class="sl"><b>${esc(g.name)}</b><p>${MAILBOXES.some(m=>m.groupId===g.id&&m.status==='connected')?`fed by ${MAILBOXES.filter(m=>m.groupId===g.id&&m.status==='connected').map(m=>m.addr.split('@')[0]+'@').join(', ')}`:'no inbound mailbox — tickets arrive by phone/agent'}</p></div>
         <label class="mini muted">replies from
@@ -3096,7 +3118,7 @@ function viewAutomations(){
         <td style="padding-top:12px"><input type="checkbox" ${g.enabled?'checked':''} onchange="toggleTrig('${g.id}')"></td>
         <td><div class="cell-title">${esc(g.name)}</div></td>
         <td class="mini" style="padding-top:12px">${esc(TRIG_EVENTS.find(e=>e.id===g.event)?.label.replace('\u2026','')||g.event)}${g.event==='state'&&g.eventValue?esc(st8(g.eventValue)?.label||g.eventValue):''}</td>
-        <td class="mini" style="padding-top:12px">${g.conds.length? esc(g.conds.map(c=>`${c.field} ${c.op} \u201c${c.value}\u201d`).join(' and ')) : 'always'}</td>
+        <td class="mini" style="padding-top:12px">${esc(groupsWhen(g.conds, c=>`${c.field} ${c.op} \u201c${c.value}\u201d`) || 'always')}</td>
         <td class="mini" style="padding-top:12px">${esc(g.actions.map(a=>({email:'email the customer',note:'internal note',tag:`tag \u201c${a.value}\u201d`,state:`state \u2192 ${st8(a.value)?.label||a.value}`,prio:`priority \u2192 ${prio(Number(a.value))?.label||a.value}`,group:`board \u2192 ${grp(a.value)?.name||a.value}`}[a.type])).join(' \u00b7 '))}</td>
         <td class="num">${g.runs.toLocaleString()}</td>
         <td class="right"><button class="rowbtn" onclick="trigModal('${g.id}')">Edit</button>
@@ -3139,6 +3161,14 @@ function toggleMailbox(id){ const m=MAILBOXES.find(x=>x.id===id);
   if(m.status!=='connected' && !GRAPH_AUTH.connected){ toast('Authenticate the Graph app first \u2014 mailboxes can\u2019t subscribe without consent.'); return; }
   m.status = m.status==='connected'?'paused':'connected';
   log(m.status==='connected'?'Mailbox resumed':'Mailbox paused', m.addr); render(); }
+function toggleOutboundMaster(){
+  if(!can('manage_automations')) return;
+  if(!MAILCFG.outboundEnabled && !confirm('Enable live sending? From this moment every agent reply and trigger email really goes out to customers.')) return;
+  MAILCFG.outboundEnabled = !MAILCFG.outboundEnabled;
+  log(MAILCFG.outboundEnabled?'Outbound sending enabled':'Outbound sending disabled',
+      MAILCFG.outboundEnabled?'replies and trigger emails now send':'recorded-only \u2014 replies stored, nothing sends');
+  toast(MAILCFG.outboundEnabled?'Live sending ON \u2014 replies now reach customers.':'Recorded-only \u2014 replies are stored but not sent.');
+  render(); }
 function toggleRule2(id){ const r=RULES.find(x=>x.id===id); r.enabled=!r.enabled;
   log(r.enabled?'Rule enabled':'Rule disabled', r.name); render(); }
 function moveRule(id, dir){ const i=RULES.findIndex(x=>x.id===id); const j=i+dir;
@@ -3151,10 +3181,11 @@ function deleteTrig(id){ const i=TRIGGERS.findIndex(x=>x.id===id);
   log('Trigger deleted', TRIGGERS[i].name); toast(`Trigger \u201c${TRIGGERS[i].name}\u201d deleted.`); TRIGGERS.splice(i,1); render(); }
 
 let _trigDraft = null;
+let _ruleDraft = null;
 function trigModal(id){
   if(!can('manage_automations')) return;
   const g0 = id? TRIGGERS.find(x=>x.id===id) : { name:'', event:'create', eventValue:'', conds:[], actions:[{type:'email', value:''}] };
-  _trigDraft = JSON.parse(JSON.stringify({ conds:g0.conds, actions:g0.actions }));
+  _trigDraft = { condGroups: condGroups(g0.conds), actions: JSON.parse(JSON.stringify(g0.actions)) };
   const m = document.getElementById('modal');
   m.innerHTML = `
     <div class="modal-head"><h3>${id?'Edit trigger':'New trigger'}</h3><p>Zammad-style: activated by an event, filtered by conditions, then runs its actions in order.</p></div>
@@ -3164,8 +3195,9 @@ function trigModal(id){
         <div class="field"><label>Activated by</label><select id="tgEvent" onchange="trigEventChanged()">${TRIG_EVENTS.map(e=>`<option value="${e.id}" ${g0.event===e.id?'selected':''}>${e.label}</option>`).join('')}</select></div>
         <div class="field" id="tgStateWrap" style="${g0.event==='state'?'':'display:none'}"><label>\u2026 to state</label><select id="tgEventState">${aSTATES().map(s=>`<option value="${s.id}" ${g0.eventValue===s.id?'selected':''}>${s.label}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><label>Only if (all must match — leave empty for always)</label><div id="tgConds"></div>
-        <button class="btn sm ghost" onclick="trigAddCond()">+ condition</button></div>
+      <div class="field"><label>Only if (rows must ALL match; OR groups match any \u2014 leave empty for always)</label><div id="tgConds"></div>
+        <button class="btn sm ghost" onclick="trigAddCond()">+ condition</button>
+        <button class="btn sm ghost" onclick="trigAddOrGroup()">+ OR group</button></div>
       <div class="field"><label>Actions (run in order)</label><div id="tgActs"></div>
         <button class="btn sm ghost" onclick="trigAddAct()">+ action</button></div>
     </div>
@@ -3176,7 +3208,7 @@ function trigModal(id){
 }
 function trigEventChanged(){ document.getElementById('tgStateWrap').style.display = document.getElementById('tgEvent').value==='state'?'':'none'; }
 function trigDrawConds(){
-  const valCtl = (c,i) => {
+  const valCtl = (c,gi,i) => {
     const opts = {
       state:    aSTATES().map(s=>s.label),
       priority: aPRIOS().slice().sort((a,b)=>b.id-a.id).map(p=>p.label),
@@ -3184,27 +3216,37 @@ function trigDrawConds(){
       client:   CLIENTS.map(cl=>cl.name),
       mailbox:  MAILBOXES.map(m=>m.addr),
     }[c.field];
-    if(opts) return `<select onchange="_trigDraft.conds[${i}].value=this.value" style="flex:1">
+    if(opts) return `<select onchange="_trigDraft.condGroups[${gi}][${i}].value=this.value" style="flex:1">
       ${c.value&&!opts.includes(c.value)?`<option selected>${esc(c.value)}</option>`:''}
       ${opts.map(o=>`<option ${c.value===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
-    return `<input type="text" value="${esc(c.value)}" oninput="_trigDraft.conds[${i}].value=this.value" placeholder="${c.field==='tags'?'tag names — commas mean any-of':'address — commas mean any-of'}" style="flex:1">`;
+    return `<input type="text" value="${esc(c.value)}" oninput="_trigDraft.condGroups[${gi}][${i}].value=this.value" placeholder="${c.field==='tags'?'tag names — commas mean any-of':'address — commas mean any-of'}" style="flex:1">`;
   };
-  document.getElementById('tgConds').innerHTML = _trigDraft.conds.map((c,i)=>`
+  const rowHtml = (c,gi,i)=>`
     <div class="grid g-2" style="gap:12px;margin-bottom:8px">
       <div class="grid g-2" style="gap:12px">
-        <select onchange="_trigDraft.conds[${i}].field=this.value;_trigDraft.conds[${i}].value='';trigDrawConds()">${[['state','State'],['priority','Priority'],['group','Board / group'],['client','Client'],['tags','Tags'],['from','From address'],['mailbox','Arrival mailbox']].map(([v,l])=>`<option value="${v}" ${c.field===v?'selected':''}>${l}</option>`).join('')}</select>
-        <select onchange="_trigDraft.conds[${i}].op=this.value">${['is','is not','contains','not contains'].map(o=>`<option ${c.op===o?'selected':''}>${o}</option>`).join('')}</select>
+        <select onchange="_trigDraft.condGroups[${gi}][${i}].field=this.value;_trigDraft.condGroups[${gi}][${i}].value='';trigDrawConds()">${[['state','State'],['priority','Priority'],['group','Board / group'],['client','Client'],['tags','Tags'],['from','From address'],['mailbox','Arrival mailbox']].map(([v,l])=>`<option value="${v}" ${c.field===v?'selected':''}>${l}</option>`).join('')}</select>
+        <select onchange="_trigDraft.condGroups[${gi}][${i}].op=this.value">${['is','is not','contains','not contains'].map(o=>`<option ${c.op===o?'selected':''}>${o}</option>`).join('')}</select>
       </div>
-      <div style="display:flex;gap:8px">${valCtl(c,i)}
-        <button class="rowbtn" onclick="_trigDraft.conds.splice(${i},1);trigDrawConds()">×</button></div>
-    </div>`).join('') || `<div class="mini muted" style="margin-bottom:8px">No conditions — fires on every matching event.</div>`;
+      <div style="display:flex;gap:8px">${valCtl(c,gi,i)}
+        <button class="rowbtn" onclick="_trigDraft.condGroups[${gi}].splice(${i},1);if(!_trigDraft.condGroups[${gi}].length)_trigDraft.condGroups.splice(${gi},1);trigDrawConds()">×</button></div>
+    </div>`;
+  document.getElementById('tgConds').innerHTML = _trigDraft.condGroups.map((grpC,gi)=>
+    (gi?`<div class="mini muted" style="text-align:center;margin:2px 0 8px">— or —</div>`:'')
+    + grpC.map((c,i)=>rowHtml(c,gi,i)).join('')
+  ).join('') || `<div class="mini muted" style="margin-bottom:8px">No conditions — fires on every matching event.</div>`;
   /* dropdown fields need a concrete default so an untouched select still saves */
-  _trigDraft.conds.forEach(c=>{
+  _trigDraft.condGroups.forEach(grpC=>grpC.forEach(c=>{
     const opts = { state:aSTATES().map(s=>s.label), priority:aPRIOS().map(p=>p.label), group:aGROUPS().map(g=>g.name), client:CLIENTS.map(cl=>cl.name), mailbox:MAILBOXES.map(m=>m.addr) }[c.field];
     if(opts && !c.value) c.value = opts[0];
-  });
+  }));
 }
-function trigAddCond(){ _trigDraft.conds.push({field:'tags', op:'not contains', value:''}); trigDrawConds(); }
+function trigAddCond(){                       /* AND row in the LAST group */
+  if(!_trigDraft.condGroups.length) _trigDraft.condGroups.push([]);
+  _trigDraft.condGroups[_trigDraft.condGroups.length-1].push({field:'tags', op:'not contains', value:''});
+  trigDrawConds(); }
+function trigAddOrGroup(){                    /* fresh alternative group */
+  _trigDraft.condGroups.push([{field:'tags', op:'not contains', value:''}]);
+  trigDrawConds(); }
 function trigDrawActs(){
   document.getElementById('tgActs').innerHTML = _trigDraft.actions.map((a,i)=>{
     const val =
@@ -3233,7 +3275,7 @@ function saveTrig(id){
   const g = id? TRIGGERS.find(x=>x.id===id) : { id:'tg'+(nextTrigIx++), enabled:true, runs:0 };
   Object.assign(g, { name, event:document.getElementById('tgEvent').value,
     eventValue: document.getElementById('tgEvent').value==='state'? document.getElementById('tgEventState').value : '',
-    conds:_trigDraft.conds.filter(c=>c.value.trim()), actions });
+    conds:packGroups(_trigDraft.condGroups), actions });
   if(!id) TRIGGERS.push(g);
   log(id?'Trigger updated':'Trigger created', name);
   toast(`Trigger \u201c${name}\u201d ${id?'saved':'created'}.`);
@@ -3280,21 +3322,16 @@ function saveMailbox(id){
 function ruleModal(id){
   if(!can('manage_automations')) return;
   const r0 = id? RULES.find(x=>x.id===id) : { conds:[{field:'from',op:'contains',value:''}], act:{} };
-  const condRow = (c,i)=>`
-    <div class="grid g-2" style="gap:12px;margin-bottom:8px" data-cond>
-      <div class="grid g-2" style="gap:12px">
-        <select id="rcF${i}">${[['from','From address'],['fromDomain','Sender domain'],['to','To mailbox'],['subject','Subject'],['text','Subject or body']].map(([v,l])=>`<option value="${v}" ${c.field===v?'selected':''}>${l}</option>`).join('')}</select>
-        <select id="rcO${i}"><option value="contains" ${c.op==='contains'?'selected':''}>contains</option><option value="is" ${c.op==='is'?'selected':''}>is</option></select>
-      </div>
-      <input type="text" id="rcV${i}" value="${esc(c.value)}" placeholder="value — commas mean any-of">
-    </div>`;
+  _ruleDraft = { condGroups: condGroups(r0.conds) };
+  if(!id && !_ruleDraft.condGroups.length) _ruleDraft.condGroups=[[{field:'from',op:'contains',value:''}]];
   const m = document.getElementById('modal');
   m.innerHTML = `
-    <div class="modal-head"><h3>${id?'Edit rule':'New rule'}</h3><p>All conditions must match. Leave conditions empty to match every inbound message.</p></div>
+    <div class="modal-head"><h3>${id?'Edit rule':'New rule'}</h3><p>Rows must ALL match; OR groups match any. Leave conditions empty to match every inbound message.</p></div>
     <div class="modal-body" style="max-height:62vh;overflow:auto">
       <div class="field"><label>Rule name</label><input type="text" id="rName" value="${esc(r0.name||'')}" placeholder="e.g. Billing questions \u2192 Projects"></div>
-      <div class="field"><label>When</label><div id="rConds">${r0.conds.map(condRow).join('')}</div>
-        <button class="btn sm ghost" onclick="addCondRow()">+ condition</button></div>
+      <div class="field"><label>When</label><div id="rConds"></div>
+        <button class="btn sm ghost" onclick="ruleAddCond()">+ condition</button>
+        <button class="btn sm ghost" onclick="ruleAddOrGroup()">+ OR group</button></div>
       <div class="field"><label>Then</label>
         <div class="grid g-2" style="gap:12px">
           <div class="field"><label>Move to board</label><select id="raGroup"><option value="">— leave as is —</option>${aGROUPS().map(g=>`<option value="${g.id}" ${r0.act.groupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select></div>
@@ -3306,32 +3343,37 @@ function ruleModal(id){
         </div></div>
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveRule('${id||''}')">${id?'Save rule':'Create rule'}</button></div>`;
-  m._condCount = r0.conds.length;
+  ruleDrawConds();
   document.getElementById('scrim').classList.add('open');
   document.getElementById('rName').focus();
 }
-function addCondRow(){
-  const m = document.getElementById('modal');
-  const i = m._condCount++;
-  const div = document.createElement('div');
-  document.getElementById('rConds').insertAdjacentHTML('beforeend', `
+function ruleDrawConds(){
+  const rowHtml = (c,gi,i)=>`
     <div class="grid g-2" style="gap:12px;margin-bottom:8px" data-cond>
       <div class="grid g-2" style="gap:12px">
-        <select id="rcF${i}"><option value="from">From address</option><option value="fromDomain">Sender domain</option><option value="to">To mailbox</option><option value="subject">Subject</option><option value="text">Subject or body</option></select>
-        <select id="rcO${i}"><option value="contains">contains</option><option value="is">is</option></select>
+        <select onchange="_ruleDraft.condGroups[${gi}][${i}].field=this.value">${[['from','From address'],['fromDomain','Sender domain'],['to','To mailbox'],['subject','Subject'],['text','Subject or body']].map(([v,l])=>`<option value="${v}" ${c.field===v?'selected':''}>${l}</option>`).join('')}</select>
+        <select onchange="_ruleDraft.condGroups[${gi}][${i}].op=this.value"><option value="contains" ${c.op==='contains'?'selected':''}>contains</option><option value="is" ${c.op==='is'?'selected':''}>is</option></select>
       </div>
-      <input type="text" id="rcV${i}" placeholder="value — commas mean any-of">
-    </div>`);
+      <div style="display:flex;gap:8px">
+        <input type="text" value="${esc(c.value)}" oninput="_ruleDraft.condGroups[${gi}][${i}].value=this.value" placeholder="value — commas mean any-of" style="flex:1">
+        <button class="rowbtn" onclick="_ruleDraft.condGroups[${gi}].splice(${i},1);if(!_ruleDraft.condGroups[${gi}].length)_ruleDraft.condGroups.splice(${gi},1);ruleDrawConds()">×</button></div>
+    </div>`;
+  document.getElementById('rConds').innerHTML = _ruleDraft.condGroups.map((grpC,gi)=>
+    (gi?`<div class="mini muted" style="text-align:center;margin:2px 0 8px">— or —</div>`:'')
+    + grpC.map((c,i)=>rowHtml(c,gi,i)).join('')
+  ).join('') || `<div class="mini muted" style="margin-bottom:8px">No conditions — matches every inbound message.</div>`;
 }
+function ruleAddCond(){
+  if(!_ruleDraft.condGroups.length) _ruleDraft.condGroups.push([]);
+  _ruleDraft.condGroups[_ruleDraft.condGroups.length-1].push({field:'from',op:'contains',value:''});
+  ruleDrawConds(); }
+function ruleAddOrGroup(){
+  _ruleDraft.condGroups.push([{field:'from',op:'contains',value:''}]);
+  ruleDrawConds(); }
 function saveRule(id){
   const name = document.getElementById('rName').value.trim();
   if(!name){ toast('Give the rule a name.'); return; }
-  const m = document.getElementById('modal');
-  const conds = [];
-  for(let i=0;i<(m._condCount||1);i++){
-    const v = document.getElementById('rcV'+i);
-    if(v && v.value.trim()) conds.push({ field:document.getElementById('rcF'+i).value, op:document.getElementById('rcO'+i).value, value:v.value.trim() });
-  }
+  const conds = packGroups(_ruleDraft.condGroups);
   const pv = document.getElementById('raPrio').value;
   const act = {};
   const gv = document.getElementById('raGroup').value; if(gv) act.groupId = gv;
@@ -4374,6 +4416,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     });
     state.audit.length=0; d.audit.forEach(a=>state.audit.push(a));
     if(d.mailboxes){
+      if(typeof d.outboundEnabled!=='undefined') MAILCFG.outboundEnabled = !!d.outboundEnabled;
       MAILBOXES.length=0;
       d.mailboxes.forEach(m=>MAILBOXES.push(m));
       if(!MAILBOXES.length) MAILBOXES.push({id:'mb0',addr:'(no mailbox configured)',
@@ -4925,6 +4968,21 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({paused:m.status==='paused'})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+  /* ---- master outbound switch: mirrors mail.outbound_enabled; a server
+     refusal rolls the chip back so the UI never lies about the go-live state */
+  const _toggleOutboundMaster=window.toggleOutboundMaster;
+  window.toggleOutboundMaster=function(){
+    const was=MAILCFG.outboundEnabled;
+    _toggleOutboundMaster();
+    if(MAILCFG.outboundEnabled===was) return;      /* confirm declined */
+    $fetch('/api/settings/mail/outbound',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:MAILCFG.outboundEnabled})})
+      .then(async r=>{ if(!r.ok){ MAILCFG.outboundEnabled=was; render();
+        return oops(await r.json().catch(()=>0)); } })
+      .catch(()=>{ MAILCFG.outboundEnabled=was; render();
+        toast('Live sync failed \u2014 the switch was NOT changed on the server.'); });
   };
 
   /* ---- settings: canned responses ---- */

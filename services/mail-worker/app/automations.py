@@ -116,6 +116,24 @@ def enqueue(cur, event, ticket_id, meta=None, depth=0):
                 (event, ticket_id, json.dumps(meta or {}), depth))
 
 
+def _cond_groups(conds):
+    """Conditions → list of AND-groups that OR together.
+    Legacy flat list = one group; empty/None = no groups (match always).
+    The builder saves a single group FLAT, so old rules and new
+    one-group rules share a shape."""
+    if not conds:
+        return []
+    if all(isinstance(c, list) for c in conds):
+        return [g for g in conds if g]
+    return [conds]
+
+
+def _match(conds, pred) -> bool:
+    """True when any group's conditions ALL pass (or there are no groups)."""
+    groups = _cond_groups(conds)
+    return (not groups) or any(all(pred(c) for c in g) for g in groups)
+
+
 # --------------------------------------------------------------------------
 # ticket context — everything conditions and templates can reference
 # --------------------------------------------------------------------------
@@ -196,7 +214,7 @@ def apply_mail_rules(conn, ticket_id, meta):
         if not rules:
             return 0
         for r in rules:
-            if not all(_mail_cond(c, meta) for c in r["conds"]):
+            if not _match(r["conds"], lambda c: _mail_cond(c, meta)):
                 continue
             act = r["actions"] if isinstance(r["actions"], dict) else \
                 (r["actions"][0] if r["actions"] else {})
@@ -324,7 +342,7 @@ def _trigger_email(cur, ctx, body_tpl):
         try:
             out_mid = mailer.send_reply(
                 cur, mailbox_address=mb[0], display_name=mb[1] or "",
-                to=to, subject=f"[#{ctx['id']}] {ctx['title']}", body=body,
+                to=to, subject=f"Service Ticket: [#{ctx['id']}] {ctx['title']}", body=body,
                 in_reply_to=last_mid, references=list(all_mids or []))
             sent = True
         except mailer.MailError as exc:
@@ -353,7 +371,7 @@ def fire_triggers(conn, event, ticket_id, meta=None, depth=0):
                 return fired
             if event == "state" and g["event_value"] and g["event_value"] != ctx["proto_state"]:
                 continue
-            if not all(_trig_cond(c, ctx, meta) for c in g["conds"]):
+            if not _match(g["conds"], lambda c: _trig_cond(c, ctx, meta)):
                 continue
             did = []
             for a in (g["actions"] if isinstance(g["actions"], list) else []):

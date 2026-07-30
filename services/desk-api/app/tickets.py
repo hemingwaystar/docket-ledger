@@ -886,7 +886,7 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                     out_mid = mailer.send_reply(
                         cur, mailbox_address=mb_addr, display_name=mb_name or "",
                         to=mail_to, cc=list(cc_list or []),
-                        subject=f"[#{ticket_id}] {title}", body=body.body,
+                        subject=f"Service Ticket: [#{ticket_id}] {title}", body=body.body,
                         in_reply_to=last_mid, references=list(all_mids or []),
                         attachments=files)
                     sent = True

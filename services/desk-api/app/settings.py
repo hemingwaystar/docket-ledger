@@ -184,6 +184,38 @@ def graph_test_send(body: TestSend, request: Request):
         return {"ok": True, "sent_from": sender, "message_id": mid}
 
 
+class OutboundFlip(BaseModel):
+    enabled: bool
+
+
+@router.post("/mail/outbound")
+def set_outbound(body: OutboundFlip, request: Request):
+    """The go-live master switch, as an endpoint so the UI control can
+    mirror it. jsonb_set on the one key — never clobbers the rest of the
+    mail config. Read per-request by both send paths: effective immediately,
+    no restart."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings", "manage_automations")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO shared.app_config (key, value)
+                           VALUES ('mail', jsonb_build_object('outbound_enabled', %s::boolean))
+                           ON CONFLICT (key) DO UPDATE
+                             SET value = jsonb_set(coalesce(shared.app_config.value,'{}'::jsonb),
+                                                   '{outbound_enabled}', to_jsonb(%s::boolean)),
+                                 updated_at = now(),
+                                 updated_by = shared.current_actor(),
+                                 version = shared.app_config.version + 1""",
+                        (body.enabled, body.enabled))
+        auth.audit(conn, "desk",
+                   "Outbound sending enabled" if body.enabled else "Outbound sending disabled",
+                   "config:mail",
+                   ("LIVE — agent replies and trigger emails now send"
+                    if body.enabled else "recorded-only — replies stored, nothing sends")
+                   + f" ({who['label']})")
+        return {"ok": True, "outbound_enabled": body.enabled}
+
+
 @router.post("/graph/disconnect")
 def graph_disconnect(request: Request):
     """Flip only the connected flag (jsonb_set — never clobbers the rest of
