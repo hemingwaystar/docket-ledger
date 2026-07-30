@@ -4672,11 +4672,12 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     const gr=GROUPS.find(g=>g.id===t.groupId)||{};
     const contact=(cl.contacts||[]).find(p=>p.id===t.contactId);
     $fetch('/api/tickets',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({title:t.title||'(no subject)',client:cl.name,group:gr.name,
+      body:JSON.stringify({title:TITLES[t.id]||t.title||'(no subject)',client:cl.name,group:gr.name,
         contact_email:contact?contact.email:null,
         priority:(PRIOS.find(p=>p.id===t.prio)||{label:'Normal'}).label})})
       .then(async r=>{ const d=await r.json().catch(()=>({}));
         if(!r.ok) return oops(d);
+        if(TITLES[t.id]) TITLES[d.id]=TITLES[t.id];   /* the name follows the ticket to its real id */
         state.ticketId=(state.ticketId===t.id)?d.id:state.ticketId;
         setTimeout(()=>hydrate(),500); });
   };

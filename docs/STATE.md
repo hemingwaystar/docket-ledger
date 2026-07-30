@@ -390,6 +390,9 @@ places.
       gets a real attachment; attach a file to an internal NOTE → chip on
       the thread, nothing mailed; a 25 MB file → clean 422, not an nginx
       error page
+- [ ] **Ticket create title (bug #31):** create a ticket named "Printer
+      on fire" → the name shows in the queue immediately AND survives a
+      refresh (server has it, not "(no subject)")
 - [ ] **Orphan sweep:** upload in the composer, close without sending →
       worker log shows "swept 1 stale staged upload(s)" the day after
 
