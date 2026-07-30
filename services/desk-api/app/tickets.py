@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from psycopg import errors as pg_errors
 from pydantic import BaseModel
+from typing import Literal
 from . import auth, automations, db, helpers, mailer
 
 router = APIRouter(prefix="/api")
@@ -121,7 +122,8 @@ def get_audit(request: Request, limit: int = 100):
 
 ST_MAP = {"new": "new", "open": "open", "pending reminder": "pending",
           "on hold": "hold", "solved": "solved", "closed": "closed",
-          "archived": "archived"}
+          "archived": "archived",
+          "closed: child ticket": "child-closed"}
 
 
 def emit_event(cur, event: str, ticket_id: int):
@@ -130,6 +132,21 @@ def emit_event(cur, event: str, ticket_id: int):
     auto-generated mail, so meta.auto is false (email actions may run)."""
     cur.execute("""INSERT INTO desk.automation_events (event, ticket_id, meta)
                    VALUES (%s, %s, '{"auto": false}')""", (event, ticket_id))
+
+
+def sys_note(cur, ticket_id: int, body: str):
+    """System article on a ticket — the merge/cascade/link narration."""
+    cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, body)
+                   VALUES (%s, 'sys', 'Automation', %s)""", (ticket_id, body))
+
+
+def live_parent_of(cur, ticket_id: int):
+    """The parent id if this ticket is a live child, else None."""
+    cur.execute("""SELECT src_id FROM desk.ticket_links
+                    WHERE kind = 'child' AND voided_at IS NULL AND dst_id = %s""",
+                (ticket_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 @router.get("/bootstrap")
@@ -190,11 +207,12 @@ def bootstrap(request: Request, limit: int = 500):
             out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
                               "active": r["active"]}
                              for r in cur.fetchall()]
-            cur.execute("SELECT label, kind, active FROM desk.ticket_states ORDER BY position")
+            cur.execute("SELECT label, kind, active, is_system FROM desk.ticket_states ORDER BY position")
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
                                                r["label"].lower().replace(" ", "-")),
                               "label": r["label"], "type": r["kind"],
-                              "active": r["active"]} for r in cur.fetchall()]
+                              "active": r["active"],
+                              "system": r["is_system"]} for r in cur.fetchall()]
             cur.execute("""SELECT id, name, body FROM desk.canned_responses
                             WHERE active ORDER BY name""")
             out["canned"] = [{"id": str(r["id"]), "name": r["name"], "body": r["body"]}
@@ -304,9 +322,27 @@ def bootstrap(request: Request, limit: int = 500):
                     "mergedInto": r["merged_into_id"], "isProject": r["is_project"],
                     "createdAt": ms(r["created_at"]), "updatedAt": ms(r["updated_at"]),
                     "slaFrMet": r["fr_met"],
+                    "links": [], "parentId": None, "children": [],
                     "version": r["version"], "articles": [], "time": []}
             if tickets:
                 ids = list(tickets)
+                # ticket links — related both ways, child directed; a linked
+                # ticket outside the hydrate window still shows as a bare #id
+                cur.execute("""SELECT kind, src_id, dst_id FROM desk.ticket_links
+                                WHERE voided_at IS NULL
+                                  AND (src_id = ANY(%s) OR dst_id = ANY(%s))""",
+                            (ids, ids))
+                for r in cur.fetchall():
+                    if r["kind"] == "child":
+                        if r["src_id"] in tickets:
+                            tickets[r["src_id"]]["children"].append(r["dst_id"])
+                        if r["dst_id"] in tickets:
+                            tickets[r["dst_id"]]["parentId"] = r["src_id"]
+                    else:
+                        if r["src_id"] in tickets:
+                            tickets[r["src_id"]]["links"].append(r["dst_id"])
+                        if r["dst_id"] in tickets:
+                            tickets[r["dst_id"]]["links"].append(r["src_id"])
                 cur.execute("""SELECT ticket_id, id, kind, author, body, body_html,
                                  is_auto, mail_from, mail_to, sent_at
                                  FROM desk.articles WHERE ticket_id = ANY(%s)
@@ -466,10 +502,24 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)
             sets, args, notes = [], [], []
+            old_kind = new_kind = None
             if body.title is not None:
                 sets.append("title = %s"); args.append(body.title); notes.append("title")
             if body.state is not None:
-                sets.append("state_id = %s"); args.append(helpers.state_id(cur, body.state))
+                cur.execute("""SELECT id, kind, is_system FROM desk.ticket_states
+                                WHERE lower(label) = lower(%s) AND active""", (body.state,))
+                strow = cur.fetchone()
+                if strow is None:
+                    raise HTTPException(404, "Unknown state")
+                if strow[2]:
+                    raise HTTPException(422, f"\u201c{body.state}\u201d is a system state — "
+                                        "the parent-close cascade sets it; it can't be picked by hand")
+                cur.execute("""SELECT s.kind FROM desk.tickets t
+                                 JOIN desk.ticket_states s ON s.id = t.state_id
+                                WHERE t.id = %s""", (ticket_id,))
+                (old_kind,) = cur.fetchone()
+                new_kind = strow[1]
+                sets.append("state_id = %s"); args.append(strow[0])
                 notes.append(f"state → {body.state}")
             if body.priority is not None:
                 sets.append("priority_id = %s"); args.append(helpers.priority_id(cur, body.priority))
@@ -507,6 +557,33 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                 raise HTTPException(409, "Version conflict — re-read the ticket and retry")
             if body.state is not None:
                 emit_event(cur, "state", ticket_id)
+                # parent/child bookkeeping (0025): the parent hears about the
+                # edges that matter, as sys notes — never state changes
+                parent = live_parent_of(cur, ticket_id)
+                if parent is not None:
+                    if new_kind == 'done' and old_kind != 'done':
+                        cur.execute("""SELECT count(*) FROM desk.ticket_links l
+                                         JOIN desk.tickets c ON c.id = l.dst_id
+                                         JOIN desk.ticket_states s ON s.id = c.state_id
+                                        WHERE l.kind = 'child' AND l.voided_at IS NULL
+                                          AND l.src_id = %s AND s.kind <> 'done'""",
+                                    (parent,))
+                        (still_open,) = cur.fetchone()
+                        if still_open == 0:
+                            sys_note(cur, parent, f"All child tickets are resolved — "
+                                     f"#{ticket_id} was the last. Ready to close?")
+                            cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s",
+                                        (parent,))
+                    elif new_kind != 'done' and old_kind == 'done':
+                        cur.execute("""SELECT s.kind FROM desk.tickets t
+                                         JOIN desk.ticket_states s ON s.id = t.state_id
+                                        WHERE t.id = %s""", (parent,))
+                        (pkind,) = cur.fetchone()
+                        if pkind == 'done':
+                            sys_note(cur, parent,
+                                     f"Child #{ticket_id} reopened after this parent was closed.")
+                            cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s",
+                                        (parent,))
             if body.priority is not None:
                 emit_event(cur, "priority", ticket_id)
             if body.owner_email:                     # "" clears — no owner event
@@ -771,6 +848,14 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
                 raise HTTPException(409, "Source is already merged")
             if dst[2]:
                 raise HTTPException(422, "Cannot merge into a project ticket — its time needs tasks")
+            # parent/child links (0025) would dangle on a merged stub — unlink first
+            for side, label in ((ticket_id, "Source"), (body.into, "Target")):
+                cur.execute("""SELECT 1 FROM desk.ticket_links
+                                WHERE kind = 'child' AND voided_at IS NULL
+                                  AND (src_id = %s OR dst_id = %s) LIMIT 1""", (side, side))
+                if cur.fetchone():
+                    raise HTTPException(409, f"{label} #{side} has parent/child links — "
+                                        "unlink them before merging")
             cur.execute("UPDATE desk.articles SET ticket_id = %s WHERE ticket_id = %s",
                         (body.into, ticket_id))
             moved_articles = cur.rowcount
@@ -809,6 +894,163 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
                    f"#{ticket_id} → #{body.into} · {note}")
         return {"ok": True, "moved_articles": moved_articles,
                 "moved_time_entries": moved_time, "locked_entries_kept": stayed}
+
+
+# --- ticket links (0025): related (symmetric) + child (directed, one level) ---
+
+class LinkSpec(BaseModel):
+    kind: Literal["related", "child"]
+    other: int          # kind='child': OTHER becomes the child of {ticket_id}
+
+
+@router.post("/tickets/{ticket_id}/links", status_code=201)
+def link_tickets(ticket_id: int, body: LinkSpec, request: Request):
+    """Create a link. Hierarchy is strictly one level: a parent may have any
+    number of children, but a child can NEVER itself be a parent — refused
+    with an explicit 409, same sentence the UI shows."""
+    if body.other == ticket_id:
+        raise HTTPException(422, "A ticket can't link to itself")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'edit_props')
+        with conn.cursor() as cur:
+            src = helpers.ticket_or_404(cur, ticket_id)
+            dst = helpers.ticket_or_404(cur, body.other)
+            if src[4] or dst[4]:
+                raise HTTPException(422, "Merged tickets can't be linked")
+            if body.kind == "related":
+                cur.execute("""SELECT 1 FROM desk.ticket_links
+                                WHERE kind = 'related' AND voided_at IS NULL
+                                  AND ((src_id = %s AND dst_id = %s)
+                                    OR (src_id = %s AND dst_id = %s))""",
+                            (ticket_id, body.other, body.other, ticket_id))
+                if cur.fetchone():
+                    raise HTTPException(409, "Already linked")
+                cur.execute("""INSERT INTO desk.ticket_links (kind, src_id, dst_id, created_by)
+                               VALUES ('related', %s, %s, %s) RETURNING id""",
+                            (ticket_id, body.other, who['label']))
+                (lid,) = cur.fetchone()
+                detail = f"#{ticket_id} \u2194 #{body.other} (related)"
+            else:
+                my_parent = live_parent_of(cur, ticket_id)
+                if my_parent is not None:
+                    raise HTTPException(409, f"#{ticket_id} is a child of #{my_parent} — "
+                                        "a child ticket can't be a parent")
+                cur.execute("""SELECT 1 FROM desk.ticket_links
+                                WHERE kind = 'child' AND voided_at IS NULL
+                                  AND src_id = %s LIMIT 1""", (body.other,))
+                if cur.fetchone():
+                    raise HTTPException(409, f"#{body.other} already has children — "
+                                        "it can't become a child")
+                their_parent = live_parent_of(cur, body.other)
+                if their_parent is not None:
+                    raise HTTPException(409, f"#{body.other} is already a child of #{their_parent}")
+                cur.execute("""INSERT INTO desk.ticket_links (kind, src_id, dst_id, created_by)
+                               VALUES ('child', %s, %s, %s) RETURNING id""",
+                            (ticket_id, body.other, who['label']))
+                (lid,) = cur.fetchone()
+                sys_note(cur, ticket_id, f"Child ticket linked: #{body.other}")
+                sys_note(cur, body.other, f"Linked as a child of #{ticket_id}")
+                detail = f"#{ticket_id} \u2192 child #{body.other}"
+        auth.audit(conn, "desk", "Tickets linked", f"ticket:{ticket_id}",
+                   f"{detail} ({who['label']})")
+        return {"id": str(lid)}
+
+
+class UnlinkSpec(BaseModel):
+    kind: Literal["related", "child"]
+    other: int
+
+
+@router.post("/tickets/{ticket_id}/unlink")
+def unlink_tickets(ticket_id: int, body: UnlinkSpec, request: Request):
+    """Void a link (no DELETE — history survives). Works from either side."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'edit_props')
+        with conn.cursor() as cur:
+            helpers.ticket_or_404(cur, ticket_id)
+            cur.execute("""UPDATE desk.ticket_links
+                              SET voided_at = now(), voided_by = %s
+                            WHERE kind = %s AND voided_at IS NULL
+                              AND ((src_id = %s AND dst_id = %s)
+                                OR (src_id = %s AND dst_id = %s))
+                            RETURNING id""",
+                        (who['label'], body.kind,
+                         ticket_id, body.other, body.other, ticket_id))
+            if cur.fetchone() is None:
+                raise HTTPException(404, "No such live link")
+        auth.audit(conn, "desk", "Tickets unlinked", f"ticket:{ticket_id}",
+                   f"#{ticket_id} \u21f8 #{body.other} ({body.kind}, {who['label']})")
+        return {"ok": True}
+
+
+class CascadeSpec(BaseModel):
+    version: int        # parent's optimistic lock, from your last read
+    state: str = "Closed"   # the PARENT's target state — must be done-kind
+
+
+@router.post("/tickets/{ticket_id}/close-cascade")
+def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
+    """Close a parent and all its open children in ONE transaction (bug #33's
+    lesson: no partial ghosts). Children land in the system state
+    'Closed: child ticket' — a done-kind state that close-email triggers
+    ("state → Closed/Solved") never match, so no per-child close mail fires.
+    Each child still gets a normal 'state' event, so automations aimed at the
+    child state on purpose do run."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'close')
+        with conn.cursor() as cur:
+            row = helpers.ticket_or_404(cur, ticket_id)
+            helpers.refuse_if_locked_project(row)
+            if row[4]:
+                raise HTTPException(409, "Merged tickets can't be closed")
+            cur.execute("""SELECT id, kind, is_system FROM desk.ticket_states
+                            WHERE lower(label) = lower(%s) AND active""", (body.state,))
+            strow = cur.fetchone()
+            if strow is None:
+                raise HTTPException(404, "Unknown state")
+            if strow[1] != 'done' or strow[2]:
+                raise HTTPException(422, "The parent must close into a normal resolved state")
+            cur.execute("""SELECT id FROM desk.ticket_states
+                            WHERE is_system AND active AND kind = 'done'
+                            ORDER BY position LIMIT 1""")
+            cc = cur.fetchone()
+            if cc is None:
+                raise HTTPException(409, "System close state missing — run migration 0025")
+            (ccid,) = cc
+            cur.execute("""SELECT l.dst_id FROM desk.ticket_links l
+                             JOIN desk.tickets c ON c.id = l.dst_id
+                             JOIN desk.ticket_states s ON s.id = c.state_id
+                            WHERE l.kind = 'child' AND l.voided_at IS NULL
+                              AND l.src_id = %s AND s.kind <> 'done'
+                              AND c.merged_into_id IS NULL
+                            ORDER BY l.dst_id""", (ticket_id,))
+            kids = [r[0] for r in cur.fetchall()]
+            cur.execute("""UPDATE desk.tickets SET state_id = %s
+                            WHERE id = %s AND version = %s RETURNING version""",
+                        (strow[0], ticket_id, body.version))
+            updated = cur.fetchone()
+            if updated is None:
+                raise HTTPException(409, "Version conflict — re-read the ticket and retry")
+            emit_event(cur, "state", ticket_id)
+            for cid in kids:
+                cur.execute("UPDATE desk.tickets SET state_id = %s WHERE id = %s",
+                            (ccid, cid))
+                sys_note(cur, cid, f"Closed with parent #{ticket_id} ({body.state})")
+                emit_event(cur, "state", cid)
+                auth.audit(conn, "desk", "Ticket closed by parent cascade",
+                           f"ticket:{cid}", f"#{cid} · parent #{ticket_id} ({who['label']})")
+            if kids:
+                sys_note(cur, ticket_id,
+                         f"Closed with {len(kids)} child ticket{'' if len(kids) == 1 else 's'}: "
+                         + ", ".join(f"#{k}" for k in kids))
+        auth.audit(conn, "desk", "Ticket closed with children", f"ticket:{ticket_id}",
+                   f"#{ticket_id} → {body.state} · children: "
+                   + (", ".join(f"#{k}" for k in kids) or "none open")
+                   + f" ({who['label']})")
+        return {"ok": True, "closed_children": kids, "version": updated[0]}
 
 
 class TimeSpec(BaseModel):

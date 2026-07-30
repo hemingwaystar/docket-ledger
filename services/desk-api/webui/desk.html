@@ -1386,7 +1386,7 @@ function viewTickets(){
   ${bulkN? `<div class="notice info" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <b>${bulkN} selected</b>
     ${can('assign')?`<select onchange="bulkApply('owner',this.value)"><option value="">Assign to\u2026</option>${AGENTS.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`:''}
-    ${can('edit_props')?`<select onchange="bulkApply('st',this.value)"><option value="">Set state\u2026</option>${aSTATES().map(x=>`<option value="${x.id}">${x.label}</option>`).join('')}</select>
+    ${can('edit_props')?`<select onchange="bulkApply('st',this.value)"><option value="">Set state\u2026</option>${aSTATES().filter(x=>!x.system).map(x=>`<option value="${x.id}">${x.label}</option>`).join('')}</select>
     <select onchange="bulkApply('prio',this.value)"><option value="">Set priority\u2026</option>${aPRIOS().map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
     <button class="btn sm" onclick="bulkApply('tag', prompt('Tag to add:'))">+ tag</button>`:''}
     <button class="btn sm ghost" onclick="state.bulk=[];render()">Clear</button>
@@ -1453,7 +1453,7 @@ function viewTicket(){
              <button class="btn sm ghost" onclick="state.editTitle=null;render()">Cancel</button></div>`
         : `<h2 style="display:flex;align-items:center;gap:8px">${esc(TITLES[t.id]||firstLine(t))} <span class="tk-num">#${t.id}</span>
              ${can('edit_props')||t.ownerId===state.meId?`<button class="rowbtn" onclick="state.editTitle=${t.id};render()" title="Rename — audited">Edit</button>`:''}
-             ${can('edit_props')&&!t.mergedInto?`<button class="rowbtn" onclick="mergeModal(${t.id})" title="Move this whole ticket into another">Merge\u2026</button><button class="rowbtn" onclick="linkModal(${t.id})" title="Two-way related link">Link\u2026</button>`:''}</h2>`}
+             ${can('edit_props')&&!t.mergedInto?`<button class="rowbtn" onclick="mergeModal(${t.id})" title="Move this whole ticket into another">Merge\u2026</button><button class="rowbtn" onclick="linkModal(${t.id})" title="Two-way related link">Link\u2026</button><button class="rowbtn" onclick="childModal(${t.id})" title="Make another ticket a child of this one">Add child\u2026</button>`:''}</h2>`}
       <div class="cell-meta" style="margin-top:3px">${stateChip(t)} &nbsp;${prioTag(t.prio)} &nbsp;<span class="mini">·</span>&nbsp;
         <span class="mini">${can('view_clients')?`<a href="#" onclick="openClient('${c.id}');return false" style="text-decoration:none;border-bottom:1px dotted var(--ink-3)">${esc(c.name)}</a>`:esc(c.name)} · ${esc(p?.name||'')} &lt;${esc(p?.email||'')}&gt;</span>
         ${t.tags.includes(VERIFIED_TAG)?`&nbsp;<span class="chip st-solved" title="Identity verified via one-time code — see the thread"><span class="cdot"></span>Verified</span>`:''}</div>
@@ -2118,6 +2118,43 @@ function unlink(tid, other){
   log('Tickets unlinked', `#${tid} \u2194 #${other}`);
   render();
 }
+/* parent/child links — hierarchy is strictly ONE level: a parent takes any
+   number of children, but a child can NEVER itself be a parent, and the UI
+   says exactly that instead of hiding the button. Server enforces the same. */
+function childModal(tid){
+  if(!can('edit_props')) return;
+  const t = tk(tid); if(!t || t.mergedInto) return;
+  if(t.parentId){ toast(`#${tid} is a child of #${t.parentId} \u2014 a child ticket can\u2019t be a parent.`); return; }
+  const cands = state.tickets.filter(x=>x.id!==tid && !x.mergedInto && !x.parentId
+    && !(x.children&&x.children.length) && !(t.children||[]).includes(x.id));
+  if(!cands.length){ toast('No eligible tickets \u2014 a child needs to be open-standing: not merged, not already a child, and without children of its own.'); return; }
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>Add a child ticket</h3><p>One level only \u2014 the child files under this ticket, keeps its own client, time and SLA, and closes quietly (no close email) when this parent closes.</p></div>
+    <div class="modal-body"><div class="field"><label>Ticket</label>
+      <select id="chTarget">${cands.map(x=>`<option value="${x.id}">#${x.id} \u00b7 ${esc((TITLES[x.id]||firstLine(x)).slice(0,60))}</option>`).join('')}</select></div></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="doChild(${tid})">Add child</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+}
+function doChild(tid){
+  const other = Number(document.getElementById('chTarget').value);
+  const p = tk(tid), c = tk(other); if(!p||!c) return;
+  if(p.parentId){ toast(`#${tid} is a child of #${p.parentId} \u2014 a child ticket can\u2019t be a parent.`); return; }
+  if(c.children&&c.children.length){ toast(`#${other} already has children \u2014 it can\u2019t become a child.`); return; }
+  if(c.parentId){ toast(`#${other} is already a child of #${c.parentId}.`); return; }
+  p.children = p.children||[]; p.children.push(other); c.parentId = tid;
+  p.articles.push(art('sys', me(), nowMs(), `Child ticket linked: #${other}`));
+  c.articles.push(art('sys', me(), nowMs(), `Linked as a child of #${tid}`));
+  log('Tickets linked', `#${tid} \u2192 child #${other}`);
+  closeModal(); render();
+}
+function unchild(pid, cid){
+  const p = tk(pid), c = tk(cid);
+  if(p) p.children = (p.children||[]).filter(x=>x!==cid);
+  if(c && c.parentId===pid) c.parentId = null;
+  log('Tickets unlinked', `#${pid} \u21f8 child #${cid}`);
+  render();
+}
 function setPendingUntil(tid, v, srcEl){
   const t = tk(tid); if(!can('edit_props')) return;
   const was = t.pendingUntil;
@@ -2291,7 +2328,7 @@ function renderProps(t){
     <div class="card props">
       <div class="prop"><div class="pk">State</div>
         <select onchange="setProp(${t.id},'st',this.value)" ${(can('edit_props')||can('close'))&&!lk?'':'disabled'}>
-          ${STATES.filter(x=>!isArch(x)||t.st===x.id).map(x=>`<option value="${x.id}" ${t.st===x.id?'selected':''}>${esc(x.label)}${isArch(x)?' (archived)':''}</option>`).join('')}</select></div>
+          ${STATES.filter(x=>(!isArch(x)&&!x.system)||t.st===x.id).map(x=>`<option value="${x.id}" ${t.st===x.id?'selected':''}>${esc(x.label)}${isArch(x)?' (archived)':''}</option>`).join('')}</select></div>
       <div class="prop"><div class="pk">Priority</div>
         <select onchange="setProp(${t.id},'prio',this.value)" ${dis('edit_props')}>
           ${PRIOS.filter(p=>!isArch(p)||t.prio===p.id).map(p=>`<option value="${p.id}" ${t.prio===p.id?'selected':''}>${esc(p.label)}${isArch(p)?' (archived)':''}</option>`).join('')}</select></div>
@@ -2316,8 +2353,12 @@ function renderProps(t){
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
         <input type="datetime-local" value="${t.pendingUntil? new Date(t.pendingUntil).toISOString().slice(0,16):''}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
         <div class="mini muted" style="margin-top:4px">${t.pendingUntil? 'reopens '+fmtDT(t.pendingUntil) : 'no timer \u2014 stays paused until touched'}</div></div>`:''}
+      ${t.parentId?`<div class="prop"><div class="pk">Parent ticket</div>
+        <div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${t.parentId});return false" style="color:var(--brand)">#${t.parentId}</a>${(pp=>pp?`<span class="chip ${(st8(pp.st)||{}).cls||'st-hold'}"><span class="cdot"></span>${esc((st8(pp.st)||{}).label||pp.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[pp.id]||firstLine(pp)).slice(0,36))}</span>`:'<span class="muted">not in view</span>')(tk(t.parentId))}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.parentId},${t.id})" title="Detach from the parent">\u00d7</button>`:''}</div></div>`:''}
+      ${(t.children&&t.children.length)?`<div class="prop"><div class="pk">Child tickets \u00b7 ${t.children.filter(id=>{const c=tk(id);return c&&(st8(c.st)||{}).type!=='done';}).length} open of ${t.children.length}</div>
+        ${t.children.map(id=>{const ct=tk(id); return `<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a>${ct?`<span class="chip ${(st8(ct.st)||{}).cls||'st-hold'}"><span class="cdot"></span>${esc((st8(ct.st)||{}).label||ct.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[id]||firstLine(ct)).slice(0,36))}</span>`:'<span class="muted" style="flex:1">not in view</span>'}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.id},${id})">\u00d7</button>`:''}</div>`;}).join('')}</div>`:''}
       ${(t.links&&t.links.length)?`<div class="prop"><div class="pk">Linked tickets</div>
-        ${t.links.map(id=>{const lt=tk(id); return lt?`<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[id]||firstLine(lt)).slice(0,40))}</span>${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unlink(${t.id},${id})">\u00d7</button>`:''}</div>`:'';}).join('')}</div>`:''}
+        ${t.links.map(id=>{const lt=tk(id); return `<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lt?esc((TITLES[id]||firstLine(lt)).slice(0,40)):'not in view'}</span>${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unlink(${t.id},${id})">\u00d7</button>`:''}</div>`;}).join('')}</div>`:''}
       <div class="prop"><div class="pk">Tags</div>
         <div class="tagrow">${t.tags.map((tag,i)=>`<span class="chip tagchip">${esc(tag)}${can('edit_props')?`<button onclick="rmTag(${t.id},${i})" title="remove">×</button>`:''}</span>`).join('')}
         ${can('edit_props')?`<button class="tagadd" onclick="addTag(${t.id})">+ tag</button>`:''}</div></div>
@@ -4455,8 +4496,10 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     CLIENTS.length=0; d.clients.forEach(c=>CLIENTS.push(c));
     ATYPES.length=0; d.atypes.forEach(a=>ATYPES.push(a));
     const core=new Set(STATES.map(s=>s.id));
-    d.states.forEach(s=>{ if(!core.has(s.id))
-      STATES.push({id:s.id,label:s.label,cls:'st-hold',type:s.type,core:false,desc:'',active:s.active!==false}); });
+    d.states.forEach(s=>{ const ex=STATES.find(x=>x.id===s.id);
+      if(ex){ ex.active=s.active!==false; ex.system=s.system===true; return; }
+      STATES.push({id:s.id,label:s.label,cls:s.id==='child-closed'?'st-closed':'st-hold',
+        type:s.type,core:false,desc:'',active:s.active!==false,system:s.system===true}); });
     state.tickets.length=0;
     d.tickets.forEach(t=>{
       t.tags=t.tags||[]; t.articles=t.articles||[]; t.time=t.time||[];
@@ -4835,6 +4878,97 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       headers:{'Content-Type':'application/json'},body:JSON.stringify({into})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
         setTimeout(()=>hydrate(),500); });
+  };
+
+  /* ---- ticket links (0025): related + child mirror, cascade close ---- */
+  const _doLink=window.doLink;
+  window.doLink=function(tid){
+    const el=document.getElementById('lkTarget');
+    const other=el?Number(el.value):null;           // read before the modal closes
+    const before=((tk(tid)||{}).links||[]).length;
+    _doLink(tid);
+    const t=tk(tid);
+    if(!t||!other||((t.links||[]).length===before)) return;   // original refused
+    $fetch('/api/tickets/'+tid+'/links',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'related',other})})
+      .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0)); setTimeout(()=>hydrate(),200); } });
+  };
+  const _unlink=window.unlink;
+  window.unlink=function(tid,other){
+    const had=((tk(tid)||{}).links||[]).includes(other);
+    _unlink(tid,other);
+    if(!had) return;
+    $fetch('/api/tickets/'+tid+'/unlink',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'related',other})})
+      .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0)); setTimeout(()=>hydrate(),200); } });
+  };
+  const _doChild=window.doChild;
+  window.doChild=function(tid){
+    const el=document.getElementById('chTarget');
+    const other=el?Number(el.value):null;           // read before the modal closes
+    _doChild(tid);
+    const c=other?tk(other):null;
+    if(!c||c.parentId!==tid) return;                // original refused (loud toast already shown)
+    $fetch('/api/tickets/'+tid+'/links',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'child',other})})
+      .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0)); setTimeout(()=>hydrate(),200); } });
+  };
+  const _unchild=window.unchild;
+  window.unchild=function(pid,cid){
+    const had=((tk(pid)||{}).children||[]).includes(cid) || (tk(cid)||{}).parentId===pid;
+    _unchild(pid,cid);
+    if(!had) return;
+    $fetch('/api/tickets/'+pid+'/unlink',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'child',other:cid})})
+      .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0)); setTimeout(()=>hydrate(),200); } });
+  };
+  /* closing a parent with open children: intercept the state select and offer
+     the cascade. Children land in the SYSTEM state 'Closed: child ticket', so
+     close-email triggers ("state → Closed/Solved") never fire for them. */
+  const _setPropChain=window.setProp;
+  window.setProp=function(tid,k,v){
+    if(k==='st' && !window._bulkRun){
+      const t=tk(tid), tgt=st8(v);
+      if(t&&tgt&&tgt.type==='done'&&(st8(t.st)||{}).type!=='done'){
+        const openKids=(t.children||[]).filter(id=>{const c=tk(id); return c&&(st8(c.st)||{}).type!=='done';});
+        if(openKids.length){ cascadeModal(tid,v,openKids); return; }
+      }
+    }
+    _setPropChain(tid,k,v);
+  };
+  const _bulkApplyChain=window.bulkApply;
+  window.bulkApply=function(k,v){                   /* bulk never prompts — it
+    closes the parents alone; children keep their own lifecycle */
+    window._bulkRun=true;
+    try{ _bulkApplyChain(k,v); } finally { window._bulkRun=false; }
+  };
+  window.cascadeModal=function(tid,v,openKids){
+    const m=document.getElementById('modal');
+    m.innerHTML=`
+      <div class="modal-head"><h3>Close child tickets too?</h3><p>${openKids.length} of ${(tk(tid).children||[]).length} child ticket${(tk(tid).children||[]).length===1?'':'s'} ${openKids.length===1?'is':'are'} still open: ${openKids.map(x=>'#'+x).join(', ')}. Closing them with this parent files them as \u201cClosed: child ticket\u201d \u2014 a quiet close: no close email goes out, each gets an internal note instead.</p></div>
+      <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn ghost" onclick="cascadeJust(${tid},'${v}')">Just this ticket</button><button class="btn primary" onclick="cascadeAll(${tid},'${v}')">Close them too</button></div>`;
+    document.getElementById('scrim').classList.add('open');
+  };
+  window.cascadeJust=function(tid,v){ closeModal(); _setPropChain(tid,'st',v); };
+  window.cascadeAll=function(tid,v){
+    closeModal();
+    const t=tk(tid); if(!t) return;
+    const ver=t.version;
+    const kids=(t.children||[]).filter(id=>{const c=tk(id); return c&&(st8(c.st)||{}).type!=='done';});
+    const cc=st8('child-closed')?'child-closed':'closed';
+    t.articles.push(art('sys', me(), nowMs(), 'State set to '+(st8(v)||{label:v}).label.toLowerCase()));
+    t.st=v;
+    kids.forEach(id=>{ const c=tk(id); c.st=cc;
+      c.articles.push(art('sys', me(), nowMs(), `Closed with parent #${tid} (${(st8(v)||{label:v}).label})`)); });
+    t.articles.push(art('sys', me(), nowMs(),
+      `Closed with ${kids.length} child ticket${kids.length===1?'':'s'}: ${kids.map(x=>'#'+x).join(', ')}`));
+    log('Ticket closed with children', `#${tid} + ${kids.map(x=>'#'+x).join(', ')}`);
+    render();
+    $fetch('/api/tickets/'+tid+'/close-cascade',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({state:(st8(v)||{label:'Closed'}).label, version:ver})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
   };
 
   /* ---- projects: full lifecycle ---- */
