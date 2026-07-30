@@ -61,7 +61,7 @@ f.addEventListener('submit',async ev=>{
     const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
       credentials:'same-origin',body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
-    if(r.ok){location.href=d.must_change_password?'index.html#change-password':'index.html';return}
+    if(r.ok){location.href=d.must_change_password?'index.html#change-password':'suite.html';return}
     if(r.headers.get('X-MFA')==='required'){mfa.style.display='block';f.totp.focus();
       err.textContent='Enter your authenticator code.';err.style.display='block';return}
     err.textContent=d.detail||'Sign-in failed';err.style.display='block';

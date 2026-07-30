@@ -223,7 +223,7 @@ def oidc_callback(request: Request, code: str | None = None,
         auth.audit(conn, "auth", "Signed in (SSO)", f"agent:{agent_id}",
                    f"{agent_email} via Entra OIDC{mapped}")
 
-    out = RedirectResponse("/ui/index.html", status_code=302)
+    out = RedirectResponse("/ui/suite.html", status_code=302)
     out.set_cookie(sessions.COOKIE, token, httponly=True, samesite="lax",
                    secure=sessions.COOKIE_SECURE,
                    max_age=sessions.SESSION_HOURS * 3600, path="/")
