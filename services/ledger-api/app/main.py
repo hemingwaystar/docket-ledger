@@ -144,6 +144,10 @@ def bootstrap(request: Request, limit: int = 1000):
                                   ag.name AS approved_by_name
                              FROM ledger.billing_periods bp
                              LEFT JOIN shared.agents ag ON ag.id = bp.approved_by
+                            WHERE bp.status <> 'open'
+                               OR EXISTS (SELECT 1 FROM ledger.time_entries e
+                                           WHERE e.period_id = bp.id
+                                             AND e.status <> 'void')
                             ORDER BY bp.period_key""")
             out["periods"] = [{"id": str(r["id"]), "clientId": str(r["client_id"]),
                                "key": r["period_key"], "status": r["status"],
@@ -200,6 +204,30 @@ def bootstrap(request: Request, limit: int = 1000):
         return out
 
 
+def _sane_span(started: str | None, ended: str | None):
+    """Bug #27 guard: a mistyped year in a datetime-local field created a
+    July 1930 entry — and with it a ghost billing period and timesheet.
+    Spans must live in the present era."""
+    from datetime import datetime, timedelta, timezone
+    def parse(v):
+        if v is None:
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(422, f"Unparseable timestamp: {v!r}")
+    st, en = parse(started), parse(ended)
+    now = datetime.now(timezone.utc)
+    for label, dt in (("start", st), ("end", en)):
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt.year < 2020 or dt > now + timedelta(days=400):
+            raise HTTPException(422, f"That {label} time ({dt.date()}) is outside the "
+                                     "sane window — check the year")
+
+
 class Classify(BaseModel):
     activity_type: str | None = None
     started_at: str | None = None      # span edits — pre-submission only
@@ -213,6 +241,7 @@ def classify_entry(entry_id: str, body: Classify, request: Request):
     """Entry edits from the Ledger UI: reclassify or adjust the span
     (pre-submission), or void. Approved/period-locked rows: the DB freeze
     guard (SECURITY DEFINER since 0012) refuses and we return 409."""
+    _sane_span(body.started_at, body.ended_at)
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "l_edit_own", "l_edit_all")

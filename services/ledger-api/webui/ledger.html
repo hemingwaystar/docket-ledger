@@ -1111,8 +1111,8 @@ function viewTimesheets(){
           <div class="mini" style="font-weight:600;margin-bottom:2px">Adjust time &amp; date</div>
           <div class="mini muted" style="margin-bottom:8px">Changes re-price this entry and, once saved, are written straight to the shared time record Docket reads.</div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-            <label class="mini muted">Start<br><input type="datetime-local" id="st-${e.id}" value="${localDT(e.startedAt)}" style="margin-top:4px"></label>
-            <label class="mini muted">End<br><input type="datetime-local" id="en-${e.id}" value="${localDT(e.endedAt)}" style="margin-top:4px"></label>
+            <label class="mini muted">Start<br><input type="datetime-local" id="st-${e.id}" min="2020-01-01T00:00" max="2027-12-31T23:59" value="${localDT(e.startedAt)}" style="margin-top:4px"></label>
+            <label class="mini muted">End<br><input type="datetime-local" id="en-${e.id}" min="2020-01-01T00:00" max="2027-12-31T23:59" value="${localDT(e.endedAt)}" style="margin-top:4px"></label>
             <button class="btn sm primary" onclick="saveTime('${e.id}')">Save time &amp; date</button>
           </div>
         </div>`:''}

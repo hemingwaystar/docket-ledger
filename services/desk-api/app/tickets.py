@@ -515,6 +515,29 @@ class Tags(BaseModel):
     remove: list[str] = []
 
 
+def _sane_span(started: str | None, ended: str | None):
+    """Bug #27: garbage years from datetime-local fields must never mint
+    billing periods. Mirrors ledger's guard."""
+    from datetime import datetime, timedelta, timezone
+    def parse(v):
+        if v is None:
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(422, f"Unparseable timestamp: {v!r}")
+    st, en = parse(started), parse(ended)
+    now = datetime.now(timezone.utc)
+    for label, dt in (("start", st), ("end", en)):
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if dt.year < 2020 or dt > now + timedelta(days=400):
+            raise HTTPException(422, f"That {label} time ({dt.date()}) is outside the "
+                                     "sane window — check the year")
+
+
 class NewTime(BaseModel):
     started_at: str
     ended_at: str
@@ -529,6 +552,7 @@ class NewTime(BaseModel):
 def add_time(ticket_id: int, body: NewTime, request: Request):
     """A standalone or article-attached time entry — the '+ time' button on an
     existing note. Composer-attached time still travels with its article."""
+    _sane_span(getattr(body, 'started_at', None), getattr(body, 'ended_at', None))
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, 'log_time')
@@ -574,6 +598,7 @@ def patch_time(entry_id: str, body: PatchTime, request: Request):
     """Edit or void a time entry from the ticket view. Own entries need
     log_time; someone else's need see_billing. The DB freeze guard (approved
     timesheets, closed periods — SECURITY DEFINER as of 0012) still fires."""
+    _sane_span(getattr(body, 'started_at', None), getattr(body, 'ended_at', None))
     with db.connect() as conn:
         who = auth.require(conn, request)
         with conn.cursor() as cur:

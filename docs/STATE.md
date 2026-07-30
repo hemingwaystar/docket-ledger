@@ -205,6 +205,8 @@ change audits (they always did) — and the Ledger Audit page now shows the
 real audit.events tail instead of demo rows. Client cycle changes never
 touched history: entries keep the period they were written into.
 
+| 27 | Approvals grew a ghost "July 1930" timesheet with an unclassified entry — Ledger felt broken | a mistyped year in a span editor's datetime-local field sailed through with no bounds anywhere; the server accepted it, minted a 1930 billing period, and the sheet appeared | _sane_span() 422-guards every span write path (ledger classify, desk add/patch time: year >= 2020, <= now+400d); span inputs carry min/max; bootstrap hides empty OPEN periods, so voiding the garbage entry removes the ghost sheet AND the ghost period from every page | Any user-typed timestamp is untrusted input — bound it at the API, not just the widget |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -244,6 +246,9 @@ places.
       selects → type replaces it → Enter commits; full numbers and words land
       in every search box, caret stays, page doesn't jump; override PUTs fire
       once after typing settles (watch network tab)
+- [ ] Cleanup + guard: void the July-1930 entry in its Ledger drawer → the
+      1930 sheet AND period vanish everywhere; try saving a span with year
+      1930 → clean 422 "check the year", widget won't even offer it
 - [ ] Billing-history walk: note an old entry's rate/amount → change the type
       rate, a client override, and flip a type's billable → old entry's price
       and billable status UNCHANGED (display and export), new entry from
