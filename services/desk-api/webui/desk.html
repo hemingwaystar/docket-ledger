@@ -3641,7 +3641,8 @@ function viewSettings(){
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Microsoft Entra ID SSO</b>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
             <span class="mini muted">OIDC \u00b7 tenant</span><input type="text" value="${esc(AUTH_CFG.tenant)}" style="width:260px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('tenant',this.value,this)">
-            <span class="mini muted">client ID</span><input type="text" value="${esc(AUTH_CFG.clientId||'ap-8c02d1aa-sso')}" style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('clientId',this.value,this)">
+            <span class="mini muted">client ID</span><input type="text" value="${esc(AUTH_CFG.clientId||'')}" placeholder="Graph app's ID by default" style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('clientId',this.value,this)">
+            <span class="mini muted">redirect URI</span><input type="text" value="${esc(AUTH_CFG.redirectUri||'')}" placeholder="https://\u2026/auth/oidc/callback (blank = derive from request)" style="width:290px;font-family:'IBM Plex Mono',monospace;font-size:12px" onchange="authSet('redirectUri',this.value,this)">
             <span class="mini muted">\u00b7 sessions shared with Ledger</span>
           </div>
           ${secretRow('entraSecret')}
@@ -5035,6 +5036,26 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       if(unread(state.notifs)!==before && !(bb&&bb.style.display==='block')) render();
     }catch(e){}
   },60000);
+
+  /* ---- authentication card: SSO / role-mapping / local+MFA persist ---- */
+  let _authT=null;
+  const authPut=()=>{ clearTimeout(_authT); _authT=setTimeout(()=>{
+    $fetch('/api/settings/config/auth',{method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({value:{sso_enabled:!!AUTH_CFG.ssoConnected,
+        tenant:AUTH_CFG.tenant||'', client_id:AUTH_CFG.clientId||'',
+        redirect_uri:AUTH_CFG.redirectUri||'',
+        local_passwords:!!AUTH_CFG.localPasswords,
+        role_mapping:!!AUTH_CFG.roleMapping, mfa:AUTH_CFG.mfa||'optional'}})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  },500); };
+  ['authToggleSSO','authToggleLocal','authToggleMapping'].forEach(n=>{
+    const orig=window[n]; window[n]=function(){ const was=JSON.stringify(AUTH_CFG);
+      orig.apply(null,arguments);
+      if(JSON.stringify(AUTH_CFG)!==was) authPut(); };   /* lockout guards refuse locally */
+  });
+  const _authSet=window.authSet;
+  window.authSet=function(k,v,srcEl){ _authSet(k,v,srcEl); authPut(); };
 
   /* ---- activity types: create / rename / archive from the Directory tab
      (names + lifecycle here; billable + rates stay in Ledger) ---- */

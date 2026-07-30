@@ -157,6 +157,12 @@ resolves to (explicit override → ticket contact → last inbound sender).
    a real notifications table + the bell; builders/SLA/business-hours fully
    wired; role create/rename + activity-type lifecycle from the Directory
    tab; Ledger role-permissions page dropped by decision.
+10. **Entra OIDC** (build 3, no migration): second sign-in path — auth-code
+    flow, KEK-sealed flow cookie, back-channel claim validation, agent match
+    by oid/email, optional group→role mapping, one shared mint_session;
+    login page gains the Microsoft button via /auth/methods; the whole
+    Authentication settings card persists. Roadmap reordered by the user:
+    OIDC → nginx → backups.
 
 ---
 
@@ -331,6 +337,18 @@ places.
       sticks; Archive → gone from pickers in BOTH apps, old entries still
       show its name and price; Restore brings it back
 
+- [ ] **OIDC (build 3):** after the Entra steps in DOCUMENTATION.md §6,
+      port-forward `ssh -L 8081:<BIND_ADDR>:8081` → localhost login page
+      shows "Sign in with Microsoft" once Settings → Authentication is
+      Connected → the round trip signs you in as your agent (audit shows
+      "Signed in (SSO)"); a Microsoft account with no matching agent gets a
+      readable refusal on the login page, not a stack trace
+- [ ] **OIDC settings:** toggle SSO/local/mapping, edit tenant/client
+      ID/redirect URI → refresh → all stick; disabling BOTH sign-in paths is
+      refused with the lockout toast; with mapping ON and a group object id
+      in a role's field, next SSO sign-in applies that role (audit line
+      names the mapping)
+
 **Prototype-parity wiring queue:**
 1. ~~Docket props panel, pending timers, merge~~ DONE
 2. ~~Projects lifecycle in prototype UI~~ DONE (incl. new reopen endpoint)
@@ -384,13 +402,15 @@ places.
    are business-hours-aware, deduped, and land in a real notifications
    table feeding the bell; builders fully wired (archive-first delete,
    server runs counters)
-3. Entra OIDC as second sign-in path (config exists; `entra_oidc` secret slot
-   exists)
-4. Full backup process: dumps → S3 lifecycle, KEK custody separate from
-   dumps, scripted + drilled restore runbook — **next build**
-5. nginx + certbot go-live: one domain, `/desk/` + `/ledger/`, HSTS; flip
-   session cookie `secure=True` (marked in `sessions.py`); Swagger header
-   tweak behind proxy
+3. ~~Entra OIDC as second sign-in path~~ **DONE (build 3)** — full SSO on
+   the NetBird address still waits on nginx (Entra requires HTTPS redirect
+   URIs; localhost port-forward is the interim test path)
+4. nginx + certbot go-live (user-reordered ahead of backups): one domain,
+   `/desk/` + `/ledger/`, HSTS; add the production https redirect URI in
+   Entra; flip session cookie `secure=True` (marked in `sessions.py` AND
+   `oidc.py`); Swagger header tweak behind proxy — **next build**
+5. Full backup process: dumps → S3 lifecycle, KEK custody separate from
+   dumps, scripted + drilled restore runbook — before the outbound flip
 6. Later: Zammad history import migration; customer portal (schema
    affordances exist); attachments UI; verification (SMS/email) flows;
    retainers UI

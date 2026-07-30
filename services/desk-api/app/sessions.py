@@ -34,6 +34,22 @@ def _perms_for(cur, agent_id) -> list[str]:
     return [r[0] for r in cur.fetchall()]
 
 
+def mint_session(conn, cur, request, agent_id) -> tuple[str, list[str]]:
+    """One session contract for every sign-in path (local + OIDC): perms
+    snapshotted, token hashed at rest, stale rows swept."""
+    perms = _perms_for(cur, agent_id)
+    token = pysecrets.token_urlsafe(32)
+    cur.execute("""INSERT INTO shared.sessions
+                     (token_hash, agent_id, perms, expires_at, ip, user_agent)
+                   VALUES (%s, %s, %s, now() + make_interval(hours => %s), %s, %s)""",
+                (hashlib.sha256(token.encode()).hexdigest(), agent_id, perms,
+                 SESSION_HOURS, request.client.host if request.client else None,
+                 request.headers.get("user-agent", "")[:200]))
+    cur.execute("""DELETE FROM shared.sessions
+                    WHERE expires_at < now() - interval '30 days'""")
+    return token, perms
+
+
 class Login(BaseModel):
     email: str
     password: str
@@ -73,16 +89,7 @@ def login(body: Login, request: Request, response: Response):
             elif policy == "required":
                 raise HTTPException(403, "MFA is required — enroll first",
                                     headers={"X-MFA": "enroll"})
-            perms = _perms_for(cur, agent_id)
-            token = pysecrets.token_urlsafe(32)
-            cur.execute("""INSERT INTO shared.sessions
-                             (token_hash, agent_id, perms, expires_at, ip, user_agent)
-                           VALUES (%s, %s, %s, now() + make_interval(hours => %s), %s, %s)""",
-                        (hashlib.sha256(token.encode()).hexdigest(), agent_id, perms,
-                         SESSION_HOURS, request.client.host if request.client else None,
-                         request.headers.get("user-agent", "")[:200]))
-            cur.execute("""DELETE FROM shared.sessions
-                            WHERE expires_at < now() - interval '30 days'""")
+            token, perms = mint_session(conn, cur, request, agent_id)
         auth.audit(conn, "auth", "Signed in", f"agent:{agent_id}", body.email)
     # secure=False until the host nginx TLS front is live — flip it at go-live
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax",

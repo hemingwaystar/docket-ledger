@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-29 (build 2, rev b) · migrations 0001–0020 · bundle “hemingway-backend.zip”**
+**As of 2026-07-29 (build 3) · migrations 0001–0020 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -185,7 +185,8 @@ archive — names & lifecycle; billable/rates stay in Ledger); settings: config
 GET/PUT (now incl. `sla`), secrets (write-only), mailboxes POST/PATCH, canned
 POST/PATCH, `graph/test`; automations: `POST/PATCH /api/automations/rules`,
 `POST /api/automations/rules/order`, `GET /api/automations/notifications` +
-`/read`.
+`/read`; OIDC: `GET /auth/oidc/login` → Entra → `GET /auth/oidc/callback`,
+plus unauthenticated `GET /auth/methods` (which sign-in doors are open).
 
 **ledger-api (:8082)** — `/api/bootstrap` (entries w/ histories, periods w/
 approval meta, access, cfg, audit tail, odooSecret meta); entries:
@@ -245,6 +246,30 @@ and writes warn (≤2 h) and breach notices **once each** per clock into
 bell hydrates from the server (60 s poll), click-through marks read, and the
 old client-side escalation simulator is retired. Rule/trigger deletion is
 archive-first, so runs history survives.
+
+**Entra OIDC sign-in (build 3 — NEW, no migration needed):** the second auth
+path, user-ordered ahead of nginx. Authorization-code flow as a confidential
+client: `/auth/oidc/login` sends the browser to Entra with state + nonce in a
+KEK-sealed cookie; `/auth/oidc/callback` exchanges the code using the
+`entra_oidc` secret, validates aud/exp/nonce/tid on the back-channel token
+(OIDC Core §3.1.3.7 — TLS server validation stands in for signature checks on
+direct token-endpoint responses), matches the agent by Entra object id or
+email (object id learned on first sign-in), optionally applies **Entra role
+mapping** (`groups` claim vs `shared.roles.entra_group`; on multiple matches
+the most-permissioned role wins; no match = role untouched), and mints the
+IDENTICAL session local login mints (one factored `mint_session`). MFA for
+SSO is Entra's job — local TOTP policy applies to passwords only. The login
+page probes `/auth/methods`: a "Sign in with Microsoft" button appears when
+SSO is on, the password form hides when local passwords are off (with a
+lockout guard in Settings so you can never disable both), and callback
+errors surface as readable messages. The whole Authentication settings card
+(SSO toggle, tenant, client ID, redirect URI, role mapping, local
+passwords + MFA policy) now persists to `app_config('auth')`; tenant and
+client ID default to the Graph app registration — one Entra app for
+ingestion, verification sends, and sign-in. **Entra constraint:** redirect
+URIs must be HTTPS (`http://localhost` is the sole exception) — full SSO on
+the NetBird address waits for nginx; test now via the localhost port-forward
+path in §6.
 
 **Ledger, end to end:** live entry feed with note-content fallback; submit →
 recall → span-edit → reclassify → void with all gates; timesheet
@@ -312,6 +337,22 @@ One-time cleanups, if not already done:
    live every pass rolled back, so any mail received in that window arrives
    in a burst on the first healthy pass (idempotent on Message-ID; expected).
 
+**Enabling SSO (one-time, in Entra + Settings):**
+1. In the existing Graph app registration: *Authentication → Add a
+   platform → Web*, redirect URI `http://localhost:8081/auth/oidc/callback`
+   (the pre-nginx test URI; add the real `https://…/auth/oidc/callback` at
+   go-live — Entra refuses plain-http non-localhost URIs).
+2. *Certificates & secrets* → new client secret → paste it into Docket →
+   Settings → Authentication (the Entra secret slot; write-only as always).
+3. Optional role mapping: *Token configuration → Add groups claim →
+   Security groups* — the token then carries group OBJECT IDs; put each
+   group's object id in the mapping field next to its role.
+4. Settings → Authentication: tenant + client ID prefill from the Graph
+   registration (override if you split apps), leave redirect URI blank to
+   derive from the request, press **Connect**.
+5. Test without nginx: `ssh -L 8081:<BIND_ADDR>:8081 <vm>` then browse
+   `http://localhost:8081/ui/login.html` → "Sign in with Microsoft".
+
 Then run the **verification walks in STATE.md §5** — they cover the
 directory round-trip, the Docket working loop, project lifecycle, time
 survival, the full Ledger loop (including the bug-#22 Return walk),
@@ -323,7 +364,6 @@ persistence, and the input-feel checks. Each walk names its expected outcome.
 ## 7. NOT done — the honest inventory
 
 **Feature builds not yet started:**
-* **Entra OIDC sign-in** (config + `entra_oidc` secret slot exist).
 * **Full backup process** — dumps → S3 lifecycle, KEK custody separate from
   dumps, scripted and *drilled* restore runbook. Today: nightly local
   `pg_dump -Fc`, 14-day retention, **local only**.
@@ -353,15 +393,20 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
 
 ## 8. WILL be done — recommended order
 
-1. **Your verify pass** on this bundle (STATE.md §5 — incl. the new
-   automations walk).
+1. **Your verify pass** on this bundle (STATE.md §5 — automations + OIDC
+   walks).
 2. **Your ops list** (§7 above) — snapshot, access policy, off-instance
    secrets/dumps, deploy.sh.
-3. **Backup process** build → restore drill (next build on my side).
-4. **nginx/TLS go-live** → cookie flip → flip `mail.outbound_enabled` → live
-   reply test → real traffic.
-5. **Entra OIDC**, then the post-launch tail: Zammad import → portal →
-   attachments → verification flows → retainers → ticket links.
+3. **nginx + certbot** (next build on my side — reordered ahead of backups
+   by decision, and it unlocks the production HTTPS redirect URI that full
+   SSO needs) → add the https redirect URI in Entra → flip the session
+   cookie `secure=True`.
+4. **Backup process** build → restore drill — in place BEFORE the go-live
+   flips below, so real customer mail never runs uncovered.
+5. **Go-live flips:** `mail.outbound_enabled` → live reply test → real
+   traffic.
+6. Post-launch tail: Zammad import → portal → attachments → verification
+   flows → retainers → ticket links.
 
 ---
 

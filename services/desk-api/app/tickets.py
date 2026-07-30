@@ -210,7 +210,9 @@ def bootstrap(request: Request, limit: int = 500):
             a = cfgs.get("auth", {"value": {}})
             av = a["value"] if isinstance(a["value"], dict) else {}
             out["authCfg"] = {"ssoConnected": bool(av.get("sso_enabled")),
-                              "tenant": av.get("tenant", ""),
+                              "tenant": av.get("tenant", "") or gv.get("tenant", ""),
+                              "clientId": av.get("client_id", "") or gv.get("client_id", ""),
+                              "redirectUri": av.get("redirect_uri", ""),
                               "localPasswords": bool(av.get("local_passwords", True)),
                               "roleMapping": bool(av.get("role_mapping")),
                               "mfa": av.get("mfa", "optional")}
