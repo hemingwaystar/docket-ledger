@@ -1,3 +1,8 @@
+# SUPERSEDED (build 4): the real, ready-to-install config is
+# nginx/helpdesk.hemingwaytechsolutions.com.conf — use that one.
+# This early sketch is kept for history only; its bare /desk/ + /ledger/
+# prefixing would break Docket's absolute fetch paths (bug #8).
+
 # Host nginx — TLS termination + HSTS for the Hemingway Suite.
 # The compose stack publishes only on loopback; this is the sole public door.
 # Adjust server_name + certificate paths, then:

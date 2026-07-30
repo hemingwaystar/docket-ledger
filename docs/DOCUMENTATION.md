@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-29 (build 3) · migrations 0001–0020 · bundle “hemingway-backend.zip”**
+**As of 2026-07-29 (build 4) · migrations 0001–0020 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -267,9 +267,25 @@ errors surface as readable messages. The whole Authentication settings card
 passwords + MFA policy) now persists to `app_config('auth')`; tenant and
 client ID default to the Graph app registration — one Entra app for
 ingestion, verification sends, and sign-in. **Entra constraint:** redirect
-URIs must be HTTPS (`http://localhost` is the sole exception) — full SSO on
-the NetBird address waits for nginx; test now via the localhost port-forward
-path in §6.
+URIs must be HTTPS (`http://localhost` is the sole exception) — solved by the
+nginx front below.
+
+**nginx TLS front (build 4 — NEW):** ready-to-install config at
+`nginx/helpdesk.hemingwaytechsolutions.com.conf` — one hostname, Docket at
+the root path space (its fetch URLs are absolute by design, bug #8), Ledger
+proxied under `/ledger/` with the prefix stripped. Both Ledger UIs and the
+suite pane are now **proxy-aware**: they compute a base from their own URL
+(one `$fetch` funnel each), so the same files work identically on the https
+front and on direct NetBird ports. uvicorn honors `X-Forwarded-Proto` in
+both APIs, so OIDC's derived redirect URI is correctly https behind the
+proxy. The session-cookie `secure` flag is now **env-driven**
+(`COOKIE_SECURE=true` in `.env` once the front is verified — no code edit at
+go-live, no deploy-order lockout risk; after the flip, sign-in works only
+over https, by design). DNS-01 issuance means no inbound port 80/443 is ever
+required: point the DNS A record at the **NetBird IP** and the suite stays
+overlay-only with a real public-CA certificate. Known cosmetic limit:
+Ledger's Swagger behind the proxy fetches Docket's spec — use the NetBird
+ports for Ledger's Swagger.
 
 **Ledger, end to end:** live entry feed with note-content fallback; submit →
 recall → span-edit → reclassify → void with all gates; timesheet
@@ -353,6 +369,50 @@ One-time cleanups, if not already done:
 5. Test without nginx: `ssh -L 8081:<BIND_ADDR>:8081 <vm>` then browse
    `http://localhost:8081/ui/login.html` → "Sign in with Microsoft".
 
+**nginx + certbot (DNS-01) go-live walkthrough:**
+1. **DNS:** create an A record `helpdesk.hemingwaytechsolutions.com` →
+   the VM's **NetBird IP** (the `BIND_ADDR` from `.env`). The name resolves
+   publicly but only NetBird peers can reach it — the suite stays
+   overlay-only with a real certificate, and DNS-01 never needs inbound
+   80/443. (Alternative: point it at the Lightsail public IP and open
+   TCP 80+443 in the Lightsail firewall if you ever want it public.)
+2. **Certificate (manual DNS-01):**
+   ```bash
+   sudo apt-get update && sudo apt-get install -y certbot nginx
+   sudo certbot certonly --manual --preferred-challenges dns \
+        -d helpdesk.hemingwaytechsolutions.com
+   ```
+   Certbot prints a value for a TXT record at
+   `_acme-challenge.helpdesk.hemingwaytechsolutions.com` — create it at your
+   DNS provider, confirm propagation from another shell
+   (`dig +short TXT _acme-challenge.helpdesk.hemingwaytechsolutions.com`),
+   then press Enter. **Renewal caveat:** `--manual` without an auth hook
+   cannot auto-renew — set a ~75-day reminder to rerun it (new TXT value
+   each time), or switch to your DNS provider's certbot plugin
+   (e.g. `python3-certbot-dns-cloudflare`) for hands-free renewal, adding
+   `--deploy-hook 'systemctl reload nginx'`.
+3. **Install the config:**
+   ```bash
+   sudo cp ~/docket-ledger/nginx/helpdesk.hemingwaytechsolutions.com.conf \
+        /etc/nginx/sites-available/
+   sudo sed -i "s/__BIND_ADDR__/$(grep ^BIND_ADDR ~/docket-ledger/.env | cut -d= -f2)/" \
+        /etc/nginx/sites-available/helpdesk.hemingwaytechsolutions.com.conf
+   sudo ln -s ../sites-available/helpdesk.hemingwaytechsolutions.com.conf \
+        /etc/nginx/sites-enabled/
+   sudo rm -f /etc/nginx/sites-enabled/default
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+4. **Verify over https** (STATE.md §5 has the walk): login, suite with BOTH
+   panes live, Ledger working inside `/ledger/`, working loop + timesheet
+   round-trips.
+5. **Flip the cookie:** add `COOKIE_SECURE=true` to `~/docket-ledger/.env`,
+   then `sudo docker compose up -d desk-api`. From here sign-in works only
+   on the https front (NetBird direct ports remain for Swagger and
+   break-glass reads).
+6. **Finish SSO:** in the Entra app registration, add redirect URI
+   `https://helpdesk.hemingwaytechsolutions.com/auth/oidc/callback`, then
+   run the OIDC walk on the real domain.
+
 Then run the **verification walks in STATE.md §5** — they cover the
 directory round-trip, the Docket working loop, project lifecycle, time
 survival, the full Ledger loop (including the bug-#22 Return walk),
@@ -367,9 +427,10 @@ persistence, and the input-feel checks. Each walk names its expected outcome.
 * **Full backup process** — dumps → S3 lifecycle, KEK custody separate from
   dumps, scripted and *drilled* restore runbook. Today: nightly local
   `pg_dump -Fc`, 14-day retention, **local only**.
-* **nginx + certbot go-live** — one domain, `/desk/` + `/ledger/`, HSTS;
-  flip the session cookie `secure=True` (marked in sessions.py); Swagger
-  behind proxy tweak.
+* **nginx/TLS go-live steps** — the config and proxy-aware apps shipped in
+  build 4; what remains is yours: DNS record, certbot DNS-01 issuance,
+  install + reload, `COOKIE_SECURE=true`, and the https redirect URI in
+  Entra (walkthrough in §6).
 * **Zammad history import; customer portal; attachments UI; verification
   (SMS/email) execution flows; retainers UI** (schema affordances exist for
   all of these).
@@ -397,12 +458,12 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
    walks).
 2. **Your ops list** (§7 above) — snapshot, access policy, off-instance
    secrets/dumps, deploy.sh.
-3. **nginx + certbot** (next build on my side — reordered ahead of backups
-   by decision, and it unlocks the production HTTPS redirect URI that full
-   SSO needs) → add the https redirect URI in Entra → flip the session
-   cookie `secure=True`.
-4. **Backup process** build → restore drill — in place BEFORE the go-live
-   flips below, so real customer mail never runs uncovered.
+3. **nginx/TLS go-live (your steps — build 4 shipped everything code-side):**
+   DNS A record → certbot DNS-01 → install the config → verify →
+   `COOKIE_SECURE=true` → https redirect URI in Entra → full SSO test.
+4. **Backup process** build → restore drill (next build on my side) — in
+   place BEFORE the go-live flips below, so real customer mail never runs
+   uncovered.
 5. **Go-live flips:** `mail.outbound_enabled` → live reply test → real
    traffic.
 6. Post-launch tail: Zammad import → portal → attachments → verification

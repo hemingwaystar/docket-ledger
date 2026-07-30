@@ -58,6 +58,7 @@ services:
       DATABASE_USER: desk_api
       DATABASE_PASSWORD_FILE: /run/secrets/pg_desk_api_password
       KEK_FILE: /run/secrets/kek
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}   # true once the nginx TLS front is verified
     secrets: [pg_desk_api_password, kek]
     ports:
       - "${BIND_ADDR:-127.0.0.1}:8081:8000"   # loopback by default; overlay IP via .env

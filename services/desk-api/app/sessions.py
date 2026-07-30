@@ -4,6 +4,7 @@ links ever — admin-direct resets only, everything audited. Sessions are
 DB-backed (0004) with the role matrix snapshotted at sign-in."""
 import hashlib
 import json
+import os
 import secrets as pysecrets
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -15,6 +16,10 @@ router = APIRouter(prefix="/auth")
 ph = PasswordHasher()          # argon2id defaults
 SESSION_HOURS = 12
 COOKIE = "hts_session"
+# False until the nginx TLS front is verified, then COOKIE_SECURE=true in
+# .env → compose passes it through → restart desk-api. After the flip,
+# sign-in works only over https (direct NetBird :8081 logins stop — by design).
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 
 def _mfa_policy(cur) -> str:
@@ -91,9 +96,8 @@ def login(body: Login, request: Request, response: Response):
                                     headers={"X-MFA": "enroll"})
             token, perms = mint_session(conn, cur, request, agent_id)
         auth.audit(conn, "auth", "Signed in", f"agent:{agent_id}", body.email)
-    # secure=False until the host nginx TLS front is live — flip it at go-live
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax",
-                        secure=False, max_age=SESSION_HOURS * 3600, path="/")
+                        secure=COOKIE_SECURE, max_age=SESSION_HOURS * 3600, path="/")
     return {"name": name, "email": body.email, "perms": perms,
             "must_change_password": must_change}
 

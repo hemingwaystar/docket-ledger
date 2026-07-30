@@ -95,9 +95,12 @@ function flash(msg){
 }
 </script>
 <script>
-/* live: Ledger runs on its own service port; point the pane there at runtime */
+/* live: on the nginx front (standard https port) Ledger is proxied under
+   /ledger/; on direct NetBird access it stays on its own service port */
 document.getElementById('fr-ledger').src =
-  location.protocol + '//' + location.hostname + ':8082/ui/ledger.html';
+  (location.port===''||location.port==='443'||location.port==='80')
+    ? '/ledger/ui/ledger.html'
+    : location.protocol + '//' + location.hostname + ':8082/ui/ledger.html';
 </script>
 </body>
 </html>

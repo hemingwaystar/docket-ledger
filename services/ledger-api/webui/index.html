@@ -54,8 +54,9 @@ pre{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:10
 </aside>
 <main id="main"></main></div>
 <script>
-const loginUrl=()=>location.protocol+'//'+location.hostname+':8081/ui/login.html';
-const api=(p,opt)=>fetch(p,{credentials:'same-origin',...(opt||{})}).then(async r=>{
+const LBASE=location.pathname.startsWith('/ledger/')?'/ledger':'';
+const loginUrl=()=>LBASE?'/ui/login.html':location.protocol+'//'+location.hostname+':8081/ui/login.html';
+const api=(p,opt)=>fetch(LBASE+p,{credentials:'same-origin',...(opt||{})}).then(async r=>{
   if(r.status===401){location.href=loginUrl();throw new Error('auth')}
   return {ok:r.ok,data:await r.json().catch(()=>({}))}});
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));

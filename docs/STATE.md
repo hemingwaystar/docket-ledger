@@ -163,6 +163,12 @@ resolves to (explicit override → ticket contact → last inbound sender).
     login page gains the Microsoft button via /auth/methods; the whole
     Authentication settings card persists. Roadmap reordered by the user:
     OIDC → nginx → backups.
+11. **nginx TLS front** (build 4): real config for
+    helpdesk.hemingwaytechsolutions.com (Docket at /, Ledger stripped under
+    /ledger/); Ledger UIs + suite pane made proxy-aware via their fetch
+    funnels; uvicorn --proxy-headers both APIs; cookie secure flag now
+    env-driven (COOKIE_SECURE); DNS-01 + NetBird-IP DNS keeps the suite
+    overlay-only with a public-CA cert.
 
 ---
 
@@ -349,6 +355,18 @@ places.
       in a role's field, next SSO sign-in applies that role (audit line
       names the mapping)
 
+- [ ] **nginx front (build 4):** after DOCUMENTATION §6's walkthrough,
+      https://helpdesk.hemingwaytechsolutions.com redirects http→https,
+      serves the login page, and signs you in; suite shows BOTH panes live;
+      the Ledger pane's network calls go to /ledger/api/* (devtools) and a
+      timesheet round-trip works inside it; direct NetBird ports still work
+      until the cookie flip
+- [ ] **Cookie flip:** set COOKIE_SECURE=true + up -d desk-api → https
+      sign-in works, direct http://<BIND_ADDR>:8081 sign-in now fails
+      (expected); existing https session survives the restart sign-out check
+- [ ] **Full SSO on the domain:** add the https redirect URI in Entra → the
+      Microsoft button round-trips on https://helpdesk.… (no port-forward)
+
 **Prototype-parity wiring queue:**
 1. ~~Docket props panel, pending timers, merge~~ DONE
 2. ~~Projects lifecycle in prototype UI~~ DONE (incl. new reopen endpoint)
@@ -405,12 +423,13 @@ places.
 3. ~~Entra OIDC as second sign-in path~~ **DONE (build 3)** — full SSO on
    the NetBird address still waits on nginx (Entra requires HTTPS redirect
    URIs; localhost port-forward is the interim test path)
-4. nginx + certbot go-live (user-reordered ahead of backups): one domain,
-   `/desk/` + `/ledger/`, HSTS; add the production https redirect URI in
-   Entra; flip session cookie `secure=True` (marked in `sessions.py` AND
-   `oidc.py`); Swagger header tweak behind proxy — **next build**
+4. ~~nginx + certbot~~ **code-side DONE (build 4)** — remaining go-live
+   steps are user-owned (DNS record, DNS-01 issuance, install, verify,
+   COOKIE_SECURE=true, https redirect URI in Entra); Ledger Swagger behind
+   the proxy stays a known cosmetic limit (use NetBird ports)
 5. Full backup process: dumps → S3 lifecycle, KEK custody separate from
-   dumps, scripted + drilled restore runbook — before the outbound flip
+   dumps, scripted + drilled restore runbook — **next build**, before the
+   outbound flip
 6. Later: Zammad history import migration; customer portal (schema
    affordances exist); attachments UI; verification (SMS/email) flows;
    retainers UI

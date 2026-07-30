@@ -2734,7 +2734,11 @@ window.addEventListener('message', ev=>{
    Phase 1 wiring: classify, timesheet approve/return, period approve.
    Unwired mutations stay local until the next drops. */
 (function(){
-  const $fetch=(p,o)=>fetch(p,{credentials:'same-origin',...(o||{})});
+  /* behind nginx, Ledger lives under /ledger/ with the prefix stripped
+     server-side — every server call gains the base; direct :8082 access
+     keeps an empty base (bug #8: paths stay absolute per origin) */
+  const LBASE=location.pathname.startsWith('/ledger/')?'/ledger':'';
+  const $fetch=(p,o)=>fetch(LBASE+p,{credentials:'same-origin',...(o||{})});
   let PERIODS=[];
   function mapIn(d){
     state.clients.length=0; d.clients.forEach(c=>state.clients.push(c));
@@ -2773,7 +2777,8 @@ window.addEventListener('message', ev=>{
   }
   async function hydrate(){
     const r=await $fetch('/api/bootstrap');
-    if(r.status===401){ location.href=location.protocol+'//'+location.hostname+':8081/ui/login.html'; return; }
+    if(r.status===401){ location.href=LBASE?'/ui/login.html'
+      :location.protocol+'//'+location.hostname+':8081/ui/login.html'; return; }
     mapIn(await r.json());
     render();
   }

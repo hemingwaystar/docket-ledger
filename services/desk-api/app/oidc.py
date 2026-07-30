@@ -110,7 +110,7 @@ def oidc_login(request: Request):
         f"https://login.microsoftonline.com/{c['tenant']}/oauth2/v2.0/authorize?{q}",
         status_code=302)
     resp.set_cookie(FLOW_COOKIE, sealed, httponly=True, samesite="lax",
-                    secure=False, max_age=FLOW_TTL, path="/auth/oidc")
+                    secure=sessions.COOKIE_SECURE, max_age=FLOW_TTL, path="/auth/oidc")
     return resp
 
 
@@ -224,8 +224,8 @@ def oidc_callback(request: Request, code: str | None = None,
                    f"{agent_email} via Entra OIDC{mapped}")
 
     out = RedirectResponse("/ui/index.html", status_code=302)
-    # secure=False until the host nginx TLS front is live — flip with sessions.py
     out.set_cookie(sessions.COOKIE, token, httponly=True, samesite="lax",
-                   secure=False, max_age=sessions.SESSION_HOURS * 3600, path="/")
+                   secure=sessions.COOKIE_SECURE,
+                   max_age=sessions.SESSION_HOURS * 3600, path="/")
     out.delete_cookie(FLOW_COOKIE, path="/auth/oidc")
     return out
