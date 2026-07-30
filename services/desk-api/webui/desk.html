@@ -4327,7 +4327,18 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
         if(m) GROUP_SENDAS[g.id]=m.id; });
     }
     try{
-    RULES.length=0; TRIGGERS.length=0;   /* server automations engine is a coming build */
+    /* automations — the engine is live: builders hydrate server rules in
+       their own vocabulary; runs counters are the worker's real tallies */
+    RULES.length=0; TRIGGERS.length=0;
+    if(d.rules){
+      (d.rules.mail||[]).forEach(r=>RULES.push(r));
+      (d.rules.triggers||[]).forEach(g=>TRIGGERS.push(g));
+    }
+    if(d.sla) Object.keys(d.sla).forEach(k=>{ const p=d.sla[k];
+      if(p&&p.fr!=null) SLA[Number(k)]={fr:Number(p.fr),res:Number(p.res)}; });
+    if(d.biz){ ['days','start','end','holidays','tz'].forEach(k=>{
+      if(d.biz[k]!=null) BIZ[k]=d.biz[k]; }); }
+    if(d.notifs){ state.notifs.length=0; d.notifs.forEach(n=>state.notifs.push(n)); }
     d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });
     AGENTS.forEach(a=>{ AGENT_SIGS[a.id]=a.name+(a.role?' \u00b7 '+a.role:''); });
     if(d.graph){
@@ -4899,11 +4910,19 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
   window.saveRole=function(oldName){
     const name=(document.getElementById('rlName')||{value:''}).value.trim();
     const note=(document.getElementById('rlNote')||{value:''}).value.trim();
+    const before=state.roleDefs.length;
     _saveRole(oldName);
-    if(!name||!oldName) return;                    // rename+create stay local: no server rename path yet
-    if(name!==oldName){ toast('Heads up: role RENAME is not server-backed yet — reverts on refresh'); return; }
-    $fetch('/api/directory/roles/'+encodeURIComponent(oldName),{method:'PATCH',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({note})})
+    if(!name) return;                              // validation refused locally
+    if(oldName){                                   // edit: note, and rename if changed
+      const payload={note}; if(name!==oldName) payload.rename=name;
+      $fetch('/api/directory/roles/'+encodeURIComponent(oldName),{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+      return;
+    }
+    if(state.roleDefs.length===before) return;     // duplicate-name guard refused
+    $fetch('/api/directory/roles',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
   };
   const _entraSet=window.entraSet;
@@ -4911,6 +4930,127 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     _entraSet(role,v,srcEl);
     $fetch('/api/directory/roles/'+encodeURIComponent(role),{method:'PATCH',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({entra_group:v||''})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  };
+
+  /* ---- automations: rules & triggers — the engine runs in the worker ---- */
+  const isUuid=v=>/^[0-9a-f]{8}-/.test(String(v));
+  const ruleUp=(id,payload)=>$fetch('/api/automations/rules/'+encodeURIComponent(id),
+    {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  const ruleMk=payload=>$fetch('/api/automations/rules',
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(()=>hydrate(),400); });     /* pick up the server id */
+  const _toggleRule2=window.toggleRule2;
+  window.toggleRule2=function(id){ _toggleRule2(id); const r=RULES.find(x=>x.id===id);
+    if(r&&isUuid(id)) ruleUp(id,{enabled:r.enabled}); };
+  const _toggleTrig=window.toggleTrig;
+  window.toggleTrig=function(id){ _toggleTrig(id); const g=TRIGGERS.find(x=>x.id===id);
+    if(g&&isUuid(id)) ruleUp(id,{enabled:g.enabled}); };
+  const _deleteTrig=window.deleteTrig;
+  window.deleteTrig=function(id){ _deleteTrig(id);
+    if(isUuid(id)) ruleUp(id,{archived:true}); };   /* archive-first: runs history survives */
+  const _moveRule=window.moveRule;
+  window.moveRule=function(id,dir){ _moveRule(id,dir);
+    const ids=RULES.map(r=>r.id).filter(isUuid);
+    if(ids.length) $fetch('/api/automations/rules/order',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); }); };
+  const _saveRule2=window.saveRule;
+  window.saveRule=function(id){
+    const before=RULES.length, r0=id?JSON.stringify(RULES.find(x=>x.id===id)||0):0;
+    _saveRule2(id);
+    if(id){ const r=RULES.find(x=>x.id===id);
+      if(!r||JSON.stringify(r)===r0) return;         /* validation refused locally */
+      if(isUuid(id)) ruleUp(id,{name:r.name,conditions:r.conds,actions:r.act});
+      return; }
+    if(RULES.length===before) return;
+    const r=RULES[RULES.length-1];
+    ruleMk({kind:'mail_rule',name:r.name,conditions:r.conds,actions:r.act,enabled:true});
+  };
+  const _saveTrig=window.saveTrig;
+  window.saveTrig=function(id){
+    const before=TRIGGERS.length, g0=id?JSON.stringify(TRIGGERS.find(x=>x.id===id)||0):0;
+    _saveTrig(id);
+    if(id){ const g=TRIGGERS.find(x=>x.id===id);
+      if(!g||JSON.stringify(g)===g0) return;
+      if(isUuid(id)) ruleUp(id,{name:g.name,event:g.event,event_value:g.eventValue||'',
+        conditions:g.conds,actions:g.actions});
+      return; }
+    if(TRIGGERS.length===before) return;
+    const g=TRIGGERS[TRIGGERS.length-1];
+    ruleMk({kind:'trigger',name:g.name,event:g.event,event_value:g.eventValue||'',
+      conditions:g.conds,actions:g.actions,enabled:true});
+  };
+
+  /* ---- SLA targets + business hours: the settings inline editors all
+     funnel through log(), so mirror off the log line (debounced) ---- */
+  const _log=window.log; let _engT=null;
+  window.log=function(action,detail){ _log(action,detail);
+    if(action!=='SLA changed'&&action!=='Business hours changed') return;
+    clearTimeout(_engT);
+    _engT=setTimeout(()=>{
+      const sla={}; Object.keys(SLA).forEach(k=>{ const p=SLA[k];
+        if(p&&p.fr!=null) sla[k]={fr:Number(p.fr),res:Number(p.res)}; });
+      const biz={days:BIZ.days,start:BIZ.start,end:BIZ.end,holidays:BIZ.holidays};
+      if(BIZ.tz) biz.tz=BIZ.tz;
+      $fetch('/api/settings/config/sla',{method:'PUT',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({value:sla})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+      $fetch('/api/settings/config/business_hours',{method:'PUT',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({value:biz})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    },600);
+  };
+
+  /* ---- the bell: server notifications are authoritative; the local SLA
+     escalation check stays off (the worker's scanner writes the notices) --- */
+  window.checkSlaEscalations=function(){};
+  const _bellGo=window.bellGo;
+  window.bellGo=function(nid){ _bellGo(nid);
+    if(isUuid(nid)) $fetch('/api/automations/notifications/read',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[nid]})})
+      .catch(()=>0); };
+  setInterval(async()=>{
+    try{
+      const r=await $fetch('/api/automations/notifications');
+      if(!r.ok) return;
+      const d=await r.json();
+      const unread=a=>a.filter(x=>!x.read).length, before=unread(state.notifs);
+      state.notifs.length=0; (d.notifs||[]).forEach(n=>state.notifs.push(n));
+      const bb=document.getElementById('bellBox');
+      if(unread(state.notifs)!==before && !(bb&&bb.style.display==='block')) render();
+    }catch(e){}
+  },60000);
+
+  /* ---- activity types: create / rename / archive from the Directory tab
+     (names + lifecycle here; billable + rates stay in Ledger) ---- */
+  const _saveType=window.saveType;
+  window.saveType=function(xid){
+    const had=new Set(ATYPES.map(a=>a.id));
+    const n0=xid?(ATYPES.find(a=>a.id===xid)||{}).name:null;
+    _saveType(xid);
+    if(xid){ const x=ATYPES.find(a=>a.id===xid);
+      if(!x||x.name===n0) return;
+      if(isUuid(xid)) $fetch('/api/directory/types/'+encodeURIComponent(xid),{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({name:x.name})})
+        .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+      return; }
+    const x=ATYPES.find(a=>!had.has(a.id));
+    if(!x) return;
+    $fetch('/api/directory/types',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({name:x.name})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+  };
+  const _archiveType=window.archiveType;
+  window.archiveType=function(xid){
+    const x=ATYPES.find(a=>a.id===xid), was=x?x.active:undefined;
+    _archiveType(xid);
+    if(!x||x.active===was) return;                 /* sentinel / last-type guard refused */
+    if(isUuid(xid)) $fetch('/api/directory/types/'+encodeURIComponent(xid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({active:!isArch(x)})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
   };
 

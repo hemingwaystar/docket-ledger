@@ -1,12 +1,17 @@
 # Hemingway Suite — Production State & Handoff (v2)
 
-**Date:** 2026-07-28 · **Author:** build session with Claude
+**Date:** 2026-07-29 (build 2) · **Author:** build session with Claude
 **Supersedes nothing — companions `HANDOFF.md` (the frontend/prototype handoff).**
 This document is the authoritative record of the production system: what was
 built, what broke and why, what remains, and how to operate it. It lives in
 git (`docs/STATE.md`) so it travels with the code.
 
 ---
+
+> Full narrative documentation — architecture, migration catalog, API
+> inventory, done/not-done/roadmap, deploy + ops instructions — lives in
+> **docs/DOCUMENTATION.md** (mirrored in the bundle as DOCUMENTATION.md).
+> This file remains the living state doc: punch list + bug ledger win here.
 
 ## 1. Executive state
 
@@ -147,6 +152,11 @@ resolves to (explicit override → ticket contact → last inbound sender).
 8. **Prototype parity** (desk bootstrap + desk.html adapter; suite container;
    ledger bootstrap + ledger.html adapter; automations fixes; vestige sweep;
    hydration armor).
+9. **Automations engine** (build 2, 0019): mail rules + ticket triggers
+   execute in the worker off one event outbox; SLA warn/breach fan-out into
+   a real notifications table + the bell; builders/SLA/business-hours fully
+   wired; role create/rename + activity-type lifecycle from the Directory
+   tab; Ledger role-permissions page dropped by decision.
 
 ---
 
@@ -220,7 +230,7 @@ places.
 
 **Verify after next deploy (latest bundle):**
 - [ ] desk.html hydrates real data again (bug #13 fix); Graph card shows real
-      tenant/app-id/rotation; rules/triggers empty; titles/signatures live
+      tenant/app-id/rotation; rules/triggers hydrate from the server (empty until you create some); titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes
 - [ ] Updated column shows real ages; SLA countdowns real (bug #14 fix)
 - [ ] Org "Edit details" saves (domains rewrite — needs 0011); agent group
@@ -286,6 +296,35 @@ places.
       the sender as a contact; open entries follow, approved/locked stay; sys
       article + audit line appear; `unrouted` tag drops
 
+- [ ] **Automations (0019 — NEW):** create a mail rule (e.g. subject contains
+      "test-rule" → tag `rulecheck`) → send a matching mail to support@ →
+      ticket arrives tagged, ⚙ sys article names the rule, its Runs counter
+      ticks up on the Automations page after refresh
+- [ ] **Triggers:** enable an "on create → internal note" trigger with a
+      template variable → next inbound ticket carries the rendered note + ⚡
+      sys article; add a state-change trigger ("state → Closed" → note) →
+      close a ticket in the UI → within ~30 s (one worker pass) the note
+      lands; an "email the customer" action records the reply but shows
+      RECORDED ONLY in audit while outbound is off
+- [ ] **Auto-assign:** trigger with auto-assign round-robin on create →
+      consecutive new tickets rotate owners within the board; least-loaded
+      picks the idlest agent
+- [ ] **Builder round-trip:** edit/disable/reorder rules and triggers →
+      refresh → everything sticks; Delete on a trigger archives it (gone from
+      the list, runs history kept in the DB)
+- [ ] **SLA:** Settings → change a priority's first-response target and a
+      business-hours day → refresh → sticks; a ticket left un-replied past
+      its (short, for testing) target puts a warn then breach notice in the
+      bell within a worker pass; each fires ONCE; bell click-through opens
+      the ticket and marks it read (survives refresh)
+- [ ] **Roles:** rename a custom role → refresh → renamed, members keep it;
+      renaming a core role is refused with a clear message; + Add role
+      persists (grant it perms after)
+- [ ] **Activity types (Directory tab):** + Add type → appears in Ledger's
+      Activity Types page (non-billable) and in classify pickers; rename
+      sticks; Archive → gone from pickers in BOTH apps, old entries still
+      show its name and price; Restore brings it back
+
 **Prototype-parity wiring queue:**
 1. ~~Docket props panel, pending timers, merge~~ DONE
 2. ~~Projects lifecycle in prototype UI~~ DONE (incl. new reopen endpoint)
@@ -310,8 +349,11 @@ places.
    (all-NULL row = inherit, history kept), client access rules (new
    ledger.client_access table, hydrated + persisted), and Docket's role
    editor (perms/note/Entra map via new PATCH /api/directory/roles — perms
-   apply at next sign-in; role RENAME and type CREATE/ARCHIVE have no UI in
-   the prototype and stay server-API-only for now)
+   apply at next sign-in); ~~role RENAME + type CREATE/ARCHIVE~~ DONE
+   (build 2): role create/rename (custom roles; core names fixed) and
+   activity-type create/rename/archive wired from the Directory tab —
+   Ledger's role-permissions page permanently dropped by decision (RBAC is
+   Docket's Directory tab)
 5. Article↔time linkage DONE (0012); ~~richer mail rendering~~ DONE (0016:
    articles.body_html stored at ingestion; sandboxed CSP-fenced iframe render
    — scripts & remote images blocked — with plain-text toggle; text fallback
@@ -328,12 +370,18 @@ places.
 
 **Feature roadmap (build order):**
 1. Remaining parity wiring (above) until the local-only list is empty
-2. Server-side automations engine (rules/triggers execute; the UI builders
-   already exist) + SLA escalation fan-out (notifications)
+2. ~~Server-side automations engine + SLA escalation fan-out~~ **DONE
+   (build 2, 0019)** — mail rules run per inbound message; triggers fire on
+   create/follow-up/state/priority/owner from one event outbox with
+   recursion + mail-loop guards; trigger emails ride the agent-reply
+   outbound path (gated, recorded-only pre-launch); SLA warn/breach notices
+   are business-hours-aware, deduped, and land in a real notifications
+   table feeding the bell; builders fully wired (archive-first delete,
+   server runs counters)
 3. Entra OIDC as second sign-in path (config exists; `entra_oidc` secret slot
    exists)
 4. Full backup process: dumps → S3 lifecycle, KEK custody separate from
-   dumps, scripted + drilled restore runbook
+   dumps, scripted + drilled restore runbook — **next build**
 5. nginx + certbot go-live: one domain, `/desk/` + `/ledger/`, HSTS; flip
    session cookie `secure=True` (marked in `sessions.py`); Swagger header
    tweak behind proxy

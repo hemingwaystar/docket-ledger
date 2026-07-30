@@ -1449,7 +1449,7 @@ function viewClient(){
   const back=`<button class="btn sm ghost" onclick="go('clients')">← All clients</button>`;
 
   /* ---- billing: per-activity-type ---- */
-  const typeRows=state.types.filter(t=>!t.sentinel).map(t=>{
+  const typeRows=state.types.filter(t=>!t.sentinel && t.active!==false).map(t=>{
     const ov=(c.rates&&c.rates[t.id])||null;
     const effBill = ov&&ov.billable!=null ? !!ov.billable : !!t.billable;
     const effRate = effBill ? (ov&&ov.rate!=null?ov.rate:(c.rateOverride!=null?c.rateOverride:t.rate)) : 0;
@@ -1615,6 +1615,13 @@ function viewTypes(){
       <td class="num muted">—</td>
       <td class="num">${n}</td>
     </tr>`;
+    const arch = a.active===false;
+    if(arch) return `<tr style="opacity:.55">
+      <td><div class="cell-title">${esc(a.name)} <span class="chip" style="margin-left:6px"><span class="cdot"></span>Archived</span></div><div class="cell-meta">hidden from pickers — existing entries keep it and keep pricing</div></td>
+      <td><span class="chip ${a.billable?'billable':'nonbill'}" style="padding:1px 8px"><span class="cdot"></span>${a.billable?'Billable':'Non-billable'}</span></td>
+      <td class="num muted">${a.billable?fmtMoney(a.rate)+'/h':'—'}</td>
+      <td class="num">${n}</td>
+    </tr>`;
     return `<tr>
       <td><div class="cell-title">${esc(a.name)}</div><div class="cell-meta">${a.note?esc(a.note):'<span class="muted">— no note —</span>'}</div></td>
       <td><div style="display:flex;align-items:center;gap:9px"><button class="toggle ${a.billable?'on':''}" onclick="toggleTypeBillable('${a.id}')"></button><span class="mini">${a.billable?'Billable':'Non-billable'}</span></div></td>
@@ -1626,7 +1633,8 @@ function viewTypes(){
   <div class="notice info" style="margin-bottom:16px">${icon(IC.tag)}<div>These are the same activity types Docket\u2019s ticket timer logs against. Turning a type <b>billable</b> and setting a rate re-prices every open (unlocked) entry that uses it. Locked entries never change.</div></div>
   <div class="card"><table class="tbl">
     <thead><tr><th>Activity type</th><th>Billable</th><th class="num">Rate ($/h)</th><th class="num">Entries</th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
+    <tbody>${rows}</tbody></table>
+    <div class="mini muted" style="padding:10px 16px 12px">Create, rename or archive types in <b>Docket → Directory</b> (the shared control plane). Billable status and rates live here.</div></div>`;
 }
 
 /* ===================== BILLING PERIODS ===================== */
@@ -2132,7 +2140,7 @@ function viewDirectory(){
     </div>
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Activity types</h3><span class="hint">rates set on the Activity Types page</span></div>
-      ${state.types.filter(t=>!t.sentinel).map(t=>`<div class="setting-row"><div class="sl"><b>${esc(t.name)}</b><p>${t.billable?fmtMoney(t.rate)+'/h':'non-billable'}</p></div></div>`).join('')}
+      ${state.types.filter(t=>!t.sentinel && t.active!==false).map(t=>`<div class="setting-row"><div class="sl"><b>${esc(t.name)}</b><p>${t.billable?fmtMoney(t.rate)+'/h':'non-billable'}</p></div></div>`).join('')}
     </div>
   </div>
   <div style="margin-top:14px"><button class="btn" onclick="openDirectoryInDocket()">Edit in Docket's Directory \u2197</button></div>`;

@@ -101,14 +101,14 @@ def bootstrap(request: Request, limit: int = 1000):
             cur.execute("SELECT id, name, initials, email FROM shared.agents WHERE active ORDER BY name")
             out["techs"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
                              "email": r["email"], "groups": []} for r in cur.fetchall()]
-            cur.execute("""SELECT t.id, t.name, t.billable, t.is_sentinel,
+            cur.execute("""SELECT t.id, t.name, t.billable, t.is_sentinel, t.active,
                                   (SELECT tr.rate_cents FROM ledger.activity_type_rates tr
                                     WHERE tr.activity_type_id = t.id
                                     ORDER BY tr.valid_from DESC LIMIT 1) AS rate
-                             FROM ledger.activity_types t WHERE t.active
+                             FROM ledger.activity_types t
                             ORDER BY t.is_sentinel, t.name""")
             out["types"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
-                             "sentinel": r["is_sentinel"], "active": True, "note": "",
+                             "sentinel": r["is_sentinel"], "active": r["active"], "note": "",
                              "rate": (r["rate"] / 100) if r["rate"] is not None else 0,
                              "rateHist": [], "billableHist": []}
                             for r in cur.fetchall()]
@@ -783,6 +783,35 @@ def patch_client_billing(client_id: str, body: ClientBilling, request: Request):
         auth.audit(conn, "ledger", "Client billing changed", f"client:{client_id}",
                    f"{row[0]} · " + " · ".join(notes))
         return {"ok": True}
+
+
+class NewType(BaseModel):
+    name: str
+    billable: bool = True
+
+
+@app.post("/api/types", status_code=201)
+def create_type(body: NewType, request: Request):
+    """New activity type — appears in every classify picker on next hydrate.
+    Rates come afterwards via PUT /api/types/{id}/rate (its first-ever row
+    anchors at epoch, so existing entries are never priced at $0)."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "The type needs a name")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM ledger.activity_types WHERE lower(name) = lower(%s)",
+                        (name,))
+            if cur.fetchone():
+                raise HTTPException(409, f"A type named “{name}” already exists")
+            cur.execute("""INSERT INTO ledger.activity_types (name, billable)
+                           VALUES (%s, %s) RETURNING id""", (name, body.billable))
+            (tid,) = cur.fetchone()
+        auth.audit(conn, "ledger", "Activity type created", f"type:{tid}",
+                   f"{name} · {'billable' if body.billable else 'non-billable'} · by {who['label']}")
+        return {"id": str(tid)}
 
 
 class TypePatch(BaseModel):

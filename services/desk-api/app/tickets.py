@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from psycopg import errors as pg_errors
 from pydantic import BaseModel
-from . import auth, db, helpers, mailer
+from . import auth, automations, db, helpers, mailer
 
 router = APIRouter(prefix="/api")
 
@@ -124,6 +124,14 @@ ST_MAP = {"new": "new", "open": "open", "pending reminder": "pending",
           "archived": "archived"}
 
 
+def emit_event(cur, event: str, ticket_id: int):
+    """Feed the automations outbox — the mail-worker's engine evaluates
+    triggers within one scheduler pass. Manual/API mutations are never
+    auto-generated mail, so meta.auto is false (email actions may run)."""
+    cur.execute("""INSERT INTO desk.automation_events (event, ticket_id, meta)
+                   VALUES (%s, %s, '{"auto": false}')""", (event, ticket_id))
+
+
 @router.get("/bootstrap")
 def bootstrap(request: Request, limit: int = 500):
     """The whole app state, shaped exactly like the prototype's in-page state
@@ -175,8 +183,11 @@ def bootstrap(request: Request, limit: int = 500):
                                           "dept": r["department"], "phone": r["phone"],
                                           "mobile": r["mobile"], "active": r["active"]})
             out["clients"] = list(clients.values())
-            cur.execute("SELECT id, name, billable FROM ledger.activity_types WHERE active ORDER BY is_sentinel DESC, name")
-            out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"]}
+            cur.execute("SELECT id, name, billable, active FROM ledger.activity_types ORDER BY is_sentinel DESC, name")
+            # archived types ride along (active:false) so existing time chips
+            # still resolve a name; the composer picker filters via aATYPES()
+            out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
+                              "active": r["active"]}
                              for r in cur.fetchall()]
             cur.execute("SELECT label, kind FROM desk.ticket_states WHERE active ORDER BY position")
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
@@ -232,10 +243,39 @@ def bootstrap(request: Request, limit: int = 500):
             out["roles"] = [{"name": r["name"], "note": r["note"], "core": r["is_core"],
                              "entra": r["entra_group"] or "",
                              "perms": list(r["perms"])} for r in cur.fetchall()]
+            # automations — emitted in the prototype's own vocabulary so the
+            # builders hydrate without translation (bug #22's lesson)
+            cur.execute("""SELECT id, name, kind, event, event_value, enabled,
+                                  conditions, actions, runs
+                             FROM desk.automation_rules WHERE NOT archived
+                            ORDER BY position, created_at""")
+            mail_rules, triggers = [], []
+            for r in cur.fetchall():
+                conds = r["conditions"] if isinstance(r["conditions"], list) else []
+                acts = r["actions"]
+                base = {"id": str(r["id"]), "name": r["name"], "enabled": r["enabled"],
+                        "runs": r["runs"], "conds": conds}
+                if r["kind"] == "mail_rule":
+                    base["act"] = acts if isinstance(acts, dict) else (acts[0] if acts else {})
+                    mail_rules.append(base)
+                else:
+                    base.update({"event": r["event"], "eventValue": r["event_value"] or "",
+                                 "actions": acts if isinstance(acts, list) else []})
+                    triggers.append(base)
+            out["rules"] = {"mail": mail_rules, "triggers": triggers}
+            cur.execute("""SELECT key, value FROM shared.app_config
+                            WHERE key IN ('sla', 'business_hours')""")
+            eng = {r["key"]: (r["value"] if isinstance(r["value"], dict) else {})
+                   for r in cur.fetchall()}
+            out["sla"] = eng.get("sla", {})
+            out["biz"] = eng.get("business_hours", {})
             cur.execute("""SELECT t.id, t.title, t.client_id, t.contact_id, t.group_id,
                              t.owner_id, s.label AS st_label, p.rank AS prio,
                              t.pending_until, t.merged_into_id, t.is_project, t.cc,
                              t.created_at, t.updated_at, t.version,
+                             EXISTS (SELECT 1 FROM desk.articles fr
+                                      WHERE fr.ticket_id = t.id AND fr.kind = 'reply'
+                                        AND NOT fr.is_auto) AS fr_met,
                              COALESCE((SELECT array_agg(tag ORDER BY tag)
                                         FROM desk.ticket_tags tt WHERE tt.ticket_id = t.id), '{}') AS tags
                              FROM desk.tickets t
@@ -256,6 +296,7 @@ def bootstrap(request: Request, limit: int = 500):
                     "pendingUntil": ms(r["pending_until"]),
                     "mergedInto": r["merged_into_id"], "isProject": r["is_project"],
                     "createdAt": ms(r["created_at"]), "updatedAt": ms(r["updated_at"]),
+                    "slaFrMet": r["fr_met"],
                     "version": r["version"], "articles": [], "time": []}
             if tickets:
                 ids = list(tickets)
@@ -322,6 +363,8 @@ def bootstrap(request: Request, limit: int = 500):
                             ORDER BY at DESC LIMIT 120""")
             out["audit"] = [{"ts": ms(r["at"]), "who": r["actor"], "action": r["action"],
                              "detail": r["detail"] or ""} for r in cur.fetchall()]
+        with conn.cursor() as plain:
+            out["notifs"] = automations._notifs(plain, who)
         return out
 
 
@@ -375,6 +418,7 @@ def create_ticket(body: NewTicket, request: Request):
                 (body.title, client_id, contact_id, group_id,
                  helpers.state_id(cur, "New"), priority))
             (ticket_id,) = cur.fetchone()
+            emit_event(cur, "create", ticket_id)
         auth.audit(conn, "desk", "Ticket created", f"ticket:{ticket_id}",
                    f"#{ticket_id} {body.title} — via API ({who['label']})")
         return {"id": ticket_id}
@@ -439,6 +483,12 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
             updated = cur.fetchone()
             if updated is None:
                 raise HTTPException(409, "Version conflict — re-read the ticket and retry")
+            if body.state is not None:
+                emit_event(cur, "state", ticket_id)
+            if body.priority is not None:
+                emit_event(cur, "priority", ticket_id)
+            if body.owner_email:                     # "" clears — no owner event
+                emit_event(cur, "owner", ticket_id)
         auth.audit(conn, "desk", "Ticket updated", f"ticket:{ticket_id}",
                    f"#{ticket_id} · " + " · ".join(notes))
         return {"ok": True, "changed": notes, "version": updated[0]}

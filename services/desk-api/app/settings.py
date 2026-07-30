@@ -21,7 +21,7 @@ from . import auth, crypto, db, helpers
 router = APIRouter(prefix="/api/settings")
 
 CONFIG_KEYS = ("auth", "graph", "mail", "verification", "business_hours",
-               "odoo", "retainers", "projects")
+               "odoo", "retainers", "projects", "sla")
 
 
 @router.get("/config")

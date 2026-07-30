@@ -4,6 +4,9 @@ Every INTERVAL seconds:
   1. pending wakes (§10.10): expired pending_until → reopen + sys article
   2. if app_config('graph').connected: delta-poll every unpaused mailbox
      (application-permission client credentials; no webhooks, no inbound port)
+  3. automations: drain desk.automation_events → fire ticket triggers
+     (mail RULES already ran inline during ingestion, per message)
+  4. SLA scan: warn/breach notices, business-hours aware, deduped
 
 Ingestion per message — §10.8/10.14 encoded:
   * idempotent on Internet Message-ID (unique index on desk.articles)
@@ -24,7 +27,7 @@ import time
 
 import httpx
 
-from . import crypto, db
+from . import automations, crypto, db
 
 INTERVAL = 30
 TOKEN_CACHE = {"token": None, "until": 0.0}
@@ -220,6 +223,19 @@ def ingest_message(conn, mailbox, msg) -> str:
                                        'Reopened — customer replied on a closed ticket', true)""",
                             (ticket_id,))
         cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
+    # automations: rules run on EVERY inbound message (top to bottom, later
+    # rules see earlier changes), then the matching trigger event is queued.
+    # meta.auto rides along so trigger email actions can refuse to answer
+    # auto-generated mail — the loop guard.
+    meta = {"from": sender, "to": mailbox["address"], "subject": subject,
+            "body": body_text(msg), "auto": auto}
+    try:
+        automations.apply_mail_rules(conn, ticket_id, meta)
+    except Exception as exc:
+        print(f"mail rules failed on #{ticket_id}: {exc}")
+    with conn.cursor() as cur:
+        automations.enqueue(cur, "create" if status == "new" else "followup",
+                            ticket_id, meta)
     return status
 
 
@@ -296,6 +312,12 @@ def main():
                 if n:
                     print(f"reopened {n} pending ticket(s)")
                 poll_all(conn)
+                fired = automations.process_events(conn)
+                if fired:
+                    print(f"evaluated {fired} automation event(s)")
+                sla = automations.sla_pass(conn)
+                if sla:
+                    print(f"sent {sla} SLA notice(s)")
                 conn.commit()
         except Exception as exc:
             print("worker pass failed:", exc)

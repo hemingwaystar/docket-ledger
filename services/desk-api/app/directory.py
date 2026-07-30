@@ -2,6 +2,7 @@
 Archive-first everywhere; the DB refuses deletes and sentinel abuse."""
 import json
 from fastapi import APIRouter, HTTPException, Request
+from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 from . import auth, db, helpers
@@ -288,8 +289,35 @@ def patch_contact(contact_id: str, body: PatchContact, request: Request):
         return {"ok": True}
 
 
+class NewRole(BaseModel):
+    name: str
+    note: str = ""
+
+
+@router.post("/roles", status_code=201)
+def create_role(body: NewRole, request: Request):
+    """Custom role, no permissions yet — grant them with PATCH add[]."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "The role needs a name")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_roles")
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM shared.roles WHERE lower(name) = lower(%s)", (name,))
+            if cur.fetchone():
+                raise HTTPException(409, f"A role named “{name}” already exists")
+            cur.execute("""INSERT INTO shared.roles (name, note)
+                           VALUES (%s, %s) RETURNING id""", (name, body.note))
+            (rid,) = cur.fetchone()
+        auth.audit(conn, "desk", "Role created", f"role:{rid}",
+                   f"{name} · by {who['label']} — grant permissions to make it useful")
+        return {"id": str(rid)}
+
+
 class PatchRole(BaseModel):
     note: str | None = None
+    rename: str | None = None          # new role name (custom roles only)
     entra_group: str | None = None     # "" clears
     add: list[str] = []                # permission ids to grant
     remove: list[str] = []             # permission ids to revoke
@@ -304,9 +332,24 @@ def patch_role(name: str, body: PatchRole, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_roles')
         with conn.cursor() as cur:
-            rid = helpers.one(cur, "SELECT id FROM shared.roles WHERE name = %s AND active",
-                      (name,), "Unknown role")[0]
+            cur.execute("SELECT id, is_core FROM shared.roles WHERE name = %s AND active",
+                        (name,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "Unknown role")
+            rid, is_core = row
             changes = []
+            if body.rename is not None and body.rename.strip() and body.rename != name:
+                # agents reference role_id, so a rename never breaks membership;
+                # core roles keep their names — bootstrap and docs key on them
+                if is_core:
+                    raise HTTPException(409, "Core roles keep their names — add a custom role instead")
+                new = body.rename.strip()
+                cur.execute("SELECT 1 FROM shared.roles WHERE name = %s", (new,))
+                if cur.fetchone():
+                    raise HTTPException(409, f"A role named “{new}” already exists")
+                cur.execute("UPDATE shared.roles SET name = %s WHERE id = %s", (new, rid))
+                changes.append(f"renamed → {new}")
             if body.note is not None:
                 cur.execute("UPDATE shared.roles SET note = %s WHERE id = %s",
                             (body.note, rid))
@@ -329,4 +372,71 @@ def patch_role(name: str, body: PatchRole, request: Request):
             auth.audit(conn, "desk", "Role updated", f"role:{rid}",
                        f"{name} · " + " · ".join(changes)
                        + " — applies at each agent's next sign-in")
+        return {"ok": True}
+
+
+# --- activity types: the shared-control-plane part (Directory tab) ---------
+# Names and lifecycle live here; billable status and rates stay Ledger-only
+# (0017/0018). desk_api's grant is column-scoped to (name, active) — 0019.
+
+class NewAType(BaseModel):
+    name: str
+
+
+@router.post("/types", status_code=201)
+def create_atype(body: NewAType, request: Request):
+    """New shared activity type — non-billable until Ledger says otherwise,
+    exactly like the prototype's saveType."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "The type needs a name")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM ledger.activity_types WHERE lower(name) = lower(%s)",
+                        (name,))
+            if cur.fetchone():
+                raise HTTPException(409, f"A type named “{name}” already exists")
+            cur.execute("""INSERT INTO ledger.activity_types (name, billable)
+                           VALUES (%s, false) RETURNING id""", (name,))
+            (tid,) = cur.fetchone()
+        auth.audit(conn, "desk", "Activity type added", f"type:{tid}",
+                   f"{name} · non-billable until rated in Ledger · by {who['label']}")
+        return {"id": str(tid)}
+
+
+class PatchAType(BaseModel):
+    name: str | None = None            # rename
+    active: bool | None = None         # archive / restore
+
+
+@router.patch("/types/{type_id}")
+def patch_atype(type_id: str, body: PatchAType, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        sets, args, notes = [], [], []
+        if body.name is not None and body.name.strip():
+            sets.append("name = %s"); args.append(body.name.strip())
+            notes.append(f"renamed → {body.name.strip()}")
+        if body.active is not None:
+            sets.append("active = %s"); args.append(body.active)
+            notes.append("restored" if body.active else
+                         "archived — hidden from pickers; entries carrying it keep it")
+        if not sets:
+            return {"ok": True}
+        with conn.cursor() as cur:
+            try:
+                cur.execute(f"UPDATE ledger.activity_types SET {', '.join(sets)} "
+                            "WHERE id = %s RETURNING name", (*args, type_id))
+            except pg_errors.RaiseException as e:
+                raise HTTPException(409, e.diag.message_primary or "Type is guarded")
+            except pg_errors.UniqueViolation:
+                raise HTTPException(409, "A type with that name already exists")
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such activity type")
+        auth.audit(conn, "desk", "Activity type updated", f"type:{type_id}",
+                   f"{row[0]} · " + " · ".join(notes))
         return {"ok": True}
