@@ -1057,7 +1057,7 @@ function viewTimesheets(){
   const opt=(v,l,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`;
   const statuses = admin ? ['all','pending','submitted','approved','locked','void'] : ['all','pending','submitted','approved','locked'];
   const anyFilter = f.from||f.to||f.client!=='all'||(admin&&f.tech!=='all')||f.type!=='all'||f.status!=='all'||f.q;
-  const typeSel=`<select onchange="setTF('type',this.value)">${opt('all','All types',f.type)}${opt('billable','Billable',f.type)}${opt('nonbill','Non-billable',f.type)}${opt('unclassified','Unclassified',f.type)}${state.types.filter(t=>!t.sentinel).map(t=>opt(t.id,t.name,f.type)).join('')}</select>`;
+  const typeSel=`<select onchange="setTF('type',this.value)">${opt('all','All types',f.type)}${opt('billable','Billable',f.type)}${opt('nonbill','Non-billable',f.type)}${opt('unclassified','Unclassified',f.type)}${state.types.filter(t=>!t.sentinel&&(t.active!==false||f.type===t.id)).map(t=>opt(t.id,t.name+(t.active===false?' (archived)':''),f.type)).join('')}</select>`;
   const toolbar=`
   <div class="card"><div class="card-pad" style="display:flex;flex-direction:column;gap:13px">
     <div class="rpt-line"><span class="rpt-lab">Period</span>
@@ -1073,7 +1073,7 @@ function viewTimesheets(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note, client${admin?', tech':''}…" value="${esc(f.q)}" data-fkey="tf-q" oninput="setTF('q',this.value)"></div>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('tfClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], f.client, function(){ setTF('client', document.getElementById('tfClient').value); }, 'All clients')}</span>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('tfClient', [{v:'all',label:'All clients'},...state.clients.filter(c=>!c.archivedInDocket||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')}))], f.client, function(){ setTF('client', document.getElementById('tfClient').value); }, 'All clients')}</span>
       ${admin?`<select onchange="setTF('tech',this.value)">${opt('all','All techs',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>`:''}
       ${typeSel}
       <div class="seg wrap">${statuses.map(s=>`<button class="${f.status===s?'on':''}" onclick="setTF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
@@ -1391,7 +1391,7 @@ function viewApprovals(){
       <select onchange="setAF('period',this.value)">${opt('all','All billing periods',f.period)}${perOpts.map(p=>opt(p.key,p.label+' ('+p.cycle+')',f.period)).join('')}</select>
       <select onchange="setAF('tech',this.value)">${opt('all','All technicians',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>
       <select onchange="setAF('group',this.value)">${opt('all','All groups',f.group)}${state.zammadGroups.map(g=>opt(g.id,g.name,f.group)).join('')}</select>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('afClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], f.client, function(){ setAF('client', document.getElementById('afClient').value); }, 'All clients')}</span>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('afClient', [{v:'all',label:'All clients'},...state.clients.filter(c=>!c.archivedInDocket||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')}))], f.client, function(){ setAF('client', document.getElementById('afClient').value); }, 'All clients')}</span>
       ${anyF?`<button class="btn sm ghost" onclick="afClear()">Clear</button>`:''}
     </div>
     <div class="rpt-line"><span class="rpt-lab">Showing</span><div class="mini">${sheets.length} timesheet${sheets.length===1?'':'s'} \u00b7 ${sheets.filter(s=>s.status==='awaiting').length} awaiting your review</div></div>
@@ -1566,7 +1566,7 @@ function viewClient(){
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note${can('view_all')?', tech':''}…" value="${esc(cf.q)}" data-fkey="cf-q" oninput="setCF('q',this.value)"></div>
       ${can('view_all')?`<select onchange="setCF('tech',this.value)">${opt('all','All techs',cf.tech)}${state.techs.map(t=>opt(t.id,t.name,cf.tech)).join('')}</select>`:''}
-      <select onchange="setCF('type',this.value)">${opt('all','All types',cf.type)}${opt('billable','Billable',cf.type)}${opt('nonbill','Non-billable',cf.type)}${opt('unclassified','Unclassified',cf.type)}${state.types.filter(t=>!t.sentinel).map(t=>opt(t.id,t.name,cf.type)).join('')}</select>
+      <select onchange="setCF('type',this.value)">${opt('all','All types',cf.type)}${opt('billable','Billable',cf.type)}${opt('nonbill','Non-billable',cf.type)}${opt('unclassified','Unclassified',cf.type)}${state.types.filter(t=>!t.sentinel&&(t.active!==false||cf.type===t.id)).map(t=>opt(t.id,t.name+(t.active===false?' (archived)':''),cf.type)).join('')}</select>
       <div class="seg wrap">${['all','pending','submitted','approved','locked','void'].map(s=>`<button class="${cf.status===s?'on':''}" onclick="setCF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
       ${cfAny?`<button class="btn sm ghost" onclick="cfClear()">Clear</button>`:''}
     </div>
@@ -1972,9 +1972,9 @@ function viewReports(){
       <label class="mini" style="display:flex;align-items:center;gap:6px">to <input type="date" value="${r.to}" onchange="setRpt('to',this.value)"></label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rptClient', [{v:'all',label:'All clients'},...state.clients.map(c=>({v:c.id,label:c.name}))], r.client, function(){ setRpt('client', document.getElementById('rptClient').value); }, 'All clients')}</span>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rptClient', [{v:'all',label:'All clients'},...state.clients.filter(c=>!c.archivedInDocket||r.client===c.id).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')}))], r.client, function(){ setRpt('client', document.getElementById('rptClient').value); }, 'All clients')}</span>
       ${admin?`<select onchange="setRpt('tech',this.value)">${opt('all','All techs',r.tech)}${state.techs.map(x=>opt(x.id,x.name,r.tech)).join('')}</select>`:''}
-      <select onchange="setRpt('type',this.value)">${opt('all','All activities',r.type)}${state.types.map(a=>opt(a.id,a.name,r.type)).join('')}</select>
+      <select onchange="setRpt('type',this.value)">${opt('all','All activities',r.type)}${state.types.filter(a=>a.active!==false||r.type===a.id).map(a=>opt(a.id,a.name+(a.active===false?' (archived)':''),r.type)).join('')}</select>
       ${money?`<select onchange="setRpt('billable',this.value)">${opt('all','Billable + non',r.billable)}${opt('billable','Billable only',r.billable)}${opt('nonbill','Non-billable only',r.billable)}</select>`:''}
       <select onchange="setRpt('scope',this.value)">${opt('all','Any status',r.scope)}${opt('open','Open only',r.scope)}${opt('locked','Approved / locked',r.scope)}</select>
       <label class="mini" style="display:flex;align-items:center;gap:6px"><input type="checkbox" ${r.includeVoid?'checked':''} onchange="setRpt('includeVoid',this.checked)"> include voided</label>

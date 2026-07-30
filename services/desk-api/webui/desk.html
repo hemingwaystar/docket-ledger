@@ -1402,9 +1402,9 @@ function viewTickets(){
   </div>
   <div class="toolbar">
     <div class="search">${icon(IC.search)}<input type="text" placeholder="Search title, number, client…" value="${esc(f.q)}" data-fkey="qf-q" oninput="setQF('q',this.value)"></div>
-    <select onchange="setQF('group',this.value)">${['all',...GROUPS.map(g=>g.id)].map(g=>`<option value="${g}" ${f.group===g?'selected':''}>${g==='all'?'All groups':grp(g).name}</option>`).join('')}</select>
-    <select onchange="setQF('prio',this.value)"><option value="all">Any priority</option>${PRIOS.map(p=>`<option value="${p.id}" ${f.prio==String(p.id)?'selected':''}>${p.label}</option>`).join('')}</select>
-    <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
+    <select onchange="setQF('group',this.value)">${['all',...GROUPS.filter(g=>!isArch(g)||f.group===g.id).map(g=>g.id)].map(g=>`<option value="${g}" ${f.group===g?'selected':''}>${g==='all'?'All groups':grp(g).name+(isArch(grp(g))?' (archived)':'')}</option>`).join('')}</select>
+    <select onchange="setQF('prio',this.value)"><option value="all">Any priority</option>${PRIOS.filter(p=>!isArch(p)||f.prio==String(p.id)).map(p=>`<option value="${p.id}" ${f.prio==String(p.id)?'selected':''}>${p.label}${isArch(p)?' (archived)':''}</option>`).join('')}</select>
+    <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.filter(c=>c.status!=='archived'||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
   </div>
   <div class="card">
     ${rows.length? `<table class="tbl">
@@ -2562,11 +2562,11 @@ function viewReports(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" id="rfQ" placeholder="Search number, title, client, article text…" value="${esc(f.q)}" oninput="setRFQ(this)" style="width:250px"></div>
-      <select style="width:auto" onchange="setRF('group',this.value)">${opt('all','All groups',f.group)}${GROUPS.map(g=>opt(g.id,g.name+(isArch(g)?' (archived)':''),f.group)).join('')}</select>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.map(c=>({v:c.id,label:c.name,sub:c.domain||''}))], f.client, function(){ setRF('client', document.getElementById('rfClient').value); }, 'All clients')}</span>
+      <select style="width:auto" onchange="setRF('group',this.value)">${opt('all','All groups',f.group)}${GROUPS.filter(g=>!isArch(g)||f.group===String(g.id)).map(g=>opt(g.id,g.name+(isArch(g)?' (archived)':''),f.group)).join('')}</select>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.filter(c=>c.status!=='archived'||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''}))], f.client, function(){ setRF('client', document.getElementById('rfClient').value); }, 'All clients')}</span>
       <select style="width:auto" onchange="setRF('tech',this.value)">${opt('all','All technicians',f.tech)}${AGENTS.map(a=>opt(a.id,a.name,f.tech)).join('')}</select>
-      <select style="width:auto" onchange="setRF('prio',this.value)">${opt('all','Any priority',f.prio)}${PRIOS.map(p=>opt(p.id,p.label,f.prio)).join('')}</select>
-      <select style="width:auto" onchange="setRF('st',this.value)">${opt('all','Any state',f.st)}${opt('type:open','Any open',f.st)}${opt('type:paused','Any paused',f.st)}${opt('type:done','Any done',f.st)}${STATES.map(s=>opt(s.id,'\u2014 '+s.label+(isArch(s)?' (archived)':''),f.st)).join('')}</select>
+      <select style="width:auto" onchange="setRF('prio',this.value)">${opt('all','Any priority',f.prio)}${PRIOS.filter(p=>!isArch(p)||f.prio===String(p.id)).map(p=>opt(p.id,p.label+(isArch(p)?' (archived)':''),f.prio)).join('')}</select>
+      <select style="width:auto" onchange="setRF('st',this.value)">${opt('all','Any state',f.st)}${opt('type:open','Any open',f.st)}${opt('type:paused','Any paused',f.st)}${opt('type:done','Any done',f.st)}${STATES.filter(s=>!isArch(s)||f.st===String(s.id)).map(s=>opt(s.id,'\u2014 '+s.label+(isArch(s)?' (archived)':''),f.st)).join('')}</select>
       <select style="width:auto" onchange="setRF('tag',this.value)">${opt('all','Any tag',f.tag)}${opt('(untagged)','(untagged)',f.tag)}${allTags.map(tg=>opt(tg,tg,f.tag)).join('')}</select>
       ${anyF?`<button class="btn sm ghost" onclick="clearRF()">Clear</button>`:''}
     </div>
@@ -3219,7 +3219,7 @@ function trigDrawConds(){
       state:    aSTATES().map(s=>s.label),
       priority: aPRIOS().slice().sort((a,b)=>b.id-a.id).map(p=>p.label),
       group:    aGROUPS().map(g=>g.name),
-      client:   CLIENTS.map(cl=>cl.name),
+      client:   CLIENTS.filter(cl=>cl.status!=='archived').map(cl=>cl.name),
       mailbox:  MAILBOXES.map(m=>m.addr),
     }[c.field];
     if(opts) return `<select onchange="_trigDraft.condGroups[${gi}][${i}].value=this.value" style="flex:1">
@@ -3242,7 +3242,7 @@ function trigDrawConds(){
   ).join('') || `<div class="mini muted" style="margin-bottom:8px">No conditions — fires on every matching event.</div>`;
   /* dropdown fields need a concrete default so an untouched select still saves */
   _trigDraft.condGroups.forEach(grpC=>grpC.forEach(c=>{
-    const opts = { state:aSTATES().map(s=>s.label), priority:aPRIOS().map(p=>p.label), group:aGROUPS().map(g=>g.name), client:CLIENTS.map(cl=>cl.name), mailbox:MAILBOXES.map(m=>m.addr) }[c.field];
+    const opts = { state:aSTATES().map(s=>s.label), priority:aPRIOS().map(p=>p.label), group:aGROUPS().map(g=>g.name), client:CLIENTS.filter(cl=>cl.status!=='archived').map(cl=>cl.name), mailbox:MAILBOXES.map(m=>m.addr) }[c.field];
     if(opts && !c.value) c.value = opts[0];
   }));
 }
