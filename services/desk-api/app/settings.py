@@ -13,6 +13,7 @@ Graph connection flow (single-tenant, application permissions):
 """
 import json
 import httpx
+from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel
@@ -241,6 +242,7 @@ def list_mailboxes(request: Request):
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""SELECT m.id, m.address, m.display_name, g.name AS "group",
                                   p.label AS default_priority, m.paused, m.outbound,
+                                  m.mailbox_type AS type,
                                   gs.last_delta_at
                              FROM desk.mailboxes m
                              JOIN shared.groups g ON g.id = m.group_id
@@ -253,6 +255,7 @@ def list_mailboxes(request: Request):
 class NewMailbox(BaseModel):
     address: str
     outbound: bool = True
+    type: Literal["shared", "licensed"] = "shared"
     group: str
     display_name: str = ""
     default_priority: str | None = None
@@ -269,10 +272,10 @@ def create_mailbox(body: NewMailbox, request: Request):
             pid = helpers.priority_id(cur, body.default_priority) if body.default_priority else None
             cur.execute("""INSERT INTO desk.mailboxes
                              (address, display_name, group_id, default_priority_id,
-                              paused, outbound)
-                           VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                              paused, outbound, mailbox_type)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                         (body.address.lower().strip(), body.display_name, gid, pid,
-                         body.paused, body.outbound))
+                         body.paused, body.outbound, body.type))
             (mid,) = cur.fetchone()
         auth.audit(conn, "desk", "Mailbox added", f"mailbox:{mid}",
                    f"{body.address} → {body.group} ({who['label']})")
@@ -282,6 +285,7 @@ def create_mailbox(body: NewMailbox, request: Request):
 class PatchMailbox(BaseModel):
     paused: bool | None = None
     outbound: bool | None = None
+    type: Literal["shared", "licensed"] | None = None
     group: str | None = None
     address: str | None = None         # rename — path param is the OLD address
     display_name: str | None = None
@@ -309,6 +313,10 @@ def patch_mailbox(address: str, body: PatchMailbox, request: Request):
                 cur.execute("UPDATE desk.mailboxes SET outbound = %s WHERE id = %s",
                             (body.outbound, mid))
                 notes.append("send-eligible" if body.outbound else "receive-only")
+            if body.type is not None:
+                cur.execute("UPDATE desk.mailboxes SET mailbox_type = %s WHERE id = %s",
+                            (body.type, mid))
+                notes.append(f"type → {body.type}")
             if body.address is not None:
                 cur.execute("UPDATE desk.mailboxes SET address = %s WHERE id = %s",
                             (body.address.lower().strip(), mid))

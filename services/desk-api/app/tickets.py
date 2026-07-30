@@ -228,7 +228,7 @@ def bootstrap(request: Request, limit: int = 500):
             # mailbox's own eligibility flag emitted per row below (0022)
             out["outboundEnabled"] = bool((mail_cfg or {}).get("outbound_enabled"))
             cur.execute("""SELECT m.id, m.address, m.display_name, m.group_id, m.paused,
-                             m.outbound,
+                             m.outbound, m.mailbox_type,
                              COALESCE(p.rank, 2) AS prio,
                              (SELECT count(*) FROM desk.articles ar
                                WHERE ar.mail_to = m.address AND ar.kind = 'mail_in'
@@ -237,7 +237,7 @@ def bootstrap(request: Request, limit: int = 500):
                              LEFT JOIN desk.priorities p ON p.id = m.default_priority_id
                             ORDER BY m.address""")
             out["mailboxes"] = [{"id": str(r["id"]), "addr": r["address"],
-                                 "type": "shared", "groupId": str(r["group_id"]),
+                                 "type": r["mailbox_type"], "groupId": str(r["group_id"]),
                                  "prio": r["prio"], "outbound": r["outbound"],
                                  "desc": r["display_name"] or "",
                                  "status": "paused" if r["paused"] else "connected",

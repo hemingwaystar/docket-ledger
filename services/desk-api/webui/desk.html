@@ -5024,7 +5024,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
   window.saveMailbox=function(id){
     const g=k=>{const el=document.getElementById(k);return el?el.value:'';};
     const addr=g('mbAddr').trim().toLowerCase(), groupId=g('mbGroup'),
-          prio=g('mbPrio'), desc=g('mbDesc').trim(),
+          prio=g('mbPrio'), desc=g('mbDesc').trim(), mbType=g('mbType')||'shared',
           mbOut=(document.getElementById('mbOut')||{checked:true}).checked;  /* read BEFORE the modal closes */
     const oldAddr=id?(MAILBOXES.find(x=>x.id===id)||{}).addr:null;
     const before=MAILBOXES.length;
@@ -5032,7 +5032,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     if(!addr.includes('@')) return;                // original refused
     if(id){
       const patch={group:groupId, display_name:desc, default_priority:prioLabel(prio),
-                   outbound:mbOut};
+                   outbound:mbOut, type:mbType};
       if(oldAddr&&oldAddr!==addr) patch.address=addr;
       $fetch('/api/settings/mailboxes/'+encodeURIComponent(oldAddr||addr),{method:'PATCH',
         headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
@@ -5043,7 +5043,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
       $fetch('/api/settings/mailboxes',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({address:addr, group:groupId, display_name:desc,
-                             default_priority:prioLabel(prio), outbound:mbOut})})
+                             default_priority:prioLabel(prio), outbound:mbOut, type:mbType})})
         .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
           setTimeout(()=>hydrate(),400); });
     }
