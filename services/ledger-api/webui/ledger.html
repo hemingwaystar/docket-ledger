@@ -509,6 +509,15 @@ function isLocked(e){ const p=entryPeriod(e); return periodState(e.clientId,p.ke
    EFFECTIVE-DATED: every rate holder may carry a history array
    [{from:'YYYY-MM-DD', rate:N}, ...]; an entry prices against the rate in
    force at its startedAt, so changing a rate NEVER reprices history. */
+function effBillPick(current, hist, atMs){
+  /* billable as-of the entry's day, like effRate — a flip today never
+     re-flags yesterday's time */
+  if(!hist || !hist.length) return current;
+  const day = new Date(atMs).toISOString().slice(0,10);
+  let best=null;
+  hist.forEach(hh=>{ if(hh.from<=day && (!best || hh.from>best.from)) best=hh; });
+  return best ? best.billable : current;
+}
 function effRate(current, hist, atMs){
   if(!hist || !hist.length) return current;
   const day = new Date(atMs).toISOString().slice(0,10);
@@ -534,7 +543,9 @@ function priced(e){
     return {h, billable:false, rate:0, amount:0, unclassified:false, projFlat:true};
   }
   const ov = (c.rates && c.rates[e.typeId]) || null;
-  const billable = t.sentinel ? false : (ov && ov.billable!=null ? !!ov.billable : !!t.billable);
+  const ovB = ov ? effBillPick(ov.billable, ov.billableHist, e.startedAt) : null;
+  const tB  = effBillPick(t.billable, t.billableHist, e.startedAt);
+  const billable = t.sentinel ? false : (ovB!=null ? !!ovB : !!tB);
   let rate = 0;
   if(billable){
     if(pt && pt.mode==='hourly' && pt.rate!=null) rate = pt.rate;
@@ -2731,6 +2742,9 @@ window.addEventListener('message', ev=>{
       (d.projects||[]).forEach(p=>{ if(Array.isArray(state.projects)) state.projects.push(p);
         else state.projects[p.zTicket]=p; });
     }
+    if(d.audit){ state.audit.length=0;
+      d.audit.forEach(a=>state.audit.push({id:'srv'+a.ts+(a.entityId||''), ts:a.ts,
+        actor:a.actor, action:a.action, detail:a.detail, entityId:a.entityId})); }
     state.user={name:d.me.name,initials:d.me.initials,role:'Live',email:d.me.email};
     state.perms=new Set(d.me.perms.map(p=>p.replace(/^l_/,'')));
     state.persona='live';

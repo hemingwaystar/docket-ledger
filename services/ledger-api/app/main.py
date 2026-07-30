@@ -77,16 +77,26 @@ def bootstrap(request: Request, limit: int = 1000):
                     c["access"] = {"mode": r["mode"],
                                    "techs": [str(t) for t in r["tech_ids"]],
                                    "groups": [str(g) for g in r["group_ids"]]}
-            cur.execute("""SELECT DISTINCT ON (client_id, activity_type_id)
-                                  client_id, activity_type_id, rate_cents, billable
-                             FROM ledger.client_rates WHERE activity_type_id IS NOT NULL
-                            ORDER BY client_id, activity_type_id, valid_from DESC""")
+            cur.execute("""SELECT client_id, activity_type_id, valid_from, rate_cents, billable
+                             FROM ledger.client_rates ORDER BY valid_from""")
             for r in cur.fetchall():
                 c = clients.get(str(r["client_id"]))
-                if c is not None:
-                    c["rates"][str(r["activity_type_id"])] = {
-                        "rate": (r["rate_cents"] / 100) if r["rate_cents"] is not None else None,
-                        "billable": r["billable"]}
+                if c is None:
+                    continue
+                day = r["valid_from"].isoformat()
+                rate = (r["rate_cents"] / 100) if r["rate_cents"] is not None else None
+                if r["activity_type_id"] is None:      # client-wide override lane
+                    c["rateOverride"] = rate           # rows are date-ordered → last wins
+                    c.setdefault("rateOverrideHist", []).append({"from": day, "rate": rate})
+                else:
+                    o = c["rates"].setdefault(str(r["activity_type_id"]),
+                                              {"rate": None, "billable": None,
+                                               "rateHist": [], "billableHist": []})
+                    o["rate"] = rate
+                    o["rateHist"].append({"from": day, "rate": rate})
+                    if r["billable"] is not None:
+                        o["billable"] = r["billable"]
+                        o["billableHist"].append({"from": day, "billable": r["billable"]})
             out["clients"] = list(clients.values())
             cur.execute("SELECT id, name, initials, email FROM shared.agents WHERE active ORDER BY name")
             out["techs"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
@@ -99,7 +109,26 @@ def bootstrap(request: Request, limit: int = 1000):
                             ORDER BY t.is_sentinel, t.name""")
             out["types"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
                              "sentinel": r["is_sentinel"], "active": True, "note": "",
-                             "rate": (r["rate"] / 100) if r["rate"] is not None else 0}
+                             "rate": (r["rate"] / 100) if r["rate"] is not None else 0,
+                             "rateHist": [], "billableHist": []}
+                            for r in cur.fetchall()]
+            tmap = {t["id"]: t for t in out["types"]}
+            cur.execute("""SELECT activity_type_id, valid_from, rate_cents, billable
+                             FROM ledger.activity_type_rates ORDER BY valid_from""")
+            for r in cur.fetchall():
+                t = tmap.get(str(r["activity_type_id"]))
+                if t is None:
+                    continue
+                t["rateHist"].append({"from": r["valid_from"].isoformat(),
+                                      "rate": r["rate_cents"] / 100})
+                if r["billable"] is not None:
+                    t["billableHist"].append({"from": r["valid_from"].isoformat(),
+                                              "billable": r["billable"]})
+            cur.execute("""SELECT at, actor, action, entity, detail FROM audit.events
+                            WHERE app IN ('ledger', 'auth')
+                            ORDER BY at DESC LIMIT 200""")
+            out["audit"] = [{"ts": ms(r["at"]), "actor": r["actor"], "action": r["action"],
+                             "entityId": r["entity"], "detail": r["detail"] or ""}
                             for r in cur.fetchall()]
             cur.execute("""SELECT key, value FROM shared.app_config
                             WHERE key IN ('ledger','odoo','retainers')""")
@@ -743,6 +772,35 @@ def patch_type(type_id: str, body: TypePatch, request: Request):
         if not cols:
             return {"ok": True}
         with conn.cursor() as cur:
+            if "billable" in cols:
+                # prior time keeps prior semantics: anchor the OLD value at
+                # epoch on the first flip, then date the new value from today
+                cur.execute("""SELECT t.billable,
+                                      (SELECT r.rate_cents FROM ledger.activity_type_rates r
+                                        WHERE r.activity_type_id = t.id
+                                        ORDER BY r.valid_from DESC LIMIT 1),
+                                      EXISTS (SELECT 1 FROM ledger.activity_type_rates r
+                                               WHERE r.activity_type_id = t.id
+                                                 AND r.billable IS NOT NULL)
+                                 FROM ledger.activity_types t WHERE t.id = %s""", (type_id,))
+                row = cur.fetchone()
+                if row is None:
+                    raise HTTPException(404, "No such activity type")
+                old_billable, latest_rate, has_dated = row
+                if not has_dated and old_billable != cols["billable"]:
+                    cur.execute("""INSERT INTO ledger.activity_type_rates
+                                     (activity_type_id, valid_from, rate_cents, billable)
+                                   VALUES (%s, '1970-01-01', %s, %s)
+                                   ON CONFLICT (activity_type_id, valid_from)
+                                     DO UPDATE SET billable = COALESCE(
+                                       ledger.activity_type_rates.billable, EXCLUDED.billable)""",
+                                (type_id, latest_rate or 0, old_billable))
+                cur.execute("""INSERT INTO ledger.activity_type_rates
+                                 (activity_type_id, valid_from, rate_cents, billable)
+                               VALUES (%s, current_date, %s, %s)
+                               ON CONFLICT (activity_type_id, valid_from)
+                                 DO UPDATE SET billable = EXCLUDED.billable""",
+                            (type_id, latest_rate or 0, cols["billable"]))
             sets = ", ".join(f"{k} = %s" for k in cols)
             try:
                 cur.execute(f"UPDATE ledger.activity_types SET {sets} "
@@ -770,12 +828,16 @@ def put_type_rate(type_id: str, body: TypeRate, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "l_approve", "l_export")
         with conn.cursor() as cur:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM ledger.activity_type_rates "
+                        "WHERE activity_type_id = %s)", (type_id,))
+            (has_rows,) = cur.fetchone()
             cur.execute("""INSERT INTO ledger.activity_type_rates
                              (activity_type_id, valid_from, rate_cents)
-                           VALUES (%s, current_date, %s)
+                           VALUES (%s, CASE WHEN %s THEN current_date
+                                            ELSE '1970-01-01'::date END, %s)
                            ON CONFLICT (activity_type_id, valid_from)
                              DO UPDATE SET rate_cents = EXCLUDED.rate_cents""",
-                        (type_id, body.rate_cents))
+                        (type_id, has_rows, body.rate_cents))
         auth.audit(conn, "ledger", "Type rate set", f"type:{type_id}",
                    f"{body.rate_cents}c/h from today ({who['label']})")
         return {"ok": True}

@@ -27,7 +27,7 @@ Lightsail VM ("Docket-Ledger-Prod", `~/docket-ledger`, reached over NetBird):
   DB-backed sessions with argon2id + TOTP, server-side RBAC, nightly local
   dumps.
 
-**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0017 in this
+**Confirmed working on the VM:** migrations 0001–0008 applied (0009–0018 in this
 bundle: reclient entry-move fn + ticket_tags DELETE grant; client profile
 jsonb; DML-grant audit — four grants the code always needed; article↔time
 link + freeze-guard definer rights); login +
@@ -191,6 +191,20 @@ resolves to (explicit override → ticket contact → last inbound sender).
 
 | 26 | rate-override inputs (and, latently, every search box) ejected the cursor after one keystroke; each keystroke also scrolled to top | prototype-origin: oninput handlers end in a bare render() that rebuilds innerHTML — focus and caret die with the old DOM — and render() always scrollTo(0,0); the wiring worsened it by PUTting per keystroke | render() is now focus-preserving in BOTH apps (captures focused element id/data-fkey + caret, restores after rebuild; scroll-to-top only on view change); affected inputs carry data-fkey; rate mirrors debounced 600ms (client-wide override input discovered + wired to PUT rates in the process) | An innerHTML rebuild is a teleport — anything the user was holding (focus, caret, scroll) must be carried across explicitly |
 
+**Billing-change semantics (0018, user-stated requirement):** a billing
+change — rate, override, or billable flag, per-client or global — applies
+to FUTURE time only; prior entries keep the pricing in effect when the work
+happened. Rates already worked this way (every priced() rung resolves
+valid_from <= entry date; overrides and resets are dated rows). 0018 closes
+the one hole: type-level billable now rides effective-dated on
+activity_type_rates, with the OLD value epoch-anchored on the first flip.
+The UI now receives full rate/billable HISTORY so old entries also DISPLAY
+their historical pricing, and a type's first-ever rate anchors at epoch
+(no history = the rate existing entries should price at, not $0). Every
+change audits (they always did) — and the Ledger Audit page now shows the
+real audit.events tail instead of demo rows. Client cycle changes never
+touched history: entries keep the period they were written into.
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -230,6 +244,11 @@ places.
       selects → type replaces it → Enter commits; full numbers and words land
       in every search box, caret stays, page doesn't jump; override PUTs fire
       once after typing settles (watch network tab)
+- [ ] Billing-history walk: note an old entry's rate/amount → change the type
+      rate, a client override, and flip a type's billable → old entry's price
+      and billable status UNCHANGED (display and export), new entry from
+      today uses the new values; Audit Log page lists each change with
+      actor/when/before→after
 - [ ] Admin layer: change a client's cycle + billable default; toggle a
       type's billable + edit its rate; set/clear a per-client-type override
       (reset = inherit, priced() follows); set access mode + tech/group lists
