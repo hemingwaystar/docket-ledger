@@ -30,7 +30,12 @@ git (`docs/STATE.md`) so it travels with the code.
 > currently set to one (then labeled "(archived)"). Build 7f fixed the
 > mailbox Type select snapping back to Shared (ledger row 38, **migration
 > 0024** — the field had no column, no mirror, and a bootstrap-fabricated
-> constant all at once).
+> constant all at once). Build 8 shipped TICKET LINKS (**migration 0025**,
+> jumped the queue from the post-launch tail at the user's call): related
+> links get their schema; parent/child hierarchy is strictly one level (a
+> child can never be a parent — UI and API both say so); closing a parent
+> prompts to cascade, and cascaded children file as the system state
+> 'Closed: child ticket' so close-email triggers never fire per child.
 >
 > **Still open, in order (details in §5):**
 > 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
@@ -52,7 +57,7 @@ git (`docs/STATE.md`) so it travels with the code.
 >    active rows). Sweep every control against its mirror AND every
 >    rendered collection against its bootstrap emission, both apps.
 > 5. Then: **backups + restore drill**, then the post-launch tail
->    (Zammad import → portal → retainers → ticket links).
+>    (Zammad import → portal → retainers; ticket links: DONE, build 8).
 >
 > Bug #33's full anatomy, the diagnostic transcript expectations, and the
 > outbound pre-flight walk are preserved in §3 (chronology), §4 (ledger
@@ -281,6 +286,33 @@ resolves to (explicit override → ticket contact → last inbound sender).
     on both the PATCH and POST paths. Worker untouched (its mailbox
     queries name their columns). The type is operator-facing config —
     ingestion behavior is identical either way.
+16. **Build 8 (2026-07-30 night): ticket links** — jumped the queue from
+    the post-launch tail at the user's call. Migration 0025:
+    `desk.ticket_links` (kind related/child, void-not-delete, partial
+    uniques: one live parent per child, one live related row per pair)
+    plus `ticket_states.is_system` and the seeded done-kind SYSTEM state
+    **'Closed: child ticket'**. Design locked with the user: hierarchy is
+    strictly ONE level — unlimited children per parent, but a child can
+    NEVER itself be a parent, and both layers say so in the same sentence
+    (UI toast + API 409). Closing a parent with open children prompts
+    ("Close them too / Just this ticket / Cancel"); a confirmed cascade
+    is one transaction (bug #33's lesson): parent → chosen resolved
+    state, every open child → the system state, sys notes both sides,
+    per-child audits, per-child 'state' events. THE POINT of the system
+    state: close-email triggers match "state → Closed/Solved", so
+    cascaded children never send close mail — the state IS the
+    suppression, zero engine changes, and a trigger aimed at
+    'Closed: child ticket' on purpose still fires. System states can't
+    be hand-picked (patch 422s; manual pickers exclude them unless
+    current). Parent bookkeeping in patch_ticket: last open child
+    resolving posts "All child tickets are resolved … Ready to close?"
+    on the parent; a child reopening under a closed parent posts a note
+    too. Merge refuses tickets with live parent/child links (dangling
+    stub guard). Bulk close never prompts — parents close alone.
+    Bootstrap emits links/parentId/children on EVERY ticket (row 36's
+    rule), related links render as bare #id when the other ticket is
+    outside the hydrate window, and the mirror wraps
+    doLink/unlink/doChild/unchild + the cascade from day one.
 
 ---
 
@@ -363,8 +395,8 @@ places.
 
 **Ordering (refreshed 2026-07-30, session end):**
 1. **USER — close the session's tail:** ~~verify@ test-send~~ (DONE —
-   confirmed 2026-07-30 evening) → deploy build 7f (RUNS MIGRATION 0024;
-   supersedes 7e — includes it) → served-UI staleness walk below →
+   confirmed 2026-07-30 evening) → deploy build 8 (RUNS MIGRATIONS
+   0024 + 0025; supersedes 7e/7f — includes both) → served-UI staleness walk below →
    hemingway@ agent create → MFA re-enroll for admin@ + `auth.mfa` back to
    `"required"` → then the accumulated verify walks below on the CURRENT
    desk.html.
@@ -377,8 +409,8 @@ places.
    kill both classes as categories.
 4. **CLAUDE — backups + restore drill** (dumps off-VM, KEK custody,
    scripted + drilled restore).
-5. **Post-launch tail:** Zammad import → customer portal → retainers →
-   ticket links. Known cosmetic: Ledger Swagger behind the proxy fetches
+5. **Post-launch tail:** Zammad import → customer portal → retainers
+   (ticket links: DONE, build 8). Known cosmetic: Ledger Swagger behind the proxy fetches
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
@@ -402,6 +434,29 @@ places.
       here now means the migration didn't run (bootstrap would 500 on the
       missing column rather than fabricate "shared", so a silent revert
       should be impossible post-7f)
+- [ ] **Ticket links (build 8 — MIGRATION 0025 must run):**
+      (1) Related: Link… two tickets → both props panels show the link;
+      refresh → it SURVIVES (previously local-only); × unlinks both sides
+      and survives refresh; audit shows linked/unlinked. (2) Child: on a
+      normal ticket, Add child… → pick one → both panels show
+      parent/children with live state chips + open count; sys notes on
+      both. (3) THE REFUSAL, both layers: open the CHILD and click Add
+      child… → toast "#X is a child of #Y — a child ticket can't be a
+      parent"; then POST /api/tickets/{child}/links {kind:'child',...}
+      via curl → 409 with the same sentence; also try making a PARENT a
+      child of something → 409 "already has children". (4) Cascade: close
+      a parent with ≥1 open child → prompt appears; "Close them too" →
+      children land in "Closed: child ticket" (chip renders closed-style),
+      each with "Closed with parent #id" note, parent notes the list;
+      CRITICAL: with a "state → Closed → send reply" trigger enabled, NO
+      close email goes out for any child (that's the whole design); audit
+      has one row per child + the parent summary. (5) Manual pick refused:
+      the state dropdown does NOT list "Closed: child ticket"; PATCH state
+      to it via curl → 422 "system state". (6) Close the last open child
+      by hand → parent gets "All child tickets are resolved … Ready to
+      close?"; reopen a child under a closed parent → parent gets the
+      reopen note. (7) Merge a linked ticket → 409 "unlink them before
+      merging". (8) Bulk-close a parent → no prompt, children untouched
 - [ ] **Mail ingestion (bug #33):** with the new worker up, close/merge the
       ghost tickets #100023–100027, unpause support@, send ONE test email →
       exactly one ticket appears WITH the email body as its mail_in article;

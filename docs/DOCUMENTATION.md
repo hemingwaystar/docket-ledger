@@ -1,6 +1,6 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-30 (build 7f) · migrations 0001–0024 · bundle “hemingway-backend.zip”**
+**As of 2026-07-30 (build 8) · migrations 0001–0025 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
@@ -142,7 +142,7 @@ Adapter conventions (each one paid for by a numbered bug):
 
 ---
 
-## 3. Migration catalog (0001–0024)
+## 3. Migration catalog (0001–0025)
 
 | # | Contents |
 |---|---|
@@ -170,6 +170,7 @@ Adapter conventions (each one paid for by a numbered bug):
 | 0022 | Bug #30: `desk.mailboxes.outbound` — per-mailbox send eligibility (distinct from the global `mail.outbound_enabled` master switch) |
 | 0023 | Attachments pipeline: `desk.attachments` + staged uploads with the 20 MB cap and the sanctioned staged-upload sweep |
 | 0024 | Ledger row 38: `desk.mailboxes.mailbox_type` ('shared'/'licensed', default 'shared') — the Edit dialog's Type select finally has a column; bootstrap had been hard-coding "shared" onto every row |
+| 0025 | Ticket links: `desk.ticket_links` (kind related/child, void-not-delete, one live parent per child, related pair-unique) + `ticket_states.is_system` + the seeded system state 'Closed: child ticket' (done-kind) that makes parent-close cascades automation-silent |
 
 Migrations are append-only, applied exactly once (`public.schema_migrations`),
 run via the `migrate` compose service.
@@ -380,7 +381,7 @@ route-table cross-check. NEW battery member (2026-07-30):
 placeholder-vs-params and INSERT column-vs-VALUES arity across all three
 services (born of STATE ledger row 33; run it on every bundle).
 
-**The 2026-07-30 arc (bugfix-33 → build 7f) — all DONE (7e+7f awaiting deploy):**
+**The 2026-07-30 arc (bugfix-33 → build 8) — all DONE (7e/7f/8 awaiting deploy):**
 
 * **Mail-duplication bug #33 fixed and confirmed** — the mail_in INSERT's
   dropped `is_auto` placeholder made psycopg3 raise client-side, leaving
@@ -442,6 +443,24 @@ services (born of STATE ledger row 33; run it on every bundle).
   shared), create/patch/list accept + return `type` (422 on anything
   else), bootstrap emits the real value, and the mirror sends it on both
   save paths. Type changes audit as `type → licensed`.
+* **Build 8 — ticket links, live** (migration 0025): the prototype's
+  navigational-only "Link…" finally gets its schema, plus the new
+  parent/child hierarchy. Related links stay symmetric and behavior-free.
+  Parent/child is strictly one level — a parent takes any number of
+  children, a child can NEVER itself be a parent, and both the UI toast
+  and the API 409 say exactly that. Closing a parent with open children
+  prompts to cascade; a confirmed cascade is ONE transaction that files
+  every open child as **'Closed: child ticket'** — a seeded done-kind
+  SYSTEM state that close-email triggers ("state → Closed/Solved") never
+  match, so no per-child close mail fires; each child gets an internal
+  note and a normal state event instead (deliberate automations aimed at
+  the child state still run). System states can't be hand-picked (422 +
+  excluded from manual pickers). The parent gets a note + close nudge
+  when its last open child resolves on its own, and a note if a child
+  reopens after the parent closed. Unlink voids (never deletes); merge
+  refuses tickets carrying live parent/child links; bulk close never
+  prompts (parents close alone). Bootstrap emits links/parent/children
+  on every ticket.
 * **Operational learnings codified in STATE §6:** MFA lockout recovery
   under the `required` policy (console policy flip — enrollment needs a
   session by design), the VM's own-hostname DNS quirk, the PAT mint
@@ -571,9 +590,6 @@ persistence, and the input-feel checks. Each walk names its expected outcome.
 * **Zammad history import; customer portal; attachments UI; verification
   (SMS/email) execution flows; retainers UI** (schema affordances exist for
   all of these).
-* **Ticket links** — navigational only, no schema; resets on hydrate until a
-  links table is built.
-
 **Resolved this build (formerly “server-API-only”):** role rename and
 role create are wired (Directory tab); activity-type create/rename/archive
 is wired (Directory tab); Ledger’s role-permissions page is **permanently
@@ -614,7 +630,7 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
    uncovered.
 5. **Go-live flips:** `mail.outbound_enabled` → live reply test → real
    traffic.
-6. Post-launch tail: Zammad import → portal → retainers → ticket links.
+6. Post-launch tail: Zammad import → portal → retainers (ticket links: DONE, build 8).
 
 ---
 
