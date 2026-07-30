@@ -4456,7 +4456,7 @@ if(window.parent!==window){ setTimeout(dirBroadcastSnapshot, 400); setTimeout(di
     ATYPES.length=0; d.atypes.forEach(a=>ATYPES.push(a));
     const core=new Set(STATES.map(s=>s.id));
     d.states.forEach(s=>{ if(!core.has(s.id))
-      STATES.push({id:s.id,label:s.label,cls:'st-hold',type:s.type,core:false,desc:''}); });
+      STATES.push({id:s.id,label:s.label,cls:'st-hold',type:s.type,core:false,desc:'',active:s.active!==false}); });
     state.tickets.length=0;
     d.tickets.forEach(t=>{
       t.tags=t.tags||[]; t.articles=t.articles||[]; t.time=t.time||[];

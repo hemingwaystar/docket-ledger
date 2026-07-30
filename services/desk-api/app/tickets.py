@@ -145,8 +145,9 @@ def bootstrap(request: Request, limit: int = 500):
                       "email": who["email"], "perms": sorted(who["perms"]),
                       "initials": "".join(w[0] for w in who["name"].split()[:2]).upper()}}
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("SELECT id, name FROM shared.groups WHERE active ORDER BY name")
-            out["groups"] = [{"id": str(r["id"]), "name": r["name"]} for r in cur.fetchall()]
+            cur.execute("SELECT id, name, active FROM shared.groups ORDER BY name")
+            out["groups"] = [{"id": str(r["id"]), "name": r["name"],
+                              "active": r["active"]} for r in cur.fetchall()]
             cur.execute("""SELECT a.id, a.name, a.initials, a.email, r.name AS role,
                              COALESCE((SELECT array_agg(ag.group_id) FROM shared.agent_groups ag
                                         WHERE ag.agent_id = a.id), '{}') AS gids
@@ -189,10 +190,11 @@ def bootstrap(request: Request, limit: int = 500):
             out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
                               "active": r["active"]}
                              for r in cur.fetchall()]
-            cur.execute("SELECT label, kind FROM desk.ticket_states WHERE active ORDER BY position")
+            cur.execute("SELECT label, kind, active FROM desk.ticket_states ORDER BY position")
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
                                                r["label"].lower().replace(" ", "-")),
-                              "label": r["label"], "type": r["kind"]} for r in cur.fetchall()]
+                              "label": r["label"], "type": r["kind"],
+                              "active": r["active"]} for r in cur.fetchall()]
             cur.execute("""SELECT id, name, body FROM desk.canned_responses
                             WHERE active ORDER BY name""")
             out["canned"] = [{"id": str(r["id"]), "name": r["name"], "body": r["body"]}
