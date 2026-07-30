@@ -518,6 +518,16 @@ function effBillPick(current, hist, atMs){
   hist.forEach(hh=>{ if(hh.from<=day && (!best || hh.from>best.from)) best=hh; });
   return best ? best.billable : current;
 }
+function effRateN(current, hist, atMs){
+  /* as-of override resolution: null means "inherit at that date" — both
+     before the first override existed AND after a dated reset row. Matches
+     priced()'s COALESCE fall-through exactly. */
+  if(!hist || !hist.length) return current!=null?current:null;
+  const day = new Date(atMs).toISOString().slice(0,10);
+  let best=null;
+  hist.forEach(hh=>{ if(hh.from<=day && (!best || hh.from>best.from)) best=hh; });
+  return best ? best.rate : null;
+}
 function effRate(current, hist, atMs){
   if(!hist || !hist.length) return current;
   const day = new Date(atMs).toISOString().slice(0,10);
@@ -548,9 +558,11 @@ function priced(e){
   const billable = t.sentinel ? false : (ovB!=null ? !!ovB : !!tB);
   let rate = 0;
   if(billable){
+    const ovRate = ov ? effRateN(ov.rate, ov.rateHist, e.startedAt) : null;
+    const cwRate = effRateN(c.rateOverride, c.rateOverrideHist, e.startedAt);
     if(pt && pt.mode==='hourly' && pt.rate!=null) rate = pt.rate;
-    else if(ov && ov.rate!=null)       rate = effRate(ov.rate, ov.rateHist, e.startedAt);
-    else if(c.rateOverride!=null)      rate = effRate(c.rateOverride, c.rateOverrideHist, e.startedAt);
+    else if(ovRate!=null)              rate = ovRate;
+    else if(cwRate!=null)              rate = cwRate;
     else                               rate = effRate(t.rate, t.rateHist, e.startedAt);
   }
   const amount = e.status==='void' ? 0 : (billable ? h*rate : 0);
@@ -2973,28 +2985,45 @@ window.addEventListener('message', ev=>{
         body:JSON.stringify({activity_type:tid,
           rate_cents:(o&&o.rate!=null)?Math.round(o.rate*100):null,
           billable:(o&&o.billable!=null)?o.billable:null})})
-        .then(async r=>{ if(!r.ok) return oops(await jshort(r)); }),600);
+        .then(async r=>{ if(!r.ok) return oops(await jshort(r));
+          setTimeout(()=>hydrate(),300); }),600);
   };
   const _setClientRate=window.setClientRate;
   window.setClientRate=function(cid,v){
     _setClientRate(cid,v);
     const c=client(cid);
-    clientRatePut(cid,null,(c&&c.rateOverride!=null)?{rate:c.rateOverride}:null);
+    c.rateOverrideHist=histToday(c.rateOverrideHist,'rate',c.rateOverride!=null?c.rateOverride:null);
+    clientRatePut(cid,null,(c&&c.rateOverride!=null)?{rate:c.rateOverride}:null); render();
+  };
+  const histToday=(arr,field,val)=>{
+    const today=new Date().toISOString().slice(0,10);
+    const rest=(arr||[]).filter(h=>h.from!==today);
+    rest.push({from:today,[field]:val!=null?val:null});
+    return rest;
   };
   const _setClientTypeRate=window.setClientTypeRate;
   window.setClientTypeRate=function(cid,tid,v){
     _setClientTypeRate(cid,tid,v);
-    clientRatePut(cid,tid,(client(cid).rates||{})[tid]);   // debounced; latest wins
+    const c=client(cid); c.rates=c.rates||{};
+    const o=c.rates[tid]||(c.rates[tid]={});
+    o.rateHist=histToday(o.rateHist,'rate',o.rate!=null?o.rate:null);
+    clientRatePut(cid,tid,o); render();               // debounced PUT; latest wins
   };
   const _toggleClientTypeBillable=window.toggleClientTypeBillable;
   window.toggleClientTypeBillable=function(cid,tid){
     _toggleClientTypeBillable(cid,tid);
-    clientRatePut(cid,tid,(client(cid).rates||{})[tid]);
+    const c=client(cid); const o=(c.rates||{})[tid];
+    if(o) o.billableHist=histToday(o.billableHist,'billable',o.billable!=null?o.billable:null);
+    clientRatePut(cid,tid,o); render();
   };
   const _clearClientTypeOverride=window.clearClientTypeOverride;
   window.clearClientTypeOverride=function(cid,tid){
     _clearClientTypeOverride(cid,tid);
-    clientRatePut(cid,tid,null);                    // all-NULL row = inherit, history kept
+    const c=client(cid); c.rates=c.rates||{};
+    const o=c.rates[tid]||(c.rates[tid]={});
+    o.rateHist=histToday(o.rateHist,'rate',null);
+    o.billableHist=histToday(o.billableHist,'billable',null);
+    clientRatePut(cid,tid,null); render();          // all-NULL row = inherit, history kept
   };
   let accTimers={};
   const pushAccess=cid=>{

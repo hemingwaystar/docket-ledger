@@ -207,6 +207,8 @@ touched history: entries keep the period they were written into.
 
 | 27 | Approvals grew a ghost "July 1930" timesheet with an unclassified entry — Ledger felt broken | a mistyped year in a span editor's datetime-local field sailed through with no bounds anywhere; the server accepted it, minted a 1930 billing period, and the sheet appeared | _sane_span() 422-guards every span write path (ledger classify, desk add/patch time: year >= 2020, <= now+400d); span inputs carry min/max; bootstrap hides empty OPEN periods, so voiding the garbage entry removes the ghost sheet AND the ghost period from every page | Any user-typed timestamp is untrusted input — bound it at the API, not just the widget |
 
+| 28 | override field showed 150 but the entry priced $51 — looked like the caret bug returned | display staleness introduced by 0018's history emission: local edits updated the CURRENT value but not the history row, and the ladder consulted history first — so the $51 from the earlier backwards-typing write kept pricing until a re-hydrate (the prototype "fixed itself instantly" only because the demo had no history rows to go stale) | UI ladder now resolves overrides as-of via effRateN (null = inherit, before-first-row AND after-reset, matching priced()'s COALESCE exactly); local edits keep the today history row in step; saves hydrate softly once the PUT lands | When you add a second source of truth to a display path, every write path that fed the first must feed the second |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -249,6 +251,10 @@ places.
 - [ ] Cleanup + guard: void the July-1930 entry in its Ledger drawer → the
       1930 sheet AND period vanish everywhere; try saving a span with year
       1930 → clean 422 "check the year", widget won't even offer it
+- [ ] Override display truth: type 150 in a per-type override → breakdown
+      re-prices to $150 immediately and still $150 after refresh; reset →
+      today's entries price at inherited rate, OLD entries keep their old
+      override price (display AND export)
 - [ ] Billing-history walk: note an old entry's rate/amount → change the type
       rate, a client override, and flip a type's billable → old entry's price
       and billable status UNCHANGED (display and export), new entry from
