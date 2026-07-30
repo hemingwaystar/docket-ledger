@@ -325,6 +325,21 @@ places.
 - [ ] **Outbound size guard:** a reply whose staged attachments push the
       encoded MIME past 4 MB now returns a clear 413 (Graph's sendMail hard
       limit) instead of Graph's opaque refusal — optional spot-check
+- [ ] **Subject prefix (this bundle):** send a reply → the email arrives as
+      "Service Ticket: [#100xxx] Title"; reply to it from outside → still
+      threads onto the same ticket (the [#id] matcher searches anywhere in
+      the subject, so the prefix and RE:/FW: chains are all safe)
+- [ ] **OR conditions (this bundle):** in a trigger, add a condition, then
+      "+ OR group" and a second condition → the list column reads
+      "(a) or (b)"; fire an event matching only the second group → trigger
+      runs. Edit an OLD rule → it opens as one group and saves unchanged
+      (single group stores flat, so nothing existing is rewritten). Same in
+      the mail-rule builder
+- [ ] **Master send switch (this bundle):** Automations → Outbound routing
+      card header shows "Sending live"/"Recorded-only" with a toggle;
+      enabling asks for confirmation, the flip lands in audit as "Outbound
+      sending enabled/disabled", survives a refresh (hydrated from
+      bootstrap), and a server refusal rolls the chip back instead of lying
 - [ ] desk.html hydrates real data again (bug #13 fix); Graph card shows real
       tenant/app-id/rotation; rules/triggers hydrate from the server (empty until you create some); titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes

@@ -184,7 +184,14 @@ tickets: PATCH `/api/tickets/{id}` (props/title/contact/pending),
 only), `POST /types` + `PATCH /types/{id}` (activity-type create / rename /
 archive — names & lifecycle; billable/rates stay in Ledger); settings: config
 GET/PUT (now incl. `sla`), secrets (write-only), mailboxes POST/PATCH, canned
-POST/PATCH, `graph/test`; automations: `POST/PATCH /api/automations/rules`,
+POST/PATCH, `graph/test`, `graph/test-send` (outbound pre-flight: one real
+send via the reply path, admin-only, no ticket, NOT gated on
+outbound_enabled), `POST mail/outbound` (the go-live master switch —
+jsonb_set on `mail.outbound_enabled`, mirrored by the Automations page
+chip); automations: `POST/PATCH /api/automations/rules` (conditions accept
+a flat list = all-must-match, or a list of lists = OR groups where each
+inner list ANDs — the builder saves one group flat, so legacy rules are the
+one-group case),
 `POST /api/automations/rules/order`, `GET /api/automations/notifications` +
 `/read`; OIDC: `GET /auth/oidc/login` → Entra → `GET /auth/oidc/callback`,
 plus unauthenticated `GET /auth/methods` (which sign-in doors are open).
