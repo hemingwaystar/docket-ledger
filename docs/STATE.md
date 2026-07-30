@@ -340,6 +340,36 @@ places.
       enabling asks for confirmation, the flip lands in audit as "Outbound
       sending enabled/disabled", survives a refresh (hydrated from
       bootstrap), and a server refusal rolls the chip back instead of lying
+- [ ] **Verification channel toggles (this bundle — silent-control #5):**
+      Settings → Caller verification → Enable on EMAIL → chip goes
+      Connected AND STAYS Connected after a refresh (previously the flip
+      never reached the server, so email codes always 409'd); audit shows
+      the verification config change; then verify a caller by email on a
+      ticket whose contact is your own address → code arrives from the
+      configured sender. If the send 502s, run graph/test-send with
+      "sender":"verification@hemingwaytechsolutions.com" — that address
+      must be in the Exchange application access policy like support@
+- [ ] **Re-verify (this bundle):** on an already-verified ticket the
+      Identity panel keeps a "Verify again" button; running it again
+      supersedes the old code, re-tags idempotently, and posts a fresh
+      ✅ note
+- [ ] **⚠ SERVED-UI STALENESS (found 2026-07-30, bug #10's class):** the
+      live Directory rendered an Agents card captioned "Entra-synced —
+      shared" — text that exists in NO current bundle. The served desk.html
+      is old, which is why agent add/deactivate/membership appeared broken
+      (the controls aren't in the old file). The bug-#10 habit, both sides:
+      `grep -c "Add person" services/desk-api/webui/desk.html` on the repo
+      (expect 3) and `curl -s http://$BIND_ADDR:8081/ui/desk.html | grep -c
+      "Add person"` (expect 3). disk=0 → the bundle→repo merge is dropping
+      webui/ — fix the merge, push, pull; disk>0 served=0 → `sudo docker
+      compose build desk-api && sudo docker compose up -d desk-api`
+      (--no-cache if stubborn); both>0 → hard-refresh the browser. Then:
+      Agents card shows "+ Add person" + Deactivate, membership checkboxes
+      persist across refresh
+- [ ] **Group Delete button REMOVED (silent-control #6):** it spliced
+      locally with no server endpoint (correctly none exists — no-delete
+      convention) and the group returned on refresh; Archive/Restore is the
+      wired removal and stays
 - [ ] desk.html hydrates real data again (bug #13 fix); Graph card shows real
       tenant/app-id/rotation; rules/triggers hydrate from the server (empty until you create some); titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes
