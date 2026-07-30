@@ -88,6 +88,15 @@ def send_reply(cur, *, mailbox_address: str, display_name: str,
 
     token = _token(cur)
     mime = base64.b64encode(msg.as_bytes()).decode()
+    if len(mime) > 4 * 1024 * 1024:
+        # Graph's sendMail hard limit: 4 MB of (base64) MIME. Inbound staging
+        # allows 20 MB per file, so this is reachable — refuse with the real
+        # reason instead of surfacing Graph's opaque 413.
+        raise HTTPException(413,
+                            f"Message too large to send — Graph accepts at most "
+                            f"4 MB of encoded MIME and this reply encodes to "
+                            f"{len(mime) / 1048576:.1f} MB. Trim the attachments "
+                            f"or share a download link instead.")
     resp = httpx.post(
         f"https://graph.microsoft.com/v1.0/users/{mailbox_address}/sendMail",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "text/plain"},

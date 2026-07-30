@@ -330,9 +330,10 @@ def _trigger_email(cur, ctx, body_tpl):
         except mailer.MailError as exc:
             _audit(cur, "Trigger send failed", ctx["id"], str(exc)[:200])
     cur.execute("""INSERT INTO desk.articles
-                     (ticket_id, kind, author, body, mail_to, message_id, is_auto)
-                   VALUES (%s, 'reply', 'Docket · trigger', %s, %s, %s, true)""",
-                (ctx["id"], body, to, out_mid))
+                     (ticket_id, kind, author, body, mail_from, mail_to,
+                      message_id, is_auto)
+                   VALUES (%s, 'reply', 'Docket · trigger', %s, %s, %s, %s, true)""",
+                (ctx["id"], body, mb[0], to, out_mid))
     who = ctx["contact_name"] or to
     return (f"emailed {who} from {mb[0].split('@')[0]}@" if sent
             else f"reply to {who} recorded (outbound disabled)")

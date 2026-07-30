@@ -840,7 +840,7 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
             helpers.refuse_if_locked_project(row)
             client_id = row[1]
             author_id, author_name = helpers.agent(cur, body.author_email)
-            sent, mail_to, out_mid = False, None, None
+            sent, mail_to, out_mid, mb_addr = False, None, None, None
             if body.kind == "reply":
                 # recipient: explicit override → ticket contact → last inbound sender
                 cur.execute("""SELECT COALESCE(
@@ -895,7 +895,7 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                               mail_from, mail_to, message_id)
                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                         (ticket_id, body.kind, author_name, author_id, body.body,
-                         None if body.kind != "reply" else None,
+                         mb_addr,                     # sending mailbox on replies, None on notes
                          mail_to, out_mid))
             (article_id,) = cur.fetchone()
             if body.attachment_ids:

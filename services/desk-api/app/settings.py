@@ -16,7 +16,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel
-from . import auth, crypto, db, helpers
+from . import auth, crypto, db, helpers, mailer
 
 router = APIRouter(prefix="/api/settings")
 
@@ -141,6 +141,49 @@ def graph_test(request: Request):
                 "note": "mail-worker starts polling within one scheduler pass"}
 
 
+class TestSend(BaseModel):
+    to: str
+    sender: str | None = None          # defaults to first unpaused outbound mailbox
+
+
+@router.post("/graph/test-send")
+def graph_test_send(body: TestSend, request: Request):
+    """Outbound pre-flight. graph/test only proves the token (secret, tenant,
+    app id); Mail.Send consent and the application access policy only fail on
+    a REAL send — this sends one plain test message through the exact mailer
+    path agent replies use, so those failures surface here with Graph's own
+    error, BEFORE the go-live flip. Deliberately not gated on
+    mail.outbound_enabled: an explicit admin action to a self-chosen address
+    is pre-flight, not customer-touching mail. No ticket or article is
+    created. Test verify@ by passing it as sender."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            sender = (body.sender or "").strip().lower()
+            if not sender:
+                cur.execute("""SELECT address FROM desk.mailboxes
+                                WHERE NOT paused AND outbound
+                                ORDER BY address LIMIT 1""")
+                row = cur.fetchone()
+                if row is None:
+                    raise HTTPException(409, "No unpaused outbound-eligible "
+                                             "mailbox — pass one as 'sender'")
+                sender = row[0]
+            mid = mailer.send_reply(
+                cur, mailbox_address=sender, display_name="Docket",
+                to=body.to.strip(), cc=[],
+                subject="Docket outbound test",
+                body="This is Docket's outbound pre-flight test.\n\n"
+                     "Receiving it proves the Graph secret and tenant are "
+                     "right, Mail.Send is consented, and this sender is in "
+                     "the application access policy. No ticket was created.",
+                in_reply_to=None, references=[])
+        auth.audit(conn, "desk", "Outbound test sent", "config:graph",
+                   f"test mail {sender} → {body.to.strip()} ({who['label']})")
+        return {"ok": True, "sent_from": sender, "message_id": mid}
+
+
 @router.post("/graph/disconnect")
 def graph_disconnect(request: Request):
     """Flip only the connected flag (jsonb_set — never clobbers the rest of
@@ -165,7 +208,7 @@ def list_mailboxes(request: Request):
         auth.need(who, "manage_settings", "manage_automations")
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""SELECT m.id, m.address, m.display_name, g.name AS "group",
-                                  p.label AS default_priority, m.paused,
+                                  p.label AS default_priority, m.paused, m.outbound,
                                   gs.last_delta_at
                              FROM desk.mailboxes m
                              JOIN shared.groups g ON g.id = m.group_id

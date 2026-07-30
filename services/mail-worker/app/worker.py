@@ -202,7 +202,7 @@ def ingest_message(conn, mailbox, msg, token=None) -> str:
         cur.execute("""INSERT INTO desk.articles
                          (ticket_id, kind, author, mail_from, mail_to, message_id,
                           body, body_html, is_auto, sent_at)
-                       VALUES (%s, 'mail_in', %s, %s, %s, %s, %s, %s,
+                       VALUES (%s, 'mail_in', %s, %s, %s, %s, %s, %s, %s,
                                COALESCE(%s, now())) RETURNING id""",
                     (ticket_id, sender or "unknown", sender, mailbox["address"], mid,
                      body_text(msg), body_html(msg), auto,
@@ -234,10 +234,17 @@ def ingest_message(conn, mailbox, msg, token=None) -> str:
     # auto-generated mail — the loop guard.
     meta = {"from": sender, "to": mailbox["address"], "subject": subject,
             "body": body_text(msg), "auto": auto}
-    try:
-        automations.apply_mail_rules(conn, ticket_id, meta)
-    except Exception as exc:
-        print(f"mail rules failed on #{ticket_id}: {exc}")
+    # savepoint fence (bug #29 class): rules are optional work riding inside
+    # the ingestion transaction — a SQL failure in here would otherwise leave
+    # the tx aborted, killing the enqueue below and the whole pass's commit.
+    with conn.cursor() as cur:
+        cur.execute("SAVEPOINT rules")
+        try:
+            automations.apply_mail_rules(conn, ticket_id, meta)
+            cur.execute("RELEASE SAVEPOINT rules")
+        except Exception as exc:                          # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT rules")
+            print(f"mail rules failed on #{ticket_id}: {exc}", flush=True)
     with conn.cursor() as cur:
         automations.enqueue(cur, "create" if status == "new" else "followup",
                             ticket_id, meta)
