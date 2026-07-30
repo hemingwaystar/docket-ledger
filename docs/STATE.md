@@ -370,6 +370,15 @@ places.
       locally with no server endpoint (correctly none exists — no-delete
       convention) and the group returned on refresh; Archive/Restore is the
       wired removal and stays
+- [ ] **Archive survives hydration (this bundle):** archive a group → it
+      stays in the Directory dimmed with an Archived chip and a Restore
+      button, INCLUDING after a refresh (bootstrap previously emitted only
+      active groups, so the post-archive hydrate made it vanish — looked
+      like a delete); Restore brings it back live; its mailboxes pause on
+      archive (resume manually); pickers stay clean (archived shows only
+      labeled "(archived)" where a ticket already sits on it). Same fix for
+      custom ticket STATES — archive one in Settings and it must persist
+      dimmed across refresh too
 - [ ] desk.html hydrates real data again (bug #13 fix); Graph card shows real
       tenant/app-id/rotation; rules/triggers hydrate from the server (empty until you create some); titles/signatures live
 - [ ] `:8082/ui/ledger.html` renders; suite split shows both prototypes
