@@ -75,7 +75,7 @@ function render(){
 }
 
 /* shared renderers */
-const stateChip = t => { const s=st8(t.st)||{cls:'st-open',label:t.st}; return `<span class="chip ${s.cls}"><span class="cdot"></span>${esc(s.label)}</span>`; };
+const stateChip = t => { const s=st8(t.st)||{cls:'st-open',label:t.st}; return `<span ${stChipAttrs(s)}><span class="cdot"></span>${esc(s.label)}</span>`; };
 const prioTag = p => { const x=prio(p)||{label:'?',cls:'p2'}; return `<span class="prio ${x.cls}"><span class="pflag"></span>${esc(x.label)}</span>`; };
 const avatarOf = a => `<span class="avatar" style="width:22px;height:22px;font-size:9.5px;display:inline-grid" title="${esc(a.name)}">${a.initials}</span>`;
 function slaCell(t){

@@ -24,13 +24,17 @@ function mapIn(d){
   ATYPES.length=0; d.atypes.forEach(a=>ATYPES.push(a));
   STATES.length=0;
   d.states.forEach(s=>{ const dec=ST_DECOR[s.id];
-    /* decor overlay (0027): a stored palette token / description wins over
-       the shipped ST_DECOR default; NULL falls through to it unchanged */
-    const tok=ST_PALETTE.some(p=>p.tok===s.color)? s.color : null;
-    STATES.push({ id:s.id, label:s.label, type:s.type, sid:s.sid,
+    /* decor overlay (0027): a stored palette token OR #rrggbb hex (11b) /
+       description wins over the shipped ST_DECOR default; NULL falls
+       through to it unchanged. Chips render via stChipAttrs — one seam. */
+    const hex=stHexOk(s.color)? s.color.toLowerCase() : null;
+    const tok=!hex && ST_PALETTE.some(p=>p.tok===s.color)? s.color : null;
+    const row={ id:s.id, label:s.label, type:s.type, sid:s.sid,
       cls:tok || (dec? dec.cls : (s.id==='child-closed'?'st-closed':'st-hold')),
       desc:s.description!=null? s.description : (dec? dec.desc : ''), core:!!dec,
-      active:s.active!==false, system:s.system===true }); });
+      active:s.active!==false, system:s.system===true };
+    if(hex) row.hex=hex;
+    STATES.push(row); });
   if(d.priorities){
     PRIOS.length=0;
     /* the UI keys priorities by rank (tickets carry the rank); the server

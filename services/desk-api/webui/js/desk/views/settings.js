@@ -255,8 +255,9 @@ function stateModal(sid){
       ${sid?'':`
       <div class="field" style="margin-top:8px"><label>Color</label>
         <input type="hidden" id="stColor" value="">
-        <div id="stPal" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">${ST_PALETTE.map(p=>`<button class="chip ${p.tok}" data-tok="${p.tok}" title="${esc(p.label)}" onclick="stPalPick('${p.tok}')" style="cursor:pointer"><span class="cdot"></span>${esc(p.label)}</button>`).join('')}
-        </div><div class="mini muted" style="margin-top:4px">No pick = the default chip style. Recolor any time from the state's row.</div></div>
+        <div id="stPal" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;align-items:center">${ST_PALETTE.map(p=>`<button class="chip ${p.tok}" data-tok="${p.tok}" title="${esc(p.label)}" onclick="stPalPick('${p.tok}')" style="cursor:pointer"><span class="cdot"></span>${esc(p.label)}</button>`).join('')}
+          <input type="color" value="#7a8a99" title="any color — the RGB square" onchange="stPalHex(this.value)" style="width:26px;height:24px;padding:0;border:none;background:none;cursor:pointer">
+        </div><div class="mini muted" style="margin-top:4px">No pick = the default chip style. Pills or the color square — recolor any time from the state's row.</div></div>
       <div class="field" style="margin-top:8px"><label>Description</label><input type="text" id="stDescNew" placeholder="what this state means — shows in this editor"></div>`}
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveState('${sid||''}')">${sid?'Save state':'Add state'}</button></div>`;
@@ -333,28 +334,42 @@ function moveState(sid, dir){
 /* ---- state decor (0027): color + description on any non-system state —
    core states included, only their label is protected. The stored value
    overlays ST_DECOR in mapIn; everything below edits the overlaid row. ---- */
-/* the row's swatch strip: one pill per ST_PALETTE token, current ringed;
-   clicking the ringed pill again un-picks — back to the shipped default */
+/* the row's swatch strip: one pill per ST_PALETTE token (current ringed;
+   clicking the ringed pill un-picks) + a free RGB square (11b —
+   <input type=color>, zero dependencies) + a ↺ default affordance when
+   the state carries any custom decor */
 const stSwatches = s => ST_PALETTE.map(p=>
-  `<button class="chip ${p.tok}" title="${esc(p.label)}${s.cls===p.tok?' — click again for default':''}" onclick="stateColorSet('${jsq(s.id)}','${p.tok}')" style="cursor:pointer${s.cls===p.tok?';outline:2px solid var(--brand);outline-offset:1px':''}"><span class="cdot"></span></button>`).join('');
+  `<button class="chip ${p.tok}" title="${esc(p.label)}${!s.hex&&s.cls===p.tok?' — click again for default':''}" onclick="stateColorSet('${jsq(s.id)}','${p.tok}')" style="cursor:pointer${!s.hex&&s.cls===p.tok?';outline:2px solid var(--brand);outline-offset:1px':''}"><span class="cdot"></span></button>`).join('')
+  + `<input type="color" value="${s.hex||'#7a8a99'}" title="any color — the RGB square" onchange="stateColorSet('${jsq(s.id)}',this.value)" style="width:24px;height:22px;padding:0;border:none;background:none;cursor:pointer;vertical-align:middle${s.hex?';outline:2px solid var(--brand);outline-offset:1px;border-radius:4px':''}">`
+  + (s.hex||s.cls!==stDefCls(s)? `<button class="rowbtn" title="back to the shipped default" onclick="stateColorSet('${jsq(s.id)}','')">↺</button>`:'');
 /* the shipped default chip class for a state — what NULL color renders as */
 const stDefCls = s => { const dec = ST_DECOR[s.id];
   return dec ? dec.cls : (s.id==='child-closed' ? 'st-closed' : 'st-hold'); };
-/* a swatch click is single-click state (row 34): mirror IMMEDIATELY — never
-   debounced — and only when the chip actually changes (row 21) */
-function stateColorSet(sid, tok){
+/* a color pick is single-click state (row 34): mirror IMMEDIATELY — never
+   debounced — and only when the chip actually changes (row 21).
+   val: palette token · '#rrggbb' hex · '' = reset to shipped default */
+function stateColorSet(sid, val){
   const s = st8(sid); if(!s || s.system) return;
-  if(!ST_PALETTE.some(p=>p.tok===tok)) return;
   const def = stDefCls(s);
-  const reset = s.cls===tok;             /* ringed pill clicked = un-pick */
-  if(reset && tok===def) return;         /* already the default — nothing to do */
-  const was = s.cls;
-  s.cls = reset ? def : tok;
-  log('State recolored', `${s.label}: ${was} → ${reset ? `default (${def})` : tok}`);
+  const was = s.hex || s.cls;
+  let body;
+  if(val===''){                              /* ↺ default */
+    if(!s.hex && s.cls===def) return;
+    delete s.hex; s.cls = def; body = {color:null};
+  } else if(stHexOk(val)){                   /* the RGB square */
+    const hx = val.toLowerCase();
+    if(s.hex===hx) return;
+    s.hex = hx; s.cls = def; body = {color:hx};
+  } else {                                   /* a palette pill */
+    if(!ST_PALETTE.some(p=>p.tok===val)) return;
+    const reset = !s.hex && s.cls===val;     /* ringed pill clicked = un-pick */
+    if(reset && val===def) return;
+    delete s.hex; s.cls = reset ? def : val; body = {color: reset ? null : val};
+  }
+  log('State recolored', `${s.label}: ${was} → ${body.color || `default (${def})`}`);
   render();
   if(isUuid(s.sid)) $fetch('/api/settings/states/'+encodeURIComponent(s.sid),{method:'PATCH',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({color: reset ? null : tok})})
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
 }
 /* descriptions are typed — debounced like every typed config field; clearing
@@ -386,6 +401,12 @@ function stPalPick(tok){
   document.querySelectorAll('#stPal .chip').forEach(el=>{
     el.style.outline = el.dataset.tok===h.value? '2px solid var(--brand)' : 'none';
     el.style.outlineOffset = '1px'; });
+}
+/* the modal's RGB square (11b) — a hex pick clears any pill ring */
+function stPalHex(v){
+  const h = document.getElementById('stColor'); if(!h || !stHexOk(v)) return;
+  h.value = v.toLowerCase();
+  document.querySelectorAll('#stPal .chip').forEach(el=>{ el.style.outline='none'; });
 }
 
 /* ---- priorities: rename / add / archive (desk.priorities — label/rank/
@@ -762,7 +783,7 @@ function viewSettings(){
     </div>
     <div class="card card-pad">
       <div class="card-head flush"><h3>Ticket states</h3><span class="hint">editable vocabulary — behavior comes from the type</span></div>
-      ${STATES.map((s,i)=>{ const arch=isArch(s); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b><span class="chip ${s.cls}"><span class="cdot"></span>${esc(s.label)}</span></b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}${s.system
+      ${STATES.map((s,i)=>{ const arch=isArch(s); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b><span ${stChipAttrs(s)}><span class="cdot"></span>${esc(s.label)}</span></b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}${s.system
         ? `<p>${esc(s.desc||'')}</p>`
         : `<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin:7px 0 5px">${stSwatches(s)}</div>
         <input type="text" id="stDesc-${s.id}" value="${esc(s.desc||'')}" placeholder="what this state means" style="width:100%;max-width:420px;font-size:12px" onchange="stateDescSet('${jsq(s.id)}',this.value,this)">`}</div>

@@ -176,6 +176,20 @@ const me = () => agent(state.meId);
 
 /* ---- lookups ---- */
 const st8 = id => STATES.find(s=>s.id===id);
+/* state-chip presentation, ONE seam (11b): a stored #rrggbb hex renders an
+   inline tint (dot/text via currentColor — .chip.hexed in desk.css); a
+   palette token / default renders its chip class. Every state chip in the
+   app goes through this. */
+const stHexOk = v => /^#[0-9a-f]{6}$/i.test(v||'');
+function stDarken(hex, f){
+  const n=parseInt(hex.slice(1),16);
+  const d=x=>Math.round(x*f).toString(16).padStart(2,'0');
+  return '#'+d((n>>16)&255)+d((n>>8)&255)+d(n&255);
+}
+function stChipAttrs(s){
+  if(s && s.hex) return `class="chip hexed" style="background:${s.hex}1f;color:${stDarken(s.hex,.68)}"`;
+  return `class="chip ${(s&&s.cls)||'st-hold'}"`;
+}
 const grp = id => GROUPS.find(g=>g.id===id);
 const agent = id => AGENTS.find(a=>a.id===id);
 const client = id => CLIENTS.find(c=>c.id===id);

@@ -12,6 +12,7 @@ Graph connection flow (single-tenant, application permissions):
      one scheduler pass.
 """
 import json
+import re
 import uuid as uuid_lib
 import httpx
 from typing import Literal
@@ -399,12 +400,16 @@ def _uuid_or_404(value: str, what: str) -> str:
 # The state-chip palette — desk.css's .chip.st-* family, and nothing else
 # (no new CSS colors invented). Pinned BOTH sides: webui/js/desk/state.js
 # ST_PALETTE is the same literal list — change one, change the other.
+# Since 11b a free "#rrggbb" hex is also accepted (the UI's RGB square);
+# the client renders it as an inline tint via the same one chip seam.
 ST_PALETTE = ("st-new", "st-open", "st-pending", "st-hold", "st-solved", "st-closed")
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _check_color(color: str | None):
-    if color is not None and color not in ST_PALETTE:
-        raise HTTPException(422, f"Unknown color — palette tokens: {', '.join(ST_PALETTE)}")
+    if color is not None and color not in ST_PALETTE and not _HEX_COLOR.match(color):
+        raise HTTPException(422, "Unknown color — a palette token "
+                                 f"({', '.join(ST_PALETTE)}) or #rrggbb")
 
 
 class NewState(BaseModel):

@@ -364,3 +364,6 @@ select:disabled{opacity:.55;cursor:not-allowed}
 /* monospace data inputs (ids, tenants, URIs, Entra maps) — pair with an
    inline width when the box needs one; font stack matches .tape */
 .in-mono{font-family:'IBM Plex Mono',monospace;font-size:12px}
+/* hex-colored state chips (11b): stChipAttrs sets the tint + text color
+   inline; the dot simply follows the text color */
+.chip.hexed .cdot{background:currentColor}
