@@ -1,14 +1,17 @@
 /* ==========================================================================
    js/desk/state.js — the state object, hydrated collections, static catalogs,
    RBAC, visibility scope and business-hours/SLA math.
-   Owns: state · GROUPS/AGENTS/CLIENTS/ATYPES/STATES/PRIOS/SLA/BIZ/MAILBOXES/
-   GROUP_SENDAS/RULES/TRIGGERS/CANNED/TITLES/AGENT_SIGS/VCFG/AUTH_CFG/
-   GRAPH_AUTH/MAILCFG/SECRETS (all start EMPTY — mapIn() in api.js is the ONE
-   place bootstrap data enters them) · static catalogs (ST_DECOR, TRIG_EVENTS,
-   PERM_CATALOG/ALL_PERMS/PRESETS, PROJ_TEMPLATES, ENTRA_COLMAP, NAV, PAGES) ·
-   can()/canView() · ticketVisible/scoped/tk/isDone · isBizTime/addBizHours/
-   slaInfo · log/notify/signOut · csvEsc/downloadCSV · art()/mkTicket().
-   Endpoints: POST /auth/logout (signOut).
+   Owns: state (incl. state.prefs — per-user UI prefs) ·
+   GROUPS/AGENTS/CLIENTS/ATYPES/STATES/PRIOS/SLA/BIZ/DESK_UI/MAILBOXES/
+   GROUP_SENDAS/GROUP_SENDAS_OVR/RULES/TRIGGERS/CANNED/TITLES/AGENT_SIGS/
+   VCFG/AUTH_CFG/GRAPH_AUTH/MAILCFG/SECRETS (all start EMPTY — mapIn() in
+   api.js is the ONE place bootstrap data enters them) · static catalogs
+   (ST_DECOR, DEFAULT_OVERVIEWS, TRIG_EVENTS, PERM_CATALOG/ALL_PERMS/PRESETS,
+   PROJ_TEMPLATES, ENTRA_COLMAP, NAV, PAGES) · can()/canView() ·
+   ticketVisible/scoped/tk/isDone · effectiveOverviews/shownDashboardStates/
+   savePrefs · isBizTime/addBizHours/slaInfo · log/notify/signOut ·
+   csvEsc/downloadCSV · art()/mkTicket().
+   Endpoints: POST /auth/logout (signOut) · PUT /auth/me/prefs (savePrefs).
    Invariants: identity and permissions come ONLY from /api/bootstrap `me`;
    every rendered collection is fed by mapIn(), never seeded here.
    ========================================================================== */
@@ -16,8 +19,9 @@
 const state = {
   view:'dashboard', ticketId:null, clientId:null,
   perms:new Set(), meId:null,
+  prefs:{},            // per-user UI prefs — bootstrap me.prefs; savePrefs() mirrors
   user:{ name:'', initials:'', role:'' },
-  overview:'myopen', qf:{ group:'all', prio:'all', client:'all', state:'all', q:'' },
+  overview:'myopen', qf:{ group:[], prio:[], client:[], q:'' },   /* multi-selects: empty = all */
   composer:{ kind:'reply', typeId:null, logTime:true },
   notifs:[], bulk:[], searchQ:'',
   timer:null,          // { ticketId, startedReal }  — the native note timer
@@ -42,10 +46,15 @@ const PRIOS = [];
 const SLA = {};
 /* business calendar — SLA hours only tick inside working time */
 const BIZ = { days:[], start:0, end:0, holidays:[] };
+/* admin UI defaults — app_config key desk_ui:
+   {overviews:[OverviewDef,...], dashboardStates:[label,...]}; empty = shipped defaults */
+const DESK_UI = {};
 const MAILBOXES = [];
 /* outbound routing: every reply goes out from the ticket's BOARD address —
-   derived per board from the Mailboxes card. Tickets never choose their sender. */
-const GROUP_SENDAS = {};
+   an explicit group_sendas override (0026) when set, else derived from the
+   board's fed-by mailbox. Tickets never choose their sender. */
+const GROUP_SENDAS = {};       // group id → effective outbound mailbox id
+const GROUP_SENDAS_OVR = {};   // group id → true when an explicit override row is set
 const RULES = [];
 const TRIGGERS = [];
 const CANNED = [];
@@ -78,6 +87,22 @@ const ST_DECOR = {
   solved:  { cls:'st-solved',  desc:'Fixed; closes itself after 48h without a reply.' },
   closed:  { cls:'st-closed',  desc:'Done. A customer reply re-opens it.' },
 };
+/* the shipped queue tabs, expressed as OverviewDefs — the pinned filter
+   vocabulary both sides speak (design §Storage): id/label/scope +
+   optional stateKinds/states/groups/prios/tags/recentDays; an omitted key
+   means no constraint. Out of the box the evaluator over these five is
+   behavior-identical to the old fixed tab bar: 'done' deliberately ships
+   with NO recentDays window ("Recently solved" always showed every done
+   ticket), and the evaluator keeps the two permission quirks the vocabulary
+   cannot express — scope:'unassigned' tabs hide without can('assign'), and
+   the 'allopen' tab is labelled "Group open" when !can('view_all'). */
+const DEFAULT_OVERVIEWS = [
+  { id:'myopen',     label:'My assigned',     scope:'mine',       stateKinds:['open','paused'] },
+  { id:'unassigned', label:'Unassigned',      scope:'unassigned', stateKinds:['open','paused'] },
+  { id:'allopen',    label:'All open',        scope:'all',        stateKinds:['open','paused'] },
+  { id:'pending',    label:'Pending / hold',  scope:'all',        stateKinds:['paused'] },
+  { id:'done',       label:'Recently solved', scope:'all',        stateKinds:['done'] },
+];
 /* trigger activators — the builder's event vocabulary (execution is the
    mail-worker's engine; the UI only edits definitions) */
 const TRIG_EVENTS = [
@@ -192,6 +217,58 @@ function ticketVisible(t){
 const scoped = () => state.tickets.filter(ticketVisible);
 const tk = id => state.tickets.find(t=>t.id===id);
 const isDone = t => (st8(t.st)||{}).type==='done';
+
+/* ---- overviews & per-user prefs ---- */
+/* effective queue tabs: admin defaults (desk_ui.overviews when non-empty,
+   else DEFAULT_OVERVIEWS), minus prefs.overviews.hidden, reordered by
+   .order (unlisted ids keep admin order, after the listed ones), plus the
+   user's .custom defs at the end. Returns shallow copies — the evaluator
+   decorates rows (counts) without touching the catalogs. */
+/* the admin tab list with the shipped-default fallback — the ONE resolver
+   every consumer uses (evaluator, Customize modal, Settings card) */
+function adminOverviews(){
+  return (Array.isArray(DESK_UI.overviews) && DESK_UI.overviews.length)
+    ? DESK_UI.overviews : DEFAULT_OVERVIEWS;
+}
+function effectiveOverviews(){
+  /* admin archive-style hide (active:false) filters here — the read seam */
+  const admin = adminOverviews().filter(o=>!isArch(o));
+  const p = state.prefs.overviews || {};
+  const hidden = p.hidden || [];
+  let base = admin.filter(o=>!hidden.includes(o.id));
+  if(Array.isArray(p.order) && p.order.length){
+    const pos = id => { const i=p.order.indexOf(id); return i<0 ? p.order.length : i; };
+    base = base.slice().sort((a,b)=>pos(a.id)-pos(b.id));
+  }
+  const out = base.concat((p.custom||[]).filter(o=>!hidden.includes(o.id)))
+    .map(o=>Object.assign({},o));
+  /* a queue with zero tabs cannot render — inconsistent prefs fall back */
+  return out.length ? out
+       : (admin.length ? admin : DEFAULT_OVERVIEWS).map(o=>Object.assign({},o));
+}
+/* dashboard Queue-by-state visibility: the prefs list when present, else the
+   admin default — both lists are SHOWN labels; absent = all active states.
+   Rendering keeps the server's position order (STATES arrives sorted). */
+function shownDashboardStates(){
+  const shown = state.prefs.dashboardStates || DESK_UI.dashboardStates;
+  const base = aSTATES();
+  return Array.isArray(shown) ? base.filter(s=>shown.includes(s.label)) : base;
+}
+/* per-user prefs mirror: merge PART (top-level keys, whole subtrees) into
+   state.prefs and PUT the whole object — the server upserts uprefs:<uuid>
+   keyed off the session. Diff-guarded (row 21): an unchanged merge never
+   calls out. oops() rolls back by rehydrating (mapIn restores me.prefs). */
+function savePrefs(part){
+  const next = Object.assign({}, state.prefs, part);
+  /* null = clear the key: §Storage pins "absent key = follow admin default" */
+  Object.keys(next).forEach(k=>{ if(next[k]===null) delete next[k]; });
+  if(JSON.stringify(next)===JSON.stringify(state.prefs)) return;
+  state.prefs = next; render();
+  $fetch('/auth/me/prefs',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(state.prefs)})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); })
+    .catch(()=>oops());
+}
 
 /* ---- SLA: first-response due until an agent replies; then resolution due.
    SLA hours only tick inside working time; the walk is 15-min steps

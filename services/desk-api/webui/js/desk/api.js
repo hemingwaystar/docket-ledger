@@ -1,10 +1,11 @@
 /* ==========================================================================
    js/desk/api.js — server I/O foundation.
    Owns: $fetch · mapIn() (the ONE place bootstrap data enters state — every
-   key the server emits is consumed here: me, groups, agents, clients, atypes,
-   states, priorities, canned, graph, vcfg, authCfg, secretMeta,
-   outboundEnabled, mailboxes, roles, rules, sla, biz, tickets, audit,
-   notifs) · hydrate() · oops() · attOpen() · stageUploads() ·
+   key the server emits is consumed here: me (incl. me.prefs → state.prefs),
+   groups, agents, clients, atypes, states, priorities, canned, graph, vcfg,
+   authCfg, secretMeta, outboundEnabled, mailboxes, groupSendas, roles, rules,
+   sla, biz, deskUi, tickets, audit, notifs) · hydrate() · oops() ·
+   attOpen() · stageUploads() ·
    srvId/isUuid/iso/typeName · ME (session identity) · HYD (focus throttle).
    Endpoints: GET /api/bootstrap · GET /api/attachments/{id} · POST /api/uploads.
    Invariants: hydration failure is LOUD — ⚠ title + alert (bug #13), never
@@ -53,8 +54,18 @@ function mapIn(d){
       type:'shared',groupId:(GROUPS[0]||{}).id,prio:2,outbound:false,
       desc:'Add one via /api/settings/mailboxes',status:'paused',today:0});
     Object.keys(GROUP_SENDAS).forEach(k=>delete GROUP_SENDAS[k]);
-    GROUPS.forEach(g=>{ const m=MAILBOXES.find(x=>x.groupId===g.id)||MAILBOXES[0];
-      if(m) GROUP_SENDAS[g.id]=m.id; });
+    Object.keys(GROUP_SENDAS_OVR).forEach(k=>delete GROUP_SENDAS_OVR[k]);
+    if(d.groupSendas){
+      /* server-resolved effective sender per board (0026): mailboxId already
+         folds in any group_sendas override; `override` flags the explicit
+         row so the routing card can label derived vs overridden */
+      d.groupSendas.forEach(r=>{ if(r.mailboxId) GROUP_SENDAS[r.groupId]=r.mailboxId;
+        GROUP_SENDAS_OVR[r.groupId]=!!r.override; });
+    }else{
+      /* pre-0026 payload — derive fed-by client-side, as before */
+      GROUPS.forEach(g=>{ const m=MAILBOXES.find(x=>x.groupId===g.id)||MAILBOXES[0];
+        if(m) GROUP_SENDAS[g.id]=m.id; });
+    }
   }
   try{
   /* automations — the engine is the mail-worker's: builders hydrate server
@@ -79,6 +90,15 @@ function mapIn(d){
     if(_e!=null) BIZ.end=(_e>(_s!=null?_s:BIZ.start))?_e:BIZ.start+1;
     if(Array.isArray(d.biz.holidays)) BIZ.holidays=d.biz.holidays;
     if(d.biz.tz) BIZ.tz=d.biz.tz;
+  }
+  /* admin UI defaults — app_config key desk_ui rides the bootstrap top level
+     like sla/biz: {overviews:[OverviewDef,...], dashboardStates:[label,...]}.
+     Absent or empty = shipped defaults (DEFAULT_OVERVIEWS / all states). */
+  Object.keys(DESK_UI).forEach(k=>delete DESK_UI[k]);
+  const dui = d.deskUi || d.desk_ui;
+  if(dui){
+    if(Array.isArray(dui.overviews)) DESK_UI.overviews = dui.overviews;
+    if(Array.isArray(dui.dashboardStates)) DESK_UI.dashboardStates = dui.dashboardStates;
   }
   if(d.notifs){ state.notifs.length=0; d.notifs.forEach(n=>state.notifs.push(n)); }
   d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });
@@ -115,6 +135,8 @@ function mapIn(d){
   state.user={name:ME.name,initials:ME.initials,role:'Live'};
   state.meId=(AGENTS.find(a=>a.email===ME.email)||{}).id||ME.id;
   state.perms=new Set(ME.perms);
+  /* per-user UI prefs (uprefs:<uuid> server-side; {} = follow admin defaults) */
+  state.prefs = ME.prefs || {};
   state.overview = state.perms.has('view_all') ? 'allopen' : 'myopen';
   state.ticketSeq=Math.max(100000,...state.tickets.map(t=>t.id));
   state.nextId=state.ticketSeq+1;

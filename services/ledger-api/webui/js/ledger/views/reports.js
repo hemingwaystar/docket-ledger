@@ -1,16 +1,20 @@
 /* views/reports.js — Reports view.
    Owns state.rpt (report grouping/range/filter/metric state; defaults to the
-   current month). buildReport computes grouped or detailed rows client-side from
-   hydrated entries; viewReports renders the builder, stat cards, result table and
-   the admin utilization card. CSV leaves via downloadCSV/copyCSV/exportUtilCSV.
+   current month). client / tech / type / billable / scope filters are
+   multi-select ARRAYS (empty = all; setRpt toggles membership, 'all'/null
+   clears); group / from / to / includeVoid stay scalar. buildReport computes
+   grouped or detailed rows client-side from hydrated entries; viewReports
+   renders the builder, stat cards, result table and the admin utilization
+   card. CSV leaves via downloadCSV/copyCSV/exportUtilCSV.
    This file calls no server endpoints. */
 
 state.rpt={
   group:'client', from:isoDate(new Date(NOW.getFullYear(),NOW.getMonth(),1)), to:isoDate(new Date(NOW.getFullYear(),NOW.getMonth()+1,0)),
-  client:'all', tech:'all', type:'all', billable:'all', scope:'all', includeVoid:false,
+  client:[], tech:[], type:[], billable:[], scope:[], includeVoid:false,
   metrics:{entries:true,hours:true,billable:true,nonbill:false,amount:true,avgrate:true},
   det:{rate:true,status:true,note:false,zammad:false}
 };
+const RPT_ARR=['client','tech','type','billable','scope'];   /* multi-select keys — empty array = all */
 
 function isoDate(d){ d=new Date(d); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function reportRange(){
@@ -20,17 +24,17 @@ function reportRange(){
   return [from,to];
 }
 function reportEntries(){
-  const r=state.rpt; const [from,to]=reportRange();
+  const r=_mfNorm(state.rpt,RPT_ARR); const [from,to]=reportRange();
   let es=scopedEntries().slice();
   if(!r.includeVoid) es=es.filter(e=>e.status!=='void');
   es=es.filter(e=> e.startedAt>=from && e.startedAt<=to);
-  if(r.client!=='all') es=es.filter(e=>e.clientId===r.client);
-  if(isAdmin() && r.tech!=='all') es=es.filter(e=>e.techId===r.tech);
-  if(r.type!=='all')   es=es.filter(e=>e.typeId===r.type);
-  if(r.billable==='billable') es=es.filter(e=>priced(e).billable);
-  if(r.billable==='nonbill')  es=es.filter(e=>{const p=priced(e);return !p.billable && !p.unclassified;});
-  if(r.scope==='open')   es=es.filter(e=>!isLocked(e));
-  if(r.scope==='locked') es=es.filter(e=> isLocked(e));
+  /* every multi-select predicate is any-of; empty = no constraint */
+  if(r.client.length) es=es.filter(e=>r.client.includes(e.clientId));
+  if(isAdmin() && r.tech.length) es=es.filter(e=>r.tech.includes(e.techId));
+  if(r.type.length)   es=es.filter(e=>r.type.includes(e.typeId));
+  if(r.billable.length) es=es.filter(e=>{const p=priced(e);
+    return r.billable.some(v=> v==='billable'?p.billable:(!p.billable && !p.unclassified));});
+  if(r.scope.length) es=es.filter(e=> r.scope.some(v=> v==='open'?!isLocked(e):isLocked(e)));
   return es;
 }
 function buildReport(){
@@ -148,7 +152,15 @@ function reportCSV(rep){
 }
 function reportTitle(){ return {entry:'Detailed timesheet report',client:'Billing summary by client',tech:'Hours by technician',type:'Summary by activity type',period:'Billing periods report',ticket:'Summary by ticket'}[state.rpt.group]; }
 function reportFilename(){ const r=state.rpt; return `ledger-${r.group}-${(r.from||'start')}_to_${(r.to||'end')}.csv`; }
-function setRpt(k,v){ state.rpt[k]=v; render(); }
+function setRpt(k,v){
+  if(RPT_ARR.includes(k)){
+    _mfNorm(state.rpt,RPT_ARR);
+    if(v==null||v==='all') state.rpt[k]=[];
+    else { const a=state.rpt[k], i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); }
+    render(); return;
+  }
+  state.rpt[k]=v; render();
+}
 function setRptMetric(k){ state.rpt.metrics[k]=!state.rpt.metrics[k]; render(); }
 function setRptDet(k){ state.rpt.det[k]=!state.rpt.det[k]; render(); }
 function rptPreset(p){
@@ -190,10 +202,9 @@ function exportUtilCSV(){
 }
 function viewReports(){
   const admin=isAdmin(), money=canSeeMoney();
-  const r=state.rpt;
+  const r=_mfNorm(state.rpt,RPT_ARR);
   if(!admin && r.group==='tech') r.group='client';   // techs have no "by technician"
   const rep=buildReport(), t=rep.totals;
-  const opt=(v,l,cur)=>`<option value="${v}" ${cur===v?'selected':''}>${l}</option>`;
   const isDet=r.group==='entry';
   let groups=[['entry','Detailed entries'],['client','By client'],['tech','By technician'],['type','By activity type'],['period','By billing period'],['ticket','By ticket']];
   if(!admin) groups=groups.filter(([v])=>v!=='tech');
@@ -220,11 +231,11 @@ function viewReports(){
       <label class="mini" style="display:flex;align-items:center;gap:6px">to <input type="date" value="${r.to}" onchange="setRpt('to',this.value)"></label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rptClient', [{v:'all',label:'All clients'},...state.clients.filter(c=>!c.archivedInDocket||r.client===c.id).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')}))], r.client, function(){ setRpt('client', document.getElementById('rptClient').value); }, 'All clients')}</span>
-      ${admin?`<select onchange="setRpt('tech',this.value)">${opt('all','All techs',r.tech)}${state.techs.map(x=>opt(x.id,x.name,r.tech)).join('')}</select>`:''}
-      <select onchange="setRpt('type',this.value)">${opt('all','All activities',r.type)}${state.types.filter(a=>a.active!==false||r.type===a.id).map(a=>opt(a.id,a.name+(a.active===false?' (archived)':''),r.type)).join('')}</select>
-      ${money?`<select onchange="setRpt('billable',this.value)">${opt('all','Billable + non',r.billable)}${opt('billable','Billable only',r.billable)}${opt('nonbill','Non-billable only',r.billable)}</select>`:''}
-      <select onchange="setRpt('scope',this.value)">${opt('all','Any status',r.scope)}${opt('open','Open only',r.scope)}${opt('locked','Approved / locked',r.scope)}</select>
+      <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('rptClient', state.clients.filter(c=>!c.archivedInDocket||r.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')})), r.client, function(v){ setRpt('client',v); }, 'All clients')}</span>
+      ${admin?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('rptTech', state.techs.map(t=>({v:t.id,label:t.name})), r.tech, function(v){ setRpt('tech',v); }, 'All techs')}</span>`:''}
+      <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('rptType', state.types.filter(a=>a.active!==false||r.type.includes(a.id)).map(a=>({v:a.id,label:a.name+(a.active===false?' (archived)':'')})), r.type, function(v){ setRpt('type',v); }, 'All activities')}</span>
+      ${money?`<span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('rptBill', [{v:'billable',label:'Billable'},{v:'nonbill',label:'Non-billable'}], r.billable, function(v){ setRpt('billable',v); }, 'Billable + non')}</span>`:''}
+      <span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('rptScope', [{v:'open',label:'Open'},{v:'locked',label:'Approved / locked'}], r.scope, function(v){ setRpt('scope',v); }, 'Any status')}</span>
       <label class="mini" style="display:flex;align-items:center;gap:6px"><input type="checkbox" ${r.includeVoid?'checked':''} onchange="setRpt('includeVoid',this.checked)"> include voided</label>
     </div>
     <div class="rpt-line"><span class="rpt-lab">${isDet?'Columns':'Metrics'}</span><div class="seg wrap">${metricSeg}</div></div>

@@ -1,35 +1,47 @@
 /* ==========================================================================
    js/desk/views/audit.js — the Audit Log view and its filters.
-   Owns: viewAudit() · setAF()/clearAF()/auditPreset() (the state.af filter
-   bag) · auditFiltered(). state.audit hydrates from GET /api/bootstrap
-   (api.js); CSV copy/export are the shared exporters in views/tickets.js
-   (copyAuditCSV/exportAuditCSV).
+   Owns: viewAudit() · af()/setAF()/clearAF()/auditPreset() (the state.af
+   filter bag — who/action are multi-select arrays, empty = all; multiCombo
+   lives in render.js) · auditFiltered(). state.audit hydrates from
+   GET /api/bootstrap (api.js); CSV copy/export are the shared exporters in
+   views/tickets.js (copyAuditCSV/exportAuditCSV — they export the WHOLE
+   log, not this view's slice, by design).
    Endpoints: none.
    ========================================================================== */
 
-function setAF(k,v){ (state.af=state.af||{}); state.af[k]=v; render(); }
-function clearAF(){ state.af = { preset:'all', from:'', to:'', who:'all', action:'all', q:'' }; render(); }
-function auditPreset(p){ state.af = Object.assign(state.af||{}, {preset:p, from:'', to:''}); render(); }
+function af(){
+  const f = state.af = Object.assign({ preset:'all', from:'', to:'', who:[], action:[], q:'' }, state.af||{});
+  /* re-clone the array keys every read so the default empties are never
+     shared into (or mutated through) live filter state */
+  ['who','action'].forEach(k=>{ f[k] = Array.isArray(f[k]) ? f[k].slice() : []; });
+  return f;
+}
+function setAF(k,v){ af()[k]=v; render(); }
+/* multiCombo onchg targets — the component calls window[name](selectedArr),
+   so each control gets its own named global (one function per control) */
+function setAFAction(vals){ setAF('action', vals); }
+function setAFWho(vals){ setAF('who', vals); }
+function clearAF(){ state.af = null; af(); render(); }
+function auditPreset(p){ Object.assign(af(), {preset:p, from:'', to:''}); render(); }
 function auditFiltered(){
-  const f = state.af || {};
+  const f = af();
   let rows = state.audit.slice();
   const cut = { '1h':1*H, '4h':4*H, '24h':24*H }[f.preset];
   if(cut) rows = rows.filter(a=>nowMs()-a.ts <= cut);
   /* date inputs are wall-clock; shift onto the nowMs() timeline */
   if(f.from) rows = rows.filter(a=>a.ts >= new Date(f.from+'T00:00').getTime()-(BOOT-NOW.getTime()));
   if(f.to) rows = rows.filter(a=>a.ts <= new Date(f.to+'T23:59').getTime()-(BOOT-NOW.getTime()));
-  if(f.who && f.who!=='all') rows = rows.filter(a=>a.who===f.who);
-  if(f.action && f.action!=='all') rows = rows.filter(a=>a.action===f.action);
+  if(f.who.length) rows = rows.filter(a=>f.who.includes(a.who));
+  if(f.action.length) rows = rows.filter(a=>f.action.includes(a.action));
   if(f.q){ const q=f.q.toLowerCase(); rows = rows.filter(a=>((a.action||'')+' '+(a.detail||'')+' '+(a.who||'')).toLowerCase().includes(q)); }
   return rows;
 }
 function viewAudit(){
-  const f = state.af || (state.af = { preset:'all', from:'', to:'', who:'all', action:'all', q:'' });
-  const opt = (v,l,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`;
+  const f = af();
   const actions = [...new Set(state.audit.map(a=>a.action))].sort();
   const whos = [...new Set(state.audit.map(a=>a.who).filter(Boolean))].sort();
   const rows = auditFiltered();
-  const anyF = f.preset!=='all'||f.from||f.to||f.who!=='all'||f.action!=='all'||f.q;
+  const anyF = f.preset!=='all'||f.from||f.to||f.who.length||f.action.length||f.q;
   return `
   ${can('export_csv')?`<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
     <button class="btn sm" onclick="copyAuditCSV()">Copy</button>
@@ -43,8 +55,8 @@ function viewAudit(){
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><span class="mini muted" style="width:52px;text-transform:uppercase;letter-spacing:.07em;font-weight:600">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search action, detail, actor…" value="${esc(f.q||'')}" data-fkey="daf-q" oninput="setAF('q',this.value)"></div>
-      <select style="width:auto" onchange="setAF('action',this.value)">${opt('all','All events',f.action)}${actions.map(a=>opt(a,a,f.action)).join('')}</select>
-      <select style="width:auto" onchange="setAF('who',this.value)">${opt('all','All actors',f.who)}${whos.map(w=>opt(w,w,f.who)).join('')}</select>
+      <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('afAction', actions.map(a=>({v:a,label:a})), f.action, 'setAFAction', 'All events')}</span>
+      <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('afWho', whos.map(w=>({v:w,label:w})), f.who, 'setAFWho', 'All actors')}</span>
       ${anyF?`<button class="btn sm ghost" onclick="clearAF()">Clear</button>`:''}
       <span class="spacer"></span><span class="mini muted">${rows.length} of ${state.audit.length} events</span>
     </div>

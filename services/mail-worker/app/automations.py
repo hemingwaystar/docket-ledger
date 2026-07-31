@@ -11,9 +11,12 @@ vocabulary at this boundary, translating to database ids internally):
   trigger    event: create|followup|state|priority|owner (+event_value =
              prototype state id for state triggers)
              conditions: [{field: state|priority|group|client|tags|from|mailbox,
-                           op: is|is not|contains|not contains, value}]
+                           op: is|is not|contains|not contains,
+                           value: "a, b, c" (any-of)}]
              — values compare against LABELS/NAMES (state label, priority
-             label, group name, client name), just like trigCondMatch.
+             label, group name, client name), just like trigCondMatch:
+             is/contains hit on ANY comma-separated value, is not/not
+             contains only when NONE do; a lone value is a one-element any-of.
              actions:    [{type: email|note|tag|state|prio|group|autoassign,
                            value}] — state action value is a prototype state
              id; prio is a rank number; group is a group uuid.
@@ -319,15 +322,23 @@ def _autoassign(cur, ctx, mode):
 
 
 def _trigger_email(cur, ctx, body_tpl):
-    """Same outbound resolution as agent replies; records staged when
-    outbound is off. Returns a description or None (no recipient/mailbox)."""
+    """Same outbound resolution as agent replies — group_sendas override
+    (when live + outbound) → fed-by mailbox; records staged when outbound
+    is off. Returns a description or None (no recipient/mailbox)."""
     to = ctx["contact_email"] or ctx["last_sender"]
     if not to:
         return None
-    cur.execute("""SELECT m.address, m.display_name FROM desk.mailboxes m
-                    WHERE m.group_id = %s AND NOT m.paused AND m.outbound
-                    ORDER BY m.address LIMIT 1""", (ctx["group_id"],))
+    cur.execute("""SELECT m.address, m.display_name
+                     FROM desk.group_sendas gs
+                     JOIN desk.mailboxes m ON m.id = gs.mailbox_id
+                    WHERE gs.group_id = %s AND NOT m.paused AND m.outbound""",
+                (ctx["group_id"],))
     mb = cur.fetchone()
+    if mb is None:
+        cur.execute("""SELECT m.address, m.display_name FROM desk.mailboxes m
+                        WHERE m.group_id = %s AND NOT m.paused AND m.outbound
+                        ORDER BY m.address LIMIT 1""", (ctx["group_id"],))
+        mb = cur.fetchone()
     if mb is None:
         return None
     body = _vars(body_tpl, ctx)

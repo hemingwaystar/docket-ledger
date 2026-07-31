@@ -24,7 +24,7 @@ from . import auth, crypto, db, helpers, mailer
 router = APIRouter(prefix="/api/settings")
 
 CONFIG_KEYS = ("auth", "graph", "mail", "verification", "business_hours",
-               "odoo", "retainers", "projects", "sla")
+               "odoo", "retainers", "projects", "sla", "desk_ui")
 
 
 @router.get("/config")
@@ -33,8 +33,10 @@ def all_config(request: Request):
         who = auth.require(conn, request)
         auth.need(who, "manage_settings", "manage_automations")
         with conn.cursor(row_factory=dict_row) as cur:
+            # per-user prefs rows (uprefs:<uuid>, sessions.py) are not settings;
+            # %% stays a literal % even if this query ever grows parameters
             cur.execute("SELECT key, value, updated_at, updated_by FROM shared.app_config "
-                        "ORDER BY key")
+                        "WHERE key NOT LIKE 'uprefs:%%' ORDER BY key")
             return {"config": cur.fetchall()}
 
 
@@ -530,6 +532,55 @@ def patch_priority(priority_id: str, body: PatchPriority, request: Request):
             auth.audit(conn, "desk", "Priority updated", f"priority:{priority_id}",
                        f"{row[0]} · " + ", ".join(cols))
         return {"id": priority_id, "label": row[0], "rank": row[1], "active": row[2]}
+
+
+class SendAs(BaseModel):
+    mailbox: str | None                # address, or null = clear (follow fed-by)
+
+
+@router.patch("/groups/{group_id}/sendas")
+def patch_group_sendas(group_id: str, body: SendAs, request: Request):
+    """Per-board outbound sender override (0026). mailbox_id NULL = keep the
+    fed-by derivation; receive-only mailboxes are refused — they can never
+    be a sender. Both resolvers (reply path + trigger mailer) read this."""
+    _uuid_or_404(group_id, "group")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM shared.groups WHERE id = %s", (group_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such group")
+            (gname,) = row
+            mid = addr = None
+            if body.mailbox is not None:
+                cur.execute("""SELECT id, address, outbound, paused FROM desk.mailboxes
+                                WHERE lower(address) = lower(%s)""",
+                            (body.mailbox.strip(),))
+                mrow = cur.fetchone()
+                if mrow is None:
+                    raise HTTPException(404, "No such mailbox")
+                mid, addr, outbound, paused = mrow
+                # one definition of outbound-eligible at all three sites: here,
+                # both resolvers, and the bootstrap emission (outbound + unpaused)
+                if not outbound:
+                    raise HTTPException(422, f"{addr} is receive-only — it can't be a sender")
+                if paused:
+                    raise HTTPException(422, f"{addr} is paused — resume it before "
+                                             "making it a sender")
+            cur.execute("""INSERT INTO desk.group_sendas (group_id, mailbox_id)
+                           VALUES (%s, %s)
+                           ON CONFLICT (group_id) DO UPDATE
+                             SET mailbox_id = EXCLUDED.mailbox_id,
+                                 updated_at = now()""",
+                        (group_id, mid))
+        auth.audit(conn, "desk",
+                   "Outbound sender overridden" if mid else "Outbound sender cleared",
+                   f"group:{group_id}",
+                   (f"{gname}: {addr}" if mid else f"{gname}: derived from fed-by")
+                   + f" ({who['label']})")
+        return {"ok": True, "mailbox": addr, "override": mid is not None}
 
 
 @router.get("/tokens")

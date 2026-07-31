@@ -1,7 +1,11 @@
 """Login sessions + local credential management — HANDOFF §10.16 verbatim:
 argon2id passwords, TOTP MFA, temp-password must-change flow, NO email reset
 links ever — admin-direct resets only, everything audited. Sessions are
-DB-backed (0004) with the role matrix snapshotted at sign-in."""
+DB-backed (0004) with the role matrix snapshotted at sign-in.
+
+Also owns per-user UI prefs (build 10): PUT /auth/me/prefs stores the whole
+prefs object under app_config 'uprefs:<agent uuid>' — the uuid comes from
+the session, never the body, so nobody can write another user's prefs."""
 import hashlib
 import json
 import os
@@ -122,6 +126,31 @@ def me(request: Request):
         return {"name": who["name"], "email": who["email"],
                 "perms": sorted(who["perms"]),
                 "must_change_password": who["must_change"]}
+
+
+PREFS_CAP = 16 * 1024                  # bytes of serialized JSON — sanity, not quota
+
+
+@router.put("/me/prefs")
+def put_prefs(body: dict, request: Request):
+    """The whole prefs object, upserted as one value (read back via bootstrap
+    me.prefs). Session-only: the key is derived from the session's agent."""
+    raw = json.dumps(body)
+    if len(raw.encode()) > PREFS_CAP:
+        raise HTTPException(413, "Prefs object exceeds the 16 KB cap")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO shared.app_config (key, value)
+                           VALUES (%s, %s)
+                           ON CONFLICT (key) DO UPDATE
+                             SET value = EXCLUDED.value, updated_at = now(),
+                                 updated_by = shared.current_actor(),
+                                 version = shared.app_config.version + 1""",
+                        (f"uprefs:{who['agent_id']}", raw))
+        return {"ok": True, "prefs": body}
 
 
 class ChangePassword(BaseModel):

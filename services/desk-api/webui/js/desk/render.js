@@ -3,8 +3,10 @@
    Owns: render()/renderNav() (focus/caret/scroll carry — bug #26) · router
    go()/openTicket()/openClient() · shared chip renderers · commitRender +
    input ergonomics listeners · modal/scrim · combo (searchable dropdown) ·
-   toast · notification bell · global search.
-   Endpoints: POST /api/automations/notifications/read (bellGo).
+   multiCombo (checkbox dropdown + chips, empty = All) · toast ·
+   notification bell · global search.
+   Endpoints: POST /api/automations/notifications/read
+     ({ids:[id]} bellGo · {all:true} bellAllRead).
    Invariants: render() is the only #content rebuild (plus nav/title/badge);
    until the first hydrate lands it shows a plain Loading… card.
    ========================================================================== */
@@ -115,12 +117,27 @@ document.addEventListener('keydown',function(e){
 function toggleBell(){
   const b = document.getElementById('bellBox');
   if(b.style.display==='block'){ b.style.display='none'; return; }
-  b.innerHTML = state.notifs.length
+  b.innerHTML =
+    `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)">
+      <span class="mini muted" style="text-transform:uppercase;letter-spacing:.06em">Notifications</span>
+      ${state.notifs.some(x=>!x.read)?`<button class="rowbtn" onclick="bellAllRead()">Mark all read</button>`:''}
+    </div>` +
+    (state.notifs.length
     ? state.notifs.slice(0,20).map(n=>`<div style="padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;${n.read?'opacity:.6':''}" onmousedown="bellGo('${n.id}')">
         <div style="font-size:12.5px">${n.kind==='breach'?'🔴':'⚠️'} ${esc(n.text)}</div>
         <div class="mini muted">${fmtDT(n.ts)}</div></div>`).join('')
-    : '<div class="mini muted" style="padding:12px">No notifications — SLA warnings and breaches land here.</div>';
+    : '<div class="mini muted" style="padding:12px">No notifications — SLA warnings and breaches land here.</div>');
   b.style.display='block';
+}
+function bellAllRead(){
+  if(!state.notifs.some(x=>!x.read)) return;                    /* diff-guard */
+  state.notifs.forEach(n=>{ n.read=true; });
+  document.getElementById('bellBox').style.display='none';
+  render();                                                     /* badge → 0 */
+  $fetch('/api/automations/notifications/read',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); })
+    .catch(()=>oops());
 }
 function bellGo(nid){
   const n = state.notifs.find(x=>x.id===nid); if(!n) return;
@@ -206,6 +223,70 @@ function comboPickFirst(id){
 }
 function comboClose(id){ const b=document.getElementById(id+'-list'); if(b) b.style.display='none'; }
 document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.combo')) document.querySelectorAll('[id$="-list"]').forEach(b=>b.style.display='none'); });
+
+/* multi-select dropdown — combo's checkbox sibling. Picked values render as
+   removable chips; empty selection = All. opts: [{v,label,sub?,archived?}] —
+   archived options stay out of the list unless currently picked, then read
+   "(archived)" (row 37). onchg is a GLOBAL function NAME (inline-handler
+   architecture): window[onchg](selectedArr, fkey) fires after every toggle;
+   that handler owns state + render(). open + the typed query survive the
+   rebuild so the list stays up while several boxes are ticked. */
+const _mcombos = {};  /* fkey → {opts, sel, onchg, open, q} — options live here, not in the DOM */
+function multiCombo(fkey, opts, sel, onchg, placeholder){
+  sel = (sel||[]).slice();
+  const has = v => sel.some(s=>String(s)===String(v));
+  opts = opts.filter(o=>!o.archived || has(o.v))
+             .map(o=>o.archived ? Object.assign({},o,{label:o.label+' (archived)'}) : o);
+  const prev = _mcombos[fkey]||{};
+  const m = _mcombos[fkey] = { opts, sel, onchg, open: !!prev.open, q: prev.q||'' };
+  const chips = sel.map(v=>{ const o=opts.find(x=>String(x.v)===String(v));
+    return o?`<span class="chip tagchip" style="margin-top:3px">${esc(o.label)}<button onclick="mcToggle('${fkey}','${jsq(String(o.v))}')" title="remove">×</button></span>`:''; }).join('');
+  return `<div class="combo mcombo" style="position:relative">
+    <input type="text" id="${fkey}-q" autocomplete="off" placeholder="${esc(sel.length?sel.length+' selected':(placeholder||'All'))}" value="${esc(m.open?m.q:'')}"
+      onfocus="mcOpen('${fkey}')" oninput="mcFilter('${fkey}')"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();mcFirst('${fkey}');} if(event.key==='Escape'){mcClose('${fkey}');}">
+    <div id="${fkey}-list" style="display:${m.open?'block':'none'};position:absolute;top:100%;left:0;right:0;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);z-index:80">${m.open?mcRows(fkey,m.q):''}</div>
+    ${chips?`<div style="display:flex;flex-wrap:wrap;gap:0 4px">${chips}</div>`:''}
+  </div>`;
+}
+function mcRows(fkey, q){
+  const m = _mcombos[fkey]; if(!m) return '';
+  q = (q||'').trim().toLowerCase();
+  const has = v => m.sel.some(s=>String(s)===String(v));
+  const row = (h, on, click) => `<div style="display:flex;align-items:center;gap:7px;padding:7px 11px;cursor:pointer;font-size:13px" onmousedown="event.preventDefault();${click}"><input type="checkbox" tabindex="-1" style="pointer-events:none" ${on?'checked':''}>${h}</div>`;
+  return row(`<b>All</b>`, !m.sel.length, `mcClear('${fkey}')`) +
+    (m.opts.filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q))
+      .slice(0,50)
+      .map(o=>row(`<b>${esc(o.label)}</b>${o.sub?` <span class="mini muted">${esc(o.sub)}</span>`:''}`, has(o.v), `mcToggle('${fkey}','${jsq(String(o.v))}')`)).join('')
+    || `<div class="mini muted" style="padding:9px 11px">No matches.</div>`);
+}
+function mcOpen(fkey){ const m=_mcombos[fkey]; if(!m) return; m.open=true; const q=document.getElementById(fkey+'-q'); if(q) q.select(); mcFilter(fkey); }
+function mcFilter(fkey){
+  const m=_mcombos[fkey], box=document.getElementById(fkey+'-list'); if(!m||!box) return;
+  m.q = document.getElementById(fkey+'-q').value;
+  box.innerHTML = mcRows(fkey, m.q);
+  box.style.display='block';
+}
+function mcToggle(fkey, v){
+  const m=_mcombos[fkey]; if(!m) return;
+  const i=m.sel.findIndex(s=>String(s)===String(v));
+  if(i>=0) m.sel.splice(i,1);
+  else { const o=m.opts.find(x=>String(x.v)===String(v)); if(!o) return; m.sel.push(o.v); }
+  const f=window[m.onchg]; if(typeof f==='function') f(m.sel.slice(), fkey);
+}
+function mcClear(fkey){
+  const m=_mcombos[fkey]; if(!m||!m.sel.length) return;        /* already All */
+  m.sel.length=0;
+  const f=window[m.onchg]; if(typeof f==='function') f([], fkey);
+}
+function mcFirst(fkey){
+  const m=_mcombos[fkey]; if(!m) return;
+  const q=document.getElementById(fkey+'-q').value.trim().toLowerCase();
+  const o=m.opts.find(x=>!q || x.label.toLowerCase().includes(q) || (x.sub||'').toLowerCase().includes(q));
+  if(o) mcToggle(fkey, String(o.v));
+}
+function mcClose(fkey){ const m=_mcombos[fkey]; if(m){ m.open=false; m.q=''; } const b=document.getElementById(fkey+'-list'); if(b) b.style.display='none'; }
+document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.mcombo')) Object.keys(_mcombos).forEach(k=>{ if(_mcombos[k].open) mcClose(k); }); });
 
 /* ---------------- toast ---------------- */
 function toast(msg){

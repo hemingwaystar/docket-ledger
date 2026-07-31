@@ -1,22 +1,40 @@
 /* ==========================================================================
    js/desk/views/reports.js — reporting over the hydrated ticket set.
-   Owns: state.rf filter state (RF_DEFAULTS / RF_BREAKDOWNS catalogs) ·
-   reportSlice() — the ONE filtered slice that the stat cards, charts,
-   breakdown table and CSV export all read · reportBreakdown() ·
+   Owns: state.rf filter state (RF_DEFAULTS / RF_ARRAYS / RF_BREAKDOWNS
+   catalogs) · reportSlice() — the ONE filtered slice that the stat cards,
+   charts, breakdown table and CSV export all read · reportBreakdown() ·
    viewReports · CSV export / copy (export_csv-gated).
    Endpoints: none — pure computation over state hydrated by api.js.
    Invariants: setRFQ re-renders live but restores focus + caret in the
    search box (the innerHTML rebuild would otherwise blur it on every
-   keystroke — bug #26's lesson applied locally).
+   keystroke — bug #26's lesson applied locally). The RF_ARRAYS filters are
+   multi-selects (multiCombo, render.js): arrays of STRING values, empty
+   array = no constraint. Archived entries stay out of the pickers unless
+   currently selected (row 37).
    ========================================================================== */
 
 /* Reports filter state: period preset or custom from/to range, date basis
-   (updated vs created), group / client / tech / priority / state / tag,
-   full-text search over titles + article bodies, and a selectable
-   breakdown dimension for the table + CSV. */
-const RF_DEFAULTS = { preset:'all', from:'', to:'', basis:'updated', group:'all', client:'all', tech:'all', prio:'all', st:'all', tag:'all', q:'', breakdown:'group' };
-function rf(){ return state.rf = Object.assign({}, RF_DEFAULTS, state.rf||{}); }
+   (updated vs created), group / client / tech / priority / state / tag
+   multi-selects (empty = all), full-text search over titles + article
+   bodies, and a selectable breakdown dimension for the table + CSV. */
+const RF_DEFAULTS = { preset:'all', from:'', to:'', basis:'updated', group:[], client:[], tech:[], prio:[], st:[], tag:[], q:'', breakdown:'group' };
+const RF_ARRAYS = ['group','client','tech','prio','st','tag'];
+function rf(){
+  const f = state.rf = Object.assign({}, RF_DEFAULTS, state.rf||{});
+  /* re-clone the array keys every read so RF_DEFAULTS' empties are never
+     shared into (or mutated through) live filter state */
+  RF_ARRAYS.forEach(k=>{ f[k] = Array.isArray(f[k]) ? f[k].slice() : []; });
+  return f;
+}
 function setRF(k,v){ rf()[k]=v; render(); }
+/* multiCombo onchg targets — the component calls window[name](selectedArr),
+   so each control gets its own named global (one function per control) */
+function setRFGroup(vals){ setRF('group', vals); }
+function setRFClient(vals){ setRF('client', vals); }
+function setRFTech(vals){ setRF('tech', vals); }
+function setRFPrio(vals){ setRF('prio', vals); }
+function setRFSt(vals){ setRF('st', vals); }
+function setRFTag(vals){ setRF('tag', vals); }
 function setRFPreset(v){ const f=rf(); f.preset=v; f.from=''; f.to=''; render(); }
 function setRFDate(k,v){ const f=rf(); f[k]=v; f.preset='custom'; render(); }
 /* text search: re-render live but keep focus + caret in the search box
@@ -36,18 +54,16 @@ function reportSlice(){
     const cut = { '24h':24*H, '7d':7*24*H, '30d':30*24*H }[f.preset];
     if(cut) sc = sc.filter(t=>nowMs()-bt(t) <= cut);
   }
-  if(f.group!=='all') sc = sc.filter(t=>t.groupId===f.group);
-  if(f.client!=='all') sc = sc.filter(t=>t.clientId===f.client);
-  if(f.prio!=='all') sc = sc.filter(t=>String(t.prio)===f.prio);
-  if(f.tech!=='all') sc = sc.filter(t=>t.ownerId===f.tech || t.time.some(e=>e.techId===f.tech));
-  if(f.st!=='all'){
-    if(f.st.startsWith('type:')){ const ty=f.st.slice(5); sc = sc.filter(t=>(st8(t.st)||{}).type===ty); }
-    else sc = sc.filter(t=>t.st===f.st);
-  }
-  if(f.tag!=='all'){
-    if(f.tag==='(untagged)') sc = sc.filter(t=>t.tags.length===0);
-    else sc = sc.filter(t=>t.tags.includes(f.tag));
-  }
+  if(f.group.length) sc = sc.filter(t=>f.group.includes(String(t.groupId)));
+  if(f.client.length) sc = sc.filter(t=>f.client.includes(String(t.clientId)));
+  if(f.prio.length) sc = sc.filter(t=>f.prio.includes(String(t.prio)));
+  if(f.tech.length) sc = sc.filter(t=>f.tech.includes(String(t.ownerId)) || t.time.some(e=>f.tech.includes(String(e.techId))));
+  /* state entries mix two vocabularies — 'type:<kind>' pseudo-values and
+     concrete state ids; a ticket matches if ANY selected entry matches */
+  if(f.st.length) sc = sc.filter(t=>f.st.some(v=>
+    v.startsWith('type:') ? (st8(t.st)||{}).type===v.slice(5) : t.st===v));
+  if(f.tag.length) sc = sc.filter(t=>f.tag.some(v=>
+    v==='(untagged)' ? t.tags.length===0 : t.tags.includes(v)));
   if(f.q){
     const ql = f.q.toLowerCase();
     sc = sc.filter(t =>
@@ -96,7 +112,7 @@ function copyReportCSV(){ if(!can('export_csv')) return; copyRowsCSV(reportCSVRo
 function viewReports(){
   const f = rf();
   const sc = reportSlice();
-  const anyF = f.preset!=='all'||f.from||f.to||f.group!=='all'||f.client!=='all'||f.tech!=='all'||f.prio!=='all'||f.st!=='all'||f.tag!=='all'||f.q;
+  const anyF = f.preset!=='all'||f.from||f.to||RF_ARRAYS.some(k=>f[k].length)||f.q;
   const opt = (v,l,cur)=>`<option value="${esc(String(v))}" ${cur===String(v)?'selected':''}>${esc(l)}</option>`;
   const rows = (items, keyFn, labFn) => {
     const m = new Map();
@@ -110,7 +126,7 @@ function viewReports(){
   const frs = sc.map(t=>{ const r=t.articles.find(a=>a.kind==='reply'); return r? (r.ts-t.createdAt)/H : null; }).filter(x=>x!==null).sort((a,b)=>a-b);
   const med = frs.length? frs[Math.floor(frs.length/2)] : 0;
   const hrsByTech = new Map();
-  sc.forEach(t=>t.time.forEach(e=>{ if(f.tech==='all'||e.techId===f.tech) hrsByTech.set(e.techId,(hrsByTech.get(e.techId)||0)+e.h); }));
+  sc.forEach(t=>t.time.forEach(e=>{ if(!f.tech.length||f.tech.includes(String(e.techId))) hrsByTech.set(e.techId,(hrsByTech.get(e.techId)||0)+e.h); }));
   const allTags = [...new Set(scoped().flatMap(t=>t.tags))].sort();
   const custom = f.from||f.to;
   const bd = reportBreakdown(sc);
@@ -131,12 +147,12 @@ function viewReports(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" id="rfQ" placeholder="Search number, title, client, article text…" value="${esc(f.q)}" oninput="setRFQ(this)" style="width:250px"></div>
-      <select style="width:auto" onchange="setRF('group',this.value)">${opt('all','All groups',f.group)}${GROUPS.filter(g=>!isArch(g)||f.group===String(g.id)).map(g=>opt(g.id,g.name+(isArch(g)?' (archived)':''),f.group)).join('')}</select>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('rfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.filter(c=>c.status!=='archived'||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''}))], f.client, function(){ setRF('client', document.getElementById('rfClient').value); }, 'All clients')}</span>
-      <select style="width:auto" onchange="setRF('tech',this.value)">${opt('all','All technicians',f.tech)}${AGENTS.map(a=>opt(a.id,a.name,f.tech)).join('')}</select>
-      <select style="width:auto" onchange="setRF('prio',this.value)">${opt('all','Any priority',f.prio)}${PRIOS.filter(p=>!isArch(p)||f.prio===String(p.id)).map(p=>opt(p.id,p.label+(isArch(p)?' (archived)':''),f.prio)).join('')}</select>
-      <select style="width:auto" onchange="setRF('st',this.value)">${opt('all','Any state',f.st)}${opt('type:open','Any open',f.st)}${opt('type:paused','Any paused',f.st)}${opt('type:done','Any done',f.st)}${STATES.filter(s=>!isArch(s)||f.st===String(s.id)).map(s=>opt(s.id,'— '+s.label+(isArch(s)?' (archived)':''),f.st)).join('')}</select>
-      <select style="width:auto" onchange="setRF('tag',this.value)">${opt('all','Any tag',f.tag)}${opt('(untagged)','(untagged)',f.tag)}${allTags.map(tg=>opt(tg,tg,f.tag)).join('')}</select>
+      <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('rfGroup', GROUPS.map(g=>({v:String(g.id),label:g.name,archived:isArch(g)})), f.group, 'setRFGroup', 'All groups')}</span>
+      <span style="display:inline-block;min-width:180px;vertical-align:middle">${multiCombo('rfClient', CLIENTS.map(c=>({v:String(c.id),label:c.name,sub:c.domain||'',archived:c.status==='archived'})), f.client, 'setRFClient', 'All clients')}</span>
+      <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('rfTech', AGENTS.map(a=>({v:String(a.id),label:a.name})), f.tech, 'setRFTech', 'All technicians')}</span>
+      <span style="display:inline-block;min-width:140px;vertical-align:middle">${multiCombo('rfPrio', PRIOS.map(p=>({v:String(p.id),label:p.label,archived:isArch(p)})), f.prio, 'setRFPrio', 'Any priority')}</span>
+      <span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('rfSt', [{v:'type:open',label:'Any open'},{v:'type:paused',label:'Any paused'},{v:'type:done',label:'Any done'},...STATES.map(s=>({v:String(s.id),label:'— '+s.label,archived:isArch(s)}))], f.st, 'setRFSt', 'Any state')}</span>
+      <span style="display:inline-block;min-width:130px;vertical-align:middle">${multiCombo('rfTag', [{v:'(untagged)',label:'(untagged)'},...allTags.map(tg=>({v:tg,label:tg}))], f.tag, 'setRFTag', 'Any tag')}</span>
       ${anyF?`<button class="btn sm ghost" onclick="clearRF()">Clear</button>`:''}
     </div>
     <div class="rpt-line"><span class="rpt-lab">Breakdown</span>

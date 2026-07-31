@@ -5,7 +5,8 @@
    the mail-worker's engine (0019); no matching or firing happens here.
    Owns: viewAutomations · goBoard · ruleWhen/ruleThen · graphSet ·
    graphConnect/graphReconsent · graphDisconnect · toggleMailbox ·
-   mailboxModal/saveMailbox · toggleOutboundMaster · toggleRule2/toggleTrig/
+   mailboxModal/saveMailbox · toggleOutboundMaster · sendasSet (the routing
+   card's per-board sender picker) · toggleRule2/toggleTrig/
    deleteTrig/moveRule · ruleModal machinery + saveRule · trigModal machinery
    + saveTrig · cannedModal/saveCanned/deleteCanned · authSet/authToggleSSO/
    authToggleLocal/authToggleMapping · bizDay/bizHours/bizHolidays · slaSet
@@ -14,14 +15,20 @@
    Endpoints: POST /api/automations/rules · PATCH /api/automations/rules/{id} ·
    POST /api/automations/rules/order · POST /api/settings/mailboxes ·
    PATCH /api/settings/mailboxes/{address} · POST /api/settings/mail/outbound ·
+   PATCH /api/settings/groups/{group_id}/sendas ·
    POST /api/settings/graph/test · POST /api/settings/graph/disconnect ·
    PUT /api/settings/config/graph · PUT /api/settings/config/auth ·
    PUT /api/settings/config/sla · PUT /api/settings/config/business_hours ·
    POST /api/settings/canned · PATCH /api/settings/canned/{id}.
    Invariants: archive-first — trigger "delete" and canned "delete" PATCH an
    archive flag; rows history survives. Local state mutates first, the mirror
-   fires only when it actually changed, oops() on refusal. Outbound routing is
-   read-only derived truth: a board replies from its own mailbox.
+   fires only when it actually changed, oops() on refusal. Outbound routing
+   shows the server-resolved effective sender (GROUP_SENDAS/GROUP_SENDAS_OVR,
+   hydrated in api.js): fed-by derivation unless a per-board override (0026)
+   pins another outbound-enabled address — receive-only is refused (422).
+   Builder value pickers for list-valued fields are multi-selects saving the
+   engine's comma any-of form ("a, b, c" — is/contains match ANY picked
+   value, is not/not contains only when NONE do).
    ========================================================================== */
 
 function viewAutomations(){
@@ -69,9 +76,17 @@ function viewAutomations(){
         ? `<span class="chip st-solved"><span class="cdot"></span>Sending live</span>${can('manage_automations')?`<button class="rowbtn" onclick="toggleOutboundMaster()">Switch to recorded-only</button>`:''}`
         : `<span class="chip st-hold"><span class="cdot"></span>Recorded-only</span>${can('manage_automations')?`<button class="btn sm primary" onclick="toggleOutboundMaster()">Enable live sending</button>`:''}`}</div>
     <div style="padding:4px 16px 6px">
-      ${aGROUPS().map(g=>{ const rb=mbox(GROUP_SENDAS[g.id]); return `<div class="setting-row"><div class="sl"><b>${esc(g.name)}</b><p>${MAILBOXES.some(m=>m.groupId===g.id&&m.status==='connected')?`fed by ${MAILBOXES.filter(m=>m.groupId===g.id&&m.status==='connected').map(m=>m.addr.split('@')[0]+'@').join(', ')}`:'no inbound mailbox — tickets arrive by phone/agent'}</p></div>
-        <span class="mini muted">replies from <span class="tape">${rb?esc(rb.addr):'—'}</span></span></div>`;}).join('')}
-      <div class="mini muted" style="padding:10px 0 12px">Every reply on a board goes out from <b>that board's address</b> — derived from the Mailboxes card above. Move a ticket to another board and its replies follow. Agents never pick a sender per ticket; receive-only addresses (like noc@) are never used.</div>
+      ${aGROUPS().map(g=>{ const rb=mbox(GROUP_SENDAS[g.id]); const ovr=!!GROUP_SENDAS_OVR[g.id];
+        const opts=MAILBOXES.filter(m=>m.outbound || (ovr&&rb&&m.id===rb.id));   /* row 37: an ineligible current pick stays visible */
+        return `<div class="setting-row"><div class="sl"><b>${esc(g.name)}</b><p>${MAILBOXES.some(m=>m.groupId===g.id&&m.status==='connected')?`fed by ${MAILBOXES.filter(m=>m.groupId===g.id&&m.status==='connected').map(m=>m.addr.split('@')[0]+'@').join(', ')}`:'no inbound mailbox — tickets arrive by phone/agent'}</p></div>
+        <span class="chip ${ovr?'st-pending':'st-open'}" title="${ovr?'an explicit override pins this sender':'follows the board’s fed-by mailbox'}"><span class="cdot"></span>${ovr?'Override':'Derived'}</span>
+        ${can('manage_settings')
+          ? `<select style="width:auto;max-width:250px" onchange="sendasSet('${g.id}',this.value)">
+              <option value="" ${ovr?'':'selected'}>derived (default)${!ovr&&rb?' — '+esc(rb.addr):''}</option>
+              ${opts.map(m=>`<option value="${esc(m.addr)}" ${ovr&&rb&&rb.id===m.id?'selected':''} ${m.outbound&&m.status!=='paused'?'':'disabled'}>${esc(m.addr)}${m.outbound?'':' (receive-only)'}${m.status==='paused'?' (paused)':''}</option>`).join('')}
+            </select>`
+          : `<span class="mini muted">replies from <span class="tape">${rb?esc(rb.addr):'—'}</span></span>`}</div>`;}).join('')}
+      <div class="mini muted" style="padding:10px 0 12px">Every reply on a board goes out from <b>that board's address</b> — derived from the Mailboxes card above, unless an <b>override</b> pins one of the outbound-enabled addresses to the board. Move a ticket to another board and its replies follow. Agents never pick a sender per ticket; receive-only addresses (like noc@) can't be picked — the server refuses them.</div>
     </div>
   </div>
   <div class="section-gap"></div>
@@ -112,7 +127,7 @@ function viewAutomations(){
     <div class="mini muted" style="padding:10px 16px 12px">Templates take variables: <span class="tape">#{ticket.number}</span> <span class="tape">#{ticket.title}</span> <span class="tape">#{customer.first}</span> <span class="tape">#{customer.name}</span> <span class="tape">#{client.name}</span> <span class="tape">#{agent.name}</span> <span class="tape">#{state.label}</span>. Auto-reply emails route through the same outbound resolution as agent replies.</div>
   </div>`;
 }
-function goBoard(gid){ state.qf.group = gid; state.overview='allopen'; go('tickets'); }
+function goBoard(gid){ state.qf.group = [gid]; state.overview='allopen'; go('tickets'); }
 
 /* ---- row summaries (formatters only — matching lives in the worker) ----- */
 function ruleWhen(r){
@@ -209,7 +224,8 @@ function saveMailbox(id){
   Object.assign(m, { addr, type:document.getElementById('mbType').value, groupId:document.getElementById('mbGroup').value,
     prio:Number(document.getElementById('mbPrio').value), desc:document.getElementById('mbDesc').value.trim(),
     outbound:document.getElementById('mbOut').checked });
-  if(!m.outbound) Object.keys(GROUP_SENDAS).forEach(g=>{ if(GROUP_SENDAS[g]===m.id) GROUP_SENDAS[g] = (outboundBoxes()[0]||{}).id; });
+  /* no local GROUP_SENDAS guessing: the server resolves effective senders
+     (override → fed-by) and the post-save hydrate below pulls the truth */
   if(!id) MAILBOXES.push(m);
   log(id?'Mailbox updated':'Mailbox added', `${m.addr} → ${grp(m.groupId).name}`);
   toast(`${m.addr} ${id?'updated':'subscribed'} — remember the access policy covers it.`);
@@ -251,6 +267,42 @@ function toggleOutboundMaster(){
       return oops(await r.json().catch(()=>0)); } })
     .catch(()=>{ MAILCFG.outboundEnabled=was; render();
       toast('Live sync failed — the switch was NOT changed on the server.'); });
+}
+
+/* ---- per-board outbound override (0026) — the routing card's picker.
+   '' = derived (PATCH mailbox:null clears the override row; house rule: an
+   UPDATE to NULL, never a DELETE); an address pins that sender for the
+   board. Optimistic with rollback — the Derived/Override chip never lies —
+   then a hydrate pulls the server-resolved effective sender. The PATCH is
+   manage_settings-gated server-side, so the picker only renders (and this
+   only fires) for that permission. ---- */
+function sendasSet(gid, addr){
+  const g = grp(gid); if(!g || !can('manage_settings')) return;
+  const wasId = GROUP_SENDAS[gid], wasOvr = !!GROUP_SENDAS_OVR[gid];
+  const box = addr ? MAILBOXES.find(m=>m.addr===addr) : null;
+  if(addr && !box) return;
+  if(addr ? (wasOvr && box.id===wasId) : !wasOvr){ render(); return; }   /* no change — nothing to mirror */
+  const rollback = ()=>{ if(wasId) GROUP_SENDAS[gid]=wasId; else delete GROUP_SENDAS[gid];
+    GROUP_SENDAS_OVR[gid]=wasOvr; render(); };
+  if(box){ GROUP_SENDAS[gid]=box.id; GROUP_SENDAS_OVR[gid]=true; }
+  else{
+    GROUP_SENDAS_OVR[gid]=false;
+    /* local fed-by guess, same shape as the server's derivation; the hydrate
+       below replaces it with the resolved truth */
+    const fed = MAILBOXES.filter(m=>m.groupId===gid && m.status==='connected')
+      .sort((a,b)=>(b.outbound?1:0)-(a.outbound?1:0))[0] || outboundBoxes()[0];
+    if(fed) GROUP_SENDAS[gid]=fed.id; else delete GROUP_SENDAS[gid];
+  }
+  log(box?'Outbound sender overridden':'Outbound sender cleared',
+      `${g.name}: ${box?box.addr:'derived from fed-by'}`);
+  toast(box?`${g.name} now replies from ${box.addr}.`:`${g.name} follows its fed-by mailbox again.`);
+  render();
+  $fetch('/api/settings/groups/'+encodeURIComponent(gid)+'/sendas',{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({mailbox:addr||null})})
+    .then(async r=>{ if(!r.ok){ rollback(); return oops(await r.json().catch(()=>0)); }
+      setTimeout(()=>hydrate(),400); })            /* pull the resolved effective sender */
+    .catch(()=>{ rollback();
+      toast('Live sync failed — the sender was NOT changed on the server.'); });
 }
 
 /* ---- rules & triggers CRUD (one table server-side: automation_rules) ---- */
@@ -295,7 +347,7 @@ function trigModal(id){
         <div class="field"><label>Activated by</label><select id="tgEvent" onchange="trigEventChanged()">${TRIG_EVENTS.map(e=>`<option value="${e.id}" ${g0.event===e.id?'selected':''}>${e.label}</option>`).join('')}</select></div>
         <div class="field" id="tgStateWrap" style="${g0.event==='state'?'':'display:none'}"><label>… to state</label><select id="tgEventState">${aSTATES().map(s=>`<option value="${s.id}" ${g0.eventValue===s.id?'selected':''}>${s.label}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><label>Only if (rows must ALL match; OR groups match any — leave empty for always)</label><div id="tgConds"></div>
+      <div class="field"><label>Only if (rows must ALL match; OR groups match any — within a row, several picked values or commas mean any-of; leave empty for always)</label><div id="tgConds"></div>
         <button class="btn sm ghost" onclick="trigAddCond()">+ condition</button>
         <button class="btn sm ghost" onclick="trigAddOrGroup()">+ OR group</button></div>
       <div class="field"><label>Actions (run in order)</label><div id="tgActs"></div>
@@ -308,17 +360,33 @@ function trigModal(id){
 }
 function trigEventChanged(){ document.getElementById('tgStateWrap').style.display = document.getElementById('tgEvent').value==='state'?'':'none'; }
 function trigDrawConds(){
-  const valCtl = (c,gi,i) => {
-    const opts = {
+  const fieldOpts = c => ({
       state:    aSTATES().map(s=>s.label),
       priority: aPRIOS().slice().sort((a,b)=>b.id-a.id).map(p=>p.label),
       group:    aGROUPS().map(g=>g.name),
       client:   CLIENTS.filter(cl=>cl.status!=='archived').map(cl=>cl.name),
       mailbox:  MAILBOXES.map(m=>m.addr),
-    }[c.field];
-    if(opts) return `<select onchange="_trigDraft.condGroups[${gi}][${i}].value=this.value" style="flex:1">
-      ${c.value&&!opts.includes(c.value)?`<option selected>${esc(c.value)}</option>`:''}
-      ${opts.map(o=>`<option ${c.value===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+    }[c.field]);
+  /* picker fields seed one value BEFORE drawing, so what saves is what shows
+     (a lone value is a one-element any-of) */
+  _trigDraft.condGroups.forEach(grpC=>grpC.forEach(c=>{
+    const opts = fieldOpts(c);
+    if(opts && !c.value) c.value = opts[0];
+  }));
+  const valCtl = (c,gi,i) => {
+    const opts = fieldOpts(c);
+    if(opts){
+      /* multi-select saving the engine's comma any-of form ("a, b, c"):
+         is/contains hit on ANY picked value, is not/not contains only when
+         NONE do — a lone pick is a one-element any-of, so old single-value
+         rules render and save identically. Values no longer offered
+         (archived/renamed) stay selected until unpicked (row 37). */
+      const picked = String(c.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+      const gone = picked.filter(v=>!opts.includes(v));
+      return `<select multiple size="${Math.max(2,Math.min(gone.length+opts.length,4))}" style="flex:1" title="pick any number — the row matches ANY picked value; saved as comma any-of" onchange="_trigDraft.condGroups[${gi}][${i}].value=[...this.selectedOptions].map(o=>o.value).join(', ')">
+        ${gone.map(v=>`<option value="${esc(v)}" selected>${esc(v)} (archived)</option>`).join('')}
+        ${opts.map(o=>`<option value="${esc(o)}" ${picked.includes(o)?'selected':''} ${o.includes(',')?'disabled title="this name contains a comma — the any-of wire format can’t carry it; rename it to target it"':''}>${esc(o)}</option>`).join('')}</select>`;
+    }
     return `<input type="text" value="${esc(c.value)}" oninput="_trigDraft.condGroups[${gi}][${i}].value=this.value" placeholder="${c.field==='tags'?'tag names — commas mean any-of':'address — commas mean any-of'}" style="flex:1">`;
   };
   const rowHtml = (c,gi,i)=>`
@@ -334,11 +402,6 @@ function trigDrawConds(){
     (gi?`<div class="mini muted" style="text-align:center;margin:2px 0 8px">— or —</div>`:'')
     + grpC.map((c,i)=>rowHtml(c,gi,i)).join('')
   ).join('') || `<div class="mini muted" style="margin-bottom:8px">No conditions — fires on every matching event.</div>`;
-  /* dropdown fields need a concrete default so an untouched select still saves */
-  _trigDraft.condGroups.forEach(grpC=>grpC.forEach(c=>{
-    const opts = { state:aSTATES().map(s=>s.label), priority:aPRIOS().map(p=>p.label), group:aGROUPS().map(g=>g.name), client:CLIENTS.filter(cl=>cl.status!=='archived').map(cl=>cl.name), mailbox:MAILBOXES.map(m=>m.addr) }[c.field];
-    if(opts && !c.value) c.value = opts[0];
-  }));
 }
 function trigAddCond(){                       /* AND row in the LAST group */
   if(!_trigDraft.condGroups.length) _trigDraft.condGroups.push([]);
@@ -397,7 +460,7 @@ function ruleModal(id){
   if(!id && !_ruleDraft.condGroups.length) _ruleDraft.condGroups=[[{field:'from',op:'contains',value:''}]];
   const m = document.getElementById('modal');
   m.innerHTML = `
-    <div class="modal-head"><h3>${id?'Edit rule':'New rule'}</h3><p>Rows must ALL match; OR groups match any. Leave conditions empty to match every inbound message.</p></div>
+    <div class="modal-head"><h3>${id?'Edit rule':'New rule'}</h3><p>Rows must ALL match; OR groups match any; commas in a value mean any-of ("a, b, c" hits when any one matches). Leave conditions empty to match every inbound message.</p></div>
     <div class="modal-body" style="max-height:62vh;overflow:auto">
       <div class="field"><label>Rule name</label><input type="text" id="rName" value="${esc(r0.name||'')}" placeholder="e.g. Billing questions → Projects"></div>
       <div class="field"><label>When</label><div id="rConds"></div>

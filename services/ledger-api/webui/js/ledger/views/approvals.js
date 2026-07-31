@@ -3,7 +3,9 @@
    Timesheet approvals: buildTimesheets grouping, the Approvals filter set
    (setAF/afClear over state.af — AF_DEFAULTS and state.af live in state.js;
    the Audit page has its own state.auf/setAuf, never shared), and the
-   approve / return / revoke actions.
+   approve / return / revoke actions. period / tech / group / client /
+   status filters are multi-select ARRAYS (empty = all; setAF toggles
+   membership, 'all'/null clears; 'expanded' stays scalar). Client-side only.
    Endpoints called here:
      POST /api/timesheets/approve      — tsApprove()
      POST /api/timesheets/return       — tsReturn() (with reason)
@@ -93,33 +95,42 @@ function tsReturn(techId,clientId,perKey){
   if(t&&c) post('/api/timesheets/return',{tech_email:t.email,client:c.name,
     period_key:srvPeriodKey(perKey),reason:why||''});
 }
-function setAF(k,v){ state.af[k]=v; render(); }
-function afClear(){ state.af=Object.assign({},AF_DEFAULTS); render(); }
+const AF_ARR=['tech','group','client','period','status'];   /* multi-select keys — empty array = all */
+function setAF(k,v){
+  if(AF_ARR.includes(k)){
+    _mfNorm(state.af,AF_ARR);
+    if(v==null||v==='all') state.af[k]=[];
+    else { const a=state.af[k], i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); }
+    render(); return;
+  }
+  state.af[k]=v; render();
+}
+function afClear(){ state.af=_mfNorm(Object.assign({},AF_DEFAULTS),AF_ARR); render(); }
 function viewApprovals(){
-  const f=state.af=Object.assign({},AF_DEFAULTS,state.af||{});
+  const f=state.af=_mfNorm(Object.assign({},AF_DEFAULTS,state.af||{}),AF_ARR);
   const money=canSeeMoney();
   let sheets=buildTimesheets();
   /* period options across every cycle, newest first, value = period key */
   const perOpts=[...new Map(sheets.map(s=>[s.per.key,{key:s.per.key,label:s.per.label,start:s.per.start,cycle:client(s.clientId).cycle}])).values()]
     .sort((a,b)=>b.start-a.start);
-  if(f.tech!=='all')   sheets=sheets.filter(s=>s.techId===f.tech);
-  if(f.group!=='all')  sheets=sheets.filter(s=>techGroups(s.techId).includes(f.group));
-  if(f.client!=='all') sheets=sheets.filter(s=>s.clientId===f.client);
-  if(f.period!=='all') sheets=sheets.filter(s=>s.per.key===f.period);
-  if(f.status!=='all') sheets=sheets.filter(s=>s.status===f.status);
-  const anyF=f.tech!=='all'||f.group!=='all'||f.client!=='all'||f.period!=='all'||f.status!=='all';
-  const opt=(v,l,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`;
+  /* every multi-select predicate is any-of; empty = no constraint */
+  if(f.tech.length)   sheets=sheets.filter(s=>f.tech.includes(s.techId));
+  if(f.group.length)  sheets=sheets.filter(s=>techGroups(s.techId).some(g=>f.group.includes(g)));
+  if(f.client.length) sheets=sheets.filter(s=>f.client.includes(s.clientId));
+  if(f.period.length) sheets=sheets.filter(s=>f.period.includes(s.per.key));
+  if(f.status.length) sheets=sheets.filter(s=>f.status.includes(s.status));
+  const anyF=f.tech.length||f.group.length||f.client.length||f.period.length||f.status.length;
   const statuses=[['all','All'],['awaiting','Awaiting review'],['partial','Partially submitted'],['open','In progress'],['approved','Approved'],['locked','Locked']];
   const toolbar=`
   <div class="card"><div class="card-pad" style="display:flex;flex-direction:column;gap:13px">
     <div class="rpt-line"><span class="rpt-lab">Status</span>
-      <div class="seg wrap">${statuses.map(([v,l])=>`<button class="${f.status===v?'on':''}" onclick="setAF('status','${v}')">${l}</button>`).join('')}</div>
+      <div class="seg wrap">${statuses.map(([v,l])=>`<button class="${v==='all'?(f.status.length?'':'on'):(f.status.includes(v)?'on':'')}" onclick="setAF('status','${v}')">${l}</button>`).join('')}</div>
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
-      <select onchange="setAF('period',this.value)">${opt('all','All billing periods',f.period)}${perOpts.map(p=>opt(p.key,p.label+' ('+p.cycle+')',f.period)).join('')}</select>
-      <select onchange="setAF('tech',this.value)">${opt('all','All technicians',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>
-      <select onchange="setAF('group',this.value)">${opt('all','All groups',f.group)}${state.zammadGroups.map(g=>opt(g.id,g.name,f.group)).join('')}</select>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('afClient', [{v:'all',label:'All clients'},...state.clients.filter(c=>!c.archivedInDocket||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')}))], f.client, function(){ setAF('client', document.getElementById('afClient').value); }, 'All clients')}</span>
+      <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('afPeriod', perOpts.map(p=>({v:p.key,label:p.label+' ('+p.cycle+')'})), f.period, function(v){ setAF('period',v); }, 'All billing periods')}</span>
+      <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('afTech', state.techs.map(t=>({v:t.id,label:t.name})), f.tech, function(v){ setAF('tech',v); }, 'All technicians')}</span>
+      <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('afGroup', state.zammadGroups.filter(g=>!g.archived||f.group.includes(g.id)).map(g=>({v:g.id,label:g.name+(g.archived?' (archived)':'')})), f.group, function(v){ setAF('group',v); }, 'All groups')}</span>
+      <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('afClient', state.clients.filter(c=>!c.archivedInDocket||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')})), f.client, function(v){ setAF('client',v); }, 'All clients')}</span>
       ${anyF?`<button class="btn sm ghost" onclick="afClear()">Clear</button>`:''}
     </div>
     <div class="rpt-line"><span class="rpt-lab">Showing</span><div class="mini">${sheets.length} timesheet${sheets.length===1?'':'s'} · ${sheets.filter(s=>s.status==='awaiting').length} awaiting your review</div></div>

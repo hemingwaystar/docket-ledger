@@ -4,6 +4,9 @@
    period / client / tech / type / status / search, with row-level classify,
    start-end time editing, and batch submit / recall / remove-in-Docket.
    Also owns the state.tf filter setters (setTF/tsPreset/tsClear).
+   client / tech / type / status filters are multi-select ARRAYS (empty =
+   all; setTF toggles membership, 'all'/null clears); q / from / to stay
+   scalar. Values never leave the browser — filtering is client-side only.
    Endpoints called here:
      PATCH /api/entries/{id}          — classify() {activity_type},
                                         saveTime() {started_at, ended_at},
@@ -17,37 +20,50 @@
    ========================================================================== */
 
 /* ---- filters ---- */
-function setTF(k,v){ state.tf[k]=v; if(k!=='q') render(); else { /* keep focus on search */ softRerender(); } }
+const TF_ARR=['client','tech','status','type'];   /* multi-select keys — empty array = all */
+function setTF(k,v){
+  if(TF_ARR.includes(k)){
+    _mfNorm(state.tf,TF_ARR);
+    if(v==null||v==='all') state.tf[k]=[];
+    else { const a=state.tf[k], i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); }
+    render(); return;
+  }
+  state.tf[k]=v; if(k!=='q') render(); else { /* keep focus on search */ softRerender(); }
+}
 function tsPreset(p){ _presetDates(state.tf,p); render(); }
-function tsClear(){ const sel=state.tf.sel, exp=state.tf.expanded; state.tf={client:'all',tech:'all',status:'all',type:'all',q:'',from:'',to:'',expanded:exp,sel:sel,_vis:[]}; render(); }
+function tsClear(){ const sel=state.tf.sel, exp=state.tf.expanded; state.tf={client:[],tech:[],status:[],type:[],q:'',from:'',to:'',expanded:exp,sel:sel,_vis:[]}; render(); }
 function toggleExpand(id){ state.tf.expanded = state.tf.expanded===id?null:id; render(); }
 
 function viewTimesheets(){
-  const f=state.tf, admin=isAdmin(), showMoney=canSeeMoney();
+  const f=_mfNorm(state.tf,TF_ARR), admin=isAdmin(), showMoney=canSeeMoney();
   let rows=scopedEntries().slice().sort((a,b)=>b.startedAt-a.startedAt);
   const [tfFrom,tfTo]=_dateRange(f);
   rows=rows.filter(e=>e.startedAt>=tfFrom && e.startedAt<=tfTo);
-  if(f.client!=='all') rows=rows.filter(e=>e.clientId===f.client);
-  if(admin && f.tech!=='all') rows=rows.filter(e=>e.techId===f.tech);
-  if(f.type==='billable')          rows=rows.filter(e=>{const t=atype(e.typeId);return t.billable&&!t.sentinel});
-  else if(f.type==='nonbill')      rows=rows.filter(e=>{const t=atype(e.typeId);return !t.billable&&!t.sentinel});
-  else if(f.type==='unclassified') rows=rows.filter(e=>atype(e.typeId).sentinel);
-  else if(f.type!=='all')          rows=rows.filter(e=>e.typeId===f.type);
-  if(f.status!=='all'){
-    rows=rows.filter(e=> f.status==='void'?e.status==='void'
-      : f.status==='locked'?(isLocked(e)&&e.status!=='void')
-      : f.status==='approved'?(e.tsApproved&&!isLocked(e)&&e.status!=='void')
-      : f.status==='submitted'?(e.submitted&&!e.tsApproved&&!isLocked(e)&&e.status!=='void')
-      : (e.status==='pending'&&!isLocked(e)&&!e.submitted));
+  /* every multi-select predicate is any-of; empty = no constraint */
+  if(f.client.length) rows=rows.filter(e=>f.client.includes(e.clientId));
+  if(admin && f.tech.length) rows=rows.filter(e=>f.tech.includes(e.techId));
+  if(f.type.length) rows=rows.filter(e=>{const t=atype(e.typeId);
+    return f.type.some(v=> v==='billable'?(t.billable&&!t.sentinel)
+      : v==='nonbill'?(!t.billable&&!t.sentinel)
+      : v==='unclassified'?t.sentinel : e.typeId===v);});
+  if(f.status.length){
+    rows=rows.filter(e=> f.status.some(s=> s==='void'?e.status==='void'
+      : s==='locked'?(isLocked(e)&&e.status!=='void')
+      : s==='approved'?(e.tsApproved&&!isLocked(e)&&e.status!=='void')
+      : s==='submitted'?(e.submitted&&!e.tsApproved&&!isLocked(e)&&e.status!=='void')
+      : (e.status==='pending'&&!isLocked(e)&&!e.submitted)));
   }
   if(f.q){ const q=f.q.toLowerCase(); rows=rows.filter(e=> (e.ticketTitle+e.content+client(e.clientId).name+tech(e.techId).name).toLowerCase().includes(q)); }
 
   let sumH=0,sumA=0; rows.forEach(e=>{const p=priced(e); if(e.status!=='void'){sumH+=p.h; sumA+=p.amount;}});
 
-  const opt=(v,l,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`;
   const statuses = admin ? ['all','pending','submitted','approved','locked','void'] : ['all','pending','submitted','approved','locked'];
-  const anyFilter = f.from||f.to||f.client!=='all'||(admin&&f.tech!=='all')||f.type!=='all'||f.status!=='all'||f.q;
-  const typeSel=`<select onchange="setTF('type',this.value)">${opt('all','All types',f.type)}${opt('billable','Billable',f.type)}${opt('nonbill','Non-billable',f.type)}${opt('unclassified','Unclassified',f.type)}${state.types.filter(t=>!t.sentinel&&(t.active!==false||f.type===t.id)).map(t=>opt(t.id,t.name+(t.active===false?' (archived)':''),f.type)).join('')}</select>`;
+  const anyFilter = f.from||f.to||f.client.length||(admin&&f.tech.length)||f.type.length||f.status.length||f.q;
+  /* archived types stay out of the options unless currently selected (row 37) */
+  const typeSel=multiCombo('tfType',
+    [{v:'billable',label:'Billable'},{v:'nonbill',label:'Non-billable'},{v:'unclassified',label:'Unclassified'},
+     ...state.types.filter(t=>!t.sentinel&&(t.active!==false||f.type.includes(t.id))).map(t=>({v:t.id,label:t.name+(t.active===false?' (archived)':'')}))],
+    f.type, function(v){ setTF('type',v); }, 'All types');
   const toolbar=`
   <div class="card"><div class="card-pad" style="display:flex;flex-direction:column;gap:13px">
     <div class="rpt-line"><span class="rpt-lab">Period</span>
@@ -63,10 +79,10 @@ function viewTimesheets(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note, client${admin?', tech':''}…" value="${esc(f.q)}" data-fkey="tf-q" oninput="setTF('q',this.value)"></div>
-      <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('tfClient', [{v:'all',label:'All clients'},...state.clients.filter(c=>!c.archivedInDocket||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')}))], f.client, function(){ setTF('client', document.getElementById('tfClient').value); }, 'All clients')}</span>
-      ${admin?`<select onchange="setTF('tech',this.value)">${opt('all','All techs',f.tech)}${state.techs.map(t=>opt(t.id,t.name,f.tech)).join('')}</select>`:''}
-      ${typeSel}
-      <div class="seg wrap">${statuses.map(s=>`<button class="${f.status===s?'on':''}" onclick="setTF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
+      <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('tfClient', state.clients.filter(c=>!c.archivedInDocket||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')})), f.client, function(v){ setTF('client',v); }, 'All clients')}</span>
+      ${admin?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('tfTech', state.techs.map(t=>({v:t.id,label:t.name})), f.tech, function(v){ setTF('tech',v); }, 'All techs')}</span>`:''}
+      <span style="display:inline-block;min-width:170px;vertical-align:middle">${typeSel}</span>
+      <div class="seg wrap">${statuses.map(s=>`<button class="${s==='all'?(f.status.length?'':'on'):(f.status.includes(s)?'on':'')}" onclick="setTF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
       ${anyFilter?`<button class="btn sm ghost" onclick="tsClear()">Clear</button>`:''}
     </div>
     <div class="rpt-line"><span class="rpt-lab">Showing</span><div class="mini">${rows.length} entr${rows.length===1?'y':'ies'} · <span class="tape">${fmtHours(sumH)}</span> h${showMoney?` · <span class="tape" style="font-weight:600;color:var(--ink)">${fmtMoney(sumA)}</span>`:''}</div></div>

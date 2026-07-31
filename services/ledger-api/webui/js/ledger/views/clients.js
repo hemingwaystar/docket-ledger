@@ -1,7 +1,9 @@
 /* ==========================================================================
    Ledger — views/clients.js
    Client list + client detail: per-activity-type billing, retainer terms,
-   ticket breakdown & filters (state.cf), and access control.
+   ticket breakdown & filters (state.cf — tech / type / status are
+   multi-select ARRAYS, empty = all; setCF toggles membership, 'all'/null
+   clears; q / from / to stay scalar), and access control.
    Endpoints called here:
      PATCH /api/clients/{id}          — setClientCycle (cycle),
                                         toggleClientBillable (billable_default)
@@ -46,12 +48,22 @@ function viewClients(){
 }
 
 /* ===================== CLIENT DETAIL ===================== */
-function setCF(k,v){ state.cf[k]=v; render(); }
+const CF_ARR=['tech','type','status'];   /* multi-select keys — empty array = all */
+function setCF(k,v){
+  state.cf=state.cf||{tech:[],type:[],status:[],q:'',from:'',to:''};
+  if(CF_ARR.includes(k)){
+    _mfNorm(state.cf,CF_ARR);
+    if(v==null||v==='all') state.cf[k]=[];
+    else { const a=state.cf[k], i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); }
+    render(); return;
+  }
+  state.cf[k]=v; render();
+}
 function viewClient(){
   const c=client(state.clientId);
   if(!c) return `<div class="card"><div class="empty">${icon(IC.client)}<div>Client not found. <a href="#" onclick="go('clients');return false">Back to clients</a>.</div></div></div>`;
   if(!canAccessClient(c)) return `<div class="card"><div class="empty">${icon(IC.lock)}<div>You don’t have access to this client.</div></div></div>`;
-  const manage=can('manage_clients'), showMoney=canSeeMoney(), cf=state.cf||(state.cf={tech:'all',type:'all',status:'all',q:'',from:'',to:''});
+  const manage=can('manage_clients'), showMoney=canSeeMoney(), cf=_mfNorm(state.cf||(state.cf={tech:[],type:[],status:[],q:'',from:'',to:''}),CF_ARR);
   const cycles=['weekly','monthly'];   /* biweekly died in build 9 — the server has no such period (0003) */
   const back=`<button class="btn sm ghost" onclick="go('clients')">← All clients</button>`;
 
@@ -115,20 +127,20 @@ function viewClient(){
   if(!can('view_all')) es=es.filter(e=>e.techId===state.myTechId);
   const [cfFrom,cfTo]=_dateRange(cf);
   es=es.filter(e=>e.startedAt>=cfFrom && e.startedAt<=cfTo);
-  if(can('view_all') && cf.tech!=='all') es=es.filter(e=>e.techId===cf.tech);
-  if(cf.type==='billable')          es=es.filter(e=>{const t=atype(e.typeId);return t.billable&&!t.sentinel});
-  else if(cf.type==='nonbill')      es=es.filter(e=>{const t=atype(e.typeId);return !t.billable&&!t.sentinel});
-  else if(cf.type==='unclassified') es=es.filter(e=>atype(e.typeId).sentinel);
-  else if(cf.type!=='all')          es=es.filter(e=>e.typeId===cf.type);
-  if(cf.status!=='all') es=es.filter(e=> cf.status==='void'?e.status==='void':cf.status==='locked'?(isLocked(e)&&e.status!=='void'):cf.status==='approved'?(e.tsApproved&&!isLocked(e)&&e.status!=='void'):cf.status==='submitted'?(e.submitted&&!e.tsApproved&&!isLocked(e)&&e.status!=='void'):(e.status==='pending'&&!isLocked(e)&&!e.submitted));
+  /* every multi-select predicate is any-of; empty = no constraint */
+  if(can('view_all') && cf.tech.length) es=es.filter(e=>cf.tech.includes(e.techId));
+  if(cf.type.length) es=es.filter(e=>{const t=atype(e.typeId);
+    return cf.type.some(v=> v==='billable'?(t.billable&&!t.sentinel)
+      : v==='nonbill'?(!t.billable&&!t.sentinel)
+      : v==='unclassified'?t.sentinel : e.typeId===v);});
+  if(cf.status.length) es=es.filter(e=> cf.status.some(s=> s==='void'?e.status==='void':s==='locked'?(isLocked(e)&&e.status!=='void'):s==='approved'?(e.tsApproved&&!isLocked(e)&&e.status!=='void'):s==='submitted'?(e.submitted&&!e.tsApproved&&!isLocked(e)&&e.status!=='void'):(e.status==='pending'&&!isLocked(e)&&!e.submitted)));
   if(cf.q){const q=cf.q.toLowerCase(); es=es.filter(e=>(e.ticketTitle+e.content+tech(e.techId).name).toLowerCase().includes(q));}
   es=es.slice().sort((a,b)=>b.startedAt-a.startedAt);
   // breakdown by activity type
   const byType={}; let tot={h:0,a:0,n:0};
   es.forEach(e=>{const p=priced(e); if(e.status==='void')return; const k=e.typeId; (byType[k]=byType[k]||{h:0,a:0,n:0}); byType[k].h+=p.h; byType[k].a+=p.amount; byType[k].n++; tot.h+=p.h; tot.a+=p.amount; tot.n++;});
   const breakdownRows=Object.keys(byType).map(k=>{const b=byType[k];return `<tr><td>${esc(atype(k).name)}</td><td class="num">${b.n}</td><td class="num">${fmtHours(b.h)}</td>${showMoney?`<td class="num" style="font-weight:600">${fmtMoney(b.a)}</td>`:''}</tr>`;}).join('');
-  const opt=(v,l,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`;
-  const cfAny = cf.from||cf.to||(can('view_all')&&cf.tech!=='all')||cf.type!=='all'||cf.status!=='all'||cf.q;
+  const cfAny = cf.from||cf.to||(can('view_all')&&cf.tech.length)||cf.type.length||cf.status.length||cf.q;
   const filters=`<div class="card" style="margin-bottom:12px"><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">
     <div class="rpt-line"><span class="rpt-lab">Period</span>
       <div class="seg">
@@ -143,9 +155,9 @@ function viewClient(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note${can('view_all')?', tech':''}…" value="${esc(cf.q)}" data-fkey="cf-q" oninput="setCF('q',this.value)"></div>
-      ${can('view_all')?`<select onchange="setCF('tech',this.value)">${opt('all','All techs',cf.tech)}${state.techs.map(t=>opt(t.id,t.name,cf.tech)).join('')}</select>`:''}
-      <select onchange="setCF('type',this.value)">${opt('all','All types',cf.type)}${opt('billable','Billable',cf.type)}${opt('nonbill','Non-billable',cf.type)}${opt('unclassified','Unclassified',cf.type)}${state.types.filter(t=>!t.sentinel&&(t.active!==false||cf.type===t.id)).map(t=>opt(t.id,t.name+(t.active===false?' (archived)':''),cf.type)).join('')}</select>
-      <div class="seg wrap">${['all','pending','submitted','approved','locked','void'].map(s=>`<button class="${cf.status===s?'on':''}" onclick="setCF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
+      ${can('view_all')?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('cfTech', state.techs.map(t=>({v:t.id,label:t.name})), cf.tech, function(v){ setCF('tech',v); }, 'All techs')}</span>`:''}
+      <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('cfType', [{v:'billable',label:'Billable'},{v:'nonbill',label:'Non-billable'},{v:'unclassified',label:'Unclassified'},...state.types.filter(t=>!t.sentinel&&(t.active!==false||cf.type.includes(t.id))).map(t=>({v:t.id,label:t.name+(t.active===false?' (archived)':'')}))], cf.type, function(v){ setCF('type',v); }, 'All types')}</span>
+      <div class="seg wrap">${['all','pending','submitted','approved','locked','void'].map(s=>`<button class="${s==='all'?(cf.status.length?'':'on'):(cf.status.includes(s)?'on':'')}" onclick="setCF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
       ${cfAny?`<button class="btn sm ghost" onclick="cfClear()">Clear</button>`:''}
     </div>
     <div class="rpt-line"><span class="rpt-lab">Showing</span><div class="mini">${es.length} entr${es.length===1?'y':'ies'} · <span class="tape">${fmtHours(tot.h)}</span> h${showMoney?` · <span class="tape" style="font-weight:600;color:var(--ink)">${fmtMoney(tot.a)}</span>`:''}</div></div>
@@ -204,8 +216,8 @@ function viewClient(){
   return `<div style="margin-bottom:14px">${back}</div>
     ${billing}<div class="section-gap"></div>${breakdown}<div class="section-gap"></div>${access}`;
 }
-function cfPreset(p){ state.cf=state.cf||{tech:'all',type:'all',status:'all',q:'',from:'',to:''}; _presetDates(state.cf,p); render(); }
-function cfClear(){ state.cf={tech:'all',type:'all',status:'all',q:'',from:'',to:''}; render(); }
+function cfPreset(p){ state.cf=state.cf||{tech:[],type:[],status:[],q:'',from:'',to:''}; _presetDates(state.cf,p); render(); }
+function cfClear(){ state.cf={tech:[],type:[],status:[],q:'',from:'',to:''}; render(); }
 function retSet(cid, k, v, srcEl){
   const c = client(cid); c.retainer = c.retainer||{ enabled:false, includedHours:0, overageRate:null, rolloverCap:0, note:'' };
   const was = JSON.stringify({e:c.retainer.enabled,i:c.retainer.includedHours,o:c.retainer.overageRate,r:c.retainer.rolloverCap});

@@ -3,8 +3,9 @@
    Shell rendering: render() is the ONLY innerHTML rebuild and carries
    focus/caret/scroll across it (bug #26). One render target: #content
    (+ nav / title / sub). Also owns the view-agnostic DOM machinery every
-   page shares: searchable combos, menu + scrim dismissal, soft rerender,
-   input ergonomics, modal + toast. No server calls.
+   page shares: searchable combos, multi-select combos (checkbox dropdown +
+   chips, empty selection = no filter), menu + scrim dismissal, soft
+   rerender, input ergonomics, modal + toast. No server calls.
    ========================================================================== */
 
 function pgTitle(){
@@ -113,6 +114,73 @@ function comboPickFirst(id){
 }
 function comboClose(id){ const b=document.getElementById(id+'-list'); if(b) b.style.display='none'; }
 document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.combo')) document.querySelectorAll('[id$="-list"]').forEach(b=>b.style.display='none'); });
+
+/* multi-select combo — same skeleton as combo() (searchable, bug-#26 focus
+   rules), but the value is an ARRAY: empty = no filter ("All"), each option
+   toggles a checkbox and stays open for the next pick. Selected values show
+   as removable chips inside the control. Archived options are the caller's
+   job (row 37: keep them out of opts unless currently selected).
+   opts: [{v, label, sub?}] · vals: array · ontoggle(v) mutates the array in
+   view state and render()s — ontoggle(null) means "clear the selection". */
+function multiCombo(id, opts, vals, ontoggle, placeholder){
+  vals = Array.isArray(vals) ? vals : [];
+  _combos[id] = { opts, vals: vals.slice(), multi: true,
+    ontoggle: typeof ontoggle==='function' ? ontoggle : null };
+  /* a rebuild mid-typing must not eat the filter text: the OLD input is
+     still in the document while this markup is being built — carry it */
+  const oldQ = document.getElementById(id+'-q');
+  const q = oldQ ? oldQ.value : '';
+  const chips = vals.map(v=>{
+    const o = opts.find(x=>String(x.v)===String(v));
+    return `<span style="display:inline-flex;align-items:center;gap:2px;background:#eef3f2;border:1px solid var(--line);border-radius:999px;padding:1px 3px 1px 9px;font-size:12px;white-space:nowrap">${esc(o?o.label:String(v))}<button onclick="multiToggle('${id}','${jsq(String(v))}')" title="Remove" style="border:0;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 5px;color:var(--ink-3,#66757e)">×</button></span>`;
+  }).join('');
+  return `<div class="combo multi" style="position:relative;display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:2px 6px">
+    ${chips}
+    <input type="text" id="${id}-q" autocomplete="off" placeholder="${esc(vals.length?'':(placeholder||'All'))}" value="${esc(q)}"
+      style="border:0;outline:none;flex:1;min-width:60px;font-size:13px;background:transparent"
+      onfocus="multiOpen('${id}')" oninput="multiFilter('${id}')"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();multiPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');}">
+    <div id="${id}-list" style="display:none;position:absolute;top:100%;left:0;right:0;min-width:220px;max-height:240px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);z-index:80"></div>
+  </div>`;
+}
+function multiOpen(id){ multiFilter(id); }
+function multiFilter(id){
+  const reg=_combos[id]||{opts:[],vals:[]};
+  const box=document.getElementById(id+'-list'), qEl=document.getElementById(id+'-q');
+  if(!box||!qEl) return;
+  const q=qEl.value.trim().toLowerCase();
+  const opts=reg.opts.filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q));
+  /* mousedown + preventDefault keeps focus in the search input, so the
+     render() the toggle triggers restores focus (bug #26) and the list
+     re-opens via its onfocus — the dropdown survives multi-picking */
+  box.innerHTML =
+    `<div style="padding:6px 11px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line);color:${reg.vals.length?'var(--brand)':'var(--ink-3,#66757e)'}" onmousedown="event.preventDefault();multiToggle('${id}',null)">${reg.vals.length?'✕ Clear — show all':'All (nothing selected = no filter)'}</div>`
+    + (opts.slice(0,50).map(o=>{
+        const on=reg.vals.some(v=>String(v)===String(o.v));
+        return `<div style="display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;font-size:13px" onmousedown="event.preventDefault();multiToggle('${id}','${jsq(String(o.v))}')">
+          <input type="checkbox" ${on?'checked':''} tabindex="-1" style="pointer-events:none;accent-color:var(--brand)">
+          <span style="font-weight:${on?600:400}">${esc(o.label)}</span>${o.sub?` <span class="mini muted">${esc(o.sub)}</span>`:''}</div>`;
+      }).join('') || `<div class="mini muted" style="padding:9px 11px">No matches.</div>`);
+  box.style.display='block';
+}
+function multiToggle(id, v){
+  const f=(_combos[id]||{}).ontoggle; if(!f) return;
+  try{ f(v); }catch(e){}
+}
+function multiPickFirst(id){
+  const reg=_combos[id]||{opts:[]};
+  const qEl=document.getElementById(id+'-q'); if(!qEl) return;
+  const q=qEl.value.trim().toLowerCase();
+  const o=reg.opts.find(x=>!q || x.label.toLowerCase().includes(q) || (x.sub||'').toLowerCase().includes(q));
+  if(o) multiToggle(id, o.v);
+}
+/* filter-state normalizer: filter bars carry ARRAYS (empty = all). State
+   seeded before build 10 (state.js / openClient) still says 'all' scalars —
+   coerce once, in place, wherever a view reads its filter object. */
+function _mfNorm(o, keys){
+  keys.forEach(k=>{ if(!Array.isArray(o[k])) o[k]=(o[k]==null||o[k]==='all')?[]:[o[k]]; });
+  return o;
+}
 
 let searchTimer;
 function softRerender(){ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{ const a=document.activeElement; const val=a&&a.value; render(); const ni=document.querySelector('.search input'); if(ni){ni.focus(); ni.value=val; ni.setSelectionRange(val.length,val.length);} },160); }

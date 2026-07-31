@@ -21,6 +21,13 @@ def bootstrap(request: Request, limit: int = 500):
                       "email": who["email"], "perms": sorted(who["perms"]),
                       "initials": "".join(w[0] for w in who["name"].split()[:2]).upper()}}
         with conn.cursor(row_factory=dict_row) as cur:
+            # per-user UI prefs (uprefs:<uuid>, written only via PUT /auth/me/prefs);
+            # {} = follow the admin desk_ui defaults
+            cur.execute("SELECT value FROM shared.app_config WHERE key = %s",
+                        (f"uprefs:{who['agent_id']}",))
+            row = cur.fetchone()
+            pv = row["value"] if row else {}
+            out["me"]["prefs"] = pv if isinstance(pv, dict) else {}
             cur.execute("SELECT id, name, active FROM shared.groups ORDER BY name")
             out["groups"] = [{"id": str(r["id"]), "name": r["name"],
                               "active": r["active"]} for r in cur.fetchall()]
@@ -131,6 +138,25 @@ def bootstrap(request: Request, limit: int = 500):
                                  "desc": r["display_name"] or "",
                                  "status": "paused" if r["paused"] else "connected",
                                  "today": r["today"]} for r in cur.fetchall()]
+            # effective outbound sender per board (0026): group_sendas override
+            # when one is stored, else the reply resolver's fed-by derivation;
+            # override lets the routing card label "override" vs "derived".
+            # The ovr join mirrors the resolvers' eligibility predicate EXACTLY
+            # (outbound AND NOT paused) — a stale override must not make the UI
+            # claim a sender the reply path would skip (truthfulness, bug #32)
+            cur.execute("""SELECT g.id, gs.mailbox_id IS NOT NULL AS override,
+                             COALESCE(ovr.id, fed.id) AS mailbox_id
+                             FROM shared.groups g
+                             LEFT JOIN desk.group_sendas gs ON gs.group_id = g.id
+                             LEFT JOIN desk.mailboxes ovr ON ovr.id = gs.mailbox_id
+                                     AND ovr.outbound AND NOT ovr.paused
+                             LEFT JOIN LATERAL (SELECT m.id FROM desk.mailboxes m
+                                     WHERE m.group_id = g.id AND NOT m.paused
+                                     ORDER BY m.outbound DESC, m.address LIMIT 1) fed ON true
+                            ORDER BY g.name""")
+            out["groupSendas"] = [{"groupId": str(r["id"]),
+                                   "mailboxId": str(r["mailbox_id"]) if r["mailbox_id"] else None,
+                                   "override": r["override"]} for r in cur.fetchall()]
             cur.execute("""SELECT r.name, r.note, r.is_core, r.entra_group,
                              COALESCE((SELECT array_agg(permission_id)
                                         FROM shared.role_permissions rp
@@ -160,11 +186,14 @@ def bootstrap(request: Request, limit: int = 500):
                     triggers.append(base)
             out["rules"] = {"mail": mail_rules, "triggers": triggers}
             cur.execute("""SELECT key, value FROM shared.app_config
-                            WHERE key IN ('sla', 'business_hours')""")
+                            WHERE key IN ('sla', 'business_hours', 'desk_ui')""")
             eng = {r["key"]: (r["value"] if isinstance(r["value"], dict) else {})
                    for r in cur.fetchall()}
             out["sla"] = eng.get("sla", {})
             out["biz"] = eng.get("business_hours", {})
+            # admin queue-tab + dashboard defaults (build 10) — every user needs
+            # them and the settings API is admin-gated, so they ride bootstrap
+            out["deskUi"] = eng.get("desk_ui", {})
             cur.execute("""SELECT t.id, t.title, t.client_id, t.contact_id, t.group_id,
                              t.owner_id, s.label AS st_label, p.rank AS prio,
                              t.pending_until, t.merged_into_id, t.is_project, t.cc,

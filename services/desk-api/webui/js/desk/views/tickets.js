@@ -2,7 +2,9 @@
    js/desk/views/tickets.js — the queue and the ticket case file, plus the
    whole working loop: composer (reply/note + the native timer), time
    entries, tags, title, bulk actions and CSV export.
-   Owns: overviews/setOverview/setQF/viewTickets · bulkToggle/bulkApply ·
+   Owns: ovPred/overviews (OverviewDef evaluator)/setOverview/setQF/viewTickets ·
+   tabsModal/tabsDraw/tabsRow/tabsMove/tabsToggle/tabsAddCustom/tabsRmCustom/
+   tabsSave (per-user queue-tab prefs) · bulkToggle/bulkApply ·
    ticketsCSVRows/auditCSVRows/exportTicketsCSV/exportAuditCSV/copyRowsCSV/
    copyTicketsCSV/copyAuditCSV · viewTicket/renderArt · insertCanned/trigVars ·
    agentEmail · attachTime/editTimeEntry/removeTimeEntry · addAtts/rmAtt ·
@@ -15,6 +17,9 @@
      POST  /api/tickets/{id}/tags       (addTag / rmTag / bulk tag)
      POST  /api/tickets/{id}/time       (attachTime)
      PATCH /api/time/{id}               (editTimeEntry / removeTimeEntry-void)
+     PUT   /auth/me/prefs               (tabsSave, via savePrefs — body is the
+                                         whole prefs object; server keys it by
+                                         session, nobody writes anyone else's)
    Title edits and bulk owner/state/priority go through saveTitle/setProp
    in views/props.js.
    Invariants: desk.articles are immutable by DB design — notes and replies
@@ -22,38 +27,69 @@
    stored list); nothing here edits it. SLA escalation notices are the server
    scanner's job — nothing here synthesizes them. Local mutation always lands
    before the mirroring fetch; a change that didn't happen never calls out.
+   Queue tabs come ONLY from effectiveOverviews() (state.js: admin
+   desk_ui.overviews shaped by me.prefs.overviews) — no tab list is hardcoded
+   here. Queue filter values (qf group/prio/client) are ARRAYS: empty = all.
    ========================================================================== */
 
 /* ==========================================================================
    TICKETS — the queue
    ========================================================================== */
+/* ---- overview tabs: a pure evaluator over OverviewDefs -------------------
+   effectiveOverviews() (state.js) supplies the list — admin desk_ui.overviews
+   reordered/hidden per me.prefs.overviews, personal tabs at the end. Every
+   OverviewDef key maps onto exactly one predicate below; an omitted or empty
+   key is no constraint. */
+function ovPred(def){
+  return t=>{
+    const s = st8(t.st)||{};
+    if(def.scope==='mine' && t.ownerId!==state.meId) return false;
+    if(def.scope==='unassigned' && t.ownerId) return false;
+    if(def.stateKinds?.length && !def.stateKinds.includes(s.type)) return false;
+    if(def.states?.length && !def.states.includes(s.label)) return false;
+    if(def.groups?.length && !def.groups.includes(t.groupId)) return false;
+    if(def.prios?.length && !def.prios.some(r=>String(r)===String(t.prio))) return false;
+    if(def.tags?.length && !def.tags.some(x=>t.tags.includes(x))) return false;
+    if(def.recentDays && t.updatedAt < nowMs()-def.recentDays*24*H) return false;
+    return true;
+  };
+}
 function overviews(){
-  const sc = scoped(); const meIs = t=>t.ownerId===state.meId;
-  const o = [
-    { id:'myopen', label:'My assigned', f:t=>meIs(t)&&!isDone(t) },
-  ];
-  if(can('assign')) o.push({ id:'unassigned', label:'Unassigned', f:t=>!t.ownerId&&!isDone(t) });
-  o.push(
-    { id:'allopen', label: can('view_all')?'All open':'Group open', f:t=>!isDone(t) },
-    { id:'pending', label:'Pending / hold', f:t=>(st8(t.st)||{}).type==='paused' },
-    { id:'done', label:'Recently solved', f:t=>isDone(t) },
-  );
-  return o.map(x=>Object.assign(x,{n: sc.filter(x.f).length}));
+  const sc = scoped();
+  return effectiveOverviews()
+    /* unassigned-scope tabs are triage tools — same gate the fixed tab had */
+    .filter(d=>d.scope!=='unassigned' || can('assign'))
+    .map(d=>({ id:d.id, def:d, f:ovPred(d),
+      /* the shipped default's courtesy label for group-scoped users */
+      label: d.label==='All open'&&!can('view_all') ? 'Group open' : d.label }))
+    .map(x=>Object.assign(x,{n: sc.filter(x.f).length}));
 }
 function setOverview(id){ state.overview=id; render(); }
 function setQF(k,v){ state.qf[k]=v; render(); }
+/* named multiCombo handlers — the component calls window[name](selectedArr) */
+function setQFGroup(vals){ setQF('group', vals); }
+function setQFPrio(vals){ setQF('prio', vals); }
+function setQFClient(vals){ setQF('client', vals); }
+/* stale-shape armor: anything that isn't an array (an old 'all', a bare id
+   from a deep link) coerces in place — the ledger _mfNorm pattern */
+function qfNorm(){
+  ['group','prio','client'].forEach(k=>{ const v=state.qf[k];
+    if(!Array.isArray(v)) state.qf[k] = (v && v!=='all') ? [v] : []; });
+}
 
 function viewTickets(){
+  qfNorm();
   const ov = overviews();
-  const cur = ov.find(o=>o.id===state.overview) || ov[0];
-  let rows = scoped().filter(cur.f);
+  const cur = ov.find(o=>o.id===state.overview) || ov[0] || null;
+  let rows = cur? scoped().filter(cur.f) : [];
   const f = state.qf;
-  if(f.group!=='all') rows = rows.filter(t=>t.groupId===f.group);
-  if(f.prio!=='all') rows = rows.filter(t=>String(t.prio)===f.prio);
-  if(f.client!=='all') rows = rows.filter(t=>t.clientId===f.client);
+  if(f.group.length) rows = rows.filter(t=>f.group.includes(t.groupId));
+  if(f.prio.length) rows = rows.filter(t=>f.prio.some(v=>String(v)===String(t.prio)));
+  if(f.client.length) rows = rows.filter(t=>f.client.includes(t.clientId));
   if(f.q){ const q=f.q.toLowerCase(); rows = rows.filter(t=> (TITLES[t.id]||'').toLowerCase().includes(q) || String(t.id).includes(q) || client(t.clientId).name.toLowerCase().includes(q)); }
   rows.sort((a,b)=> b.prio-a.prio || (slaInfo(a)?.due||9e15)-(slaInfo(b)?.due||9e15) || b.updatedAt-a.updatedAt);
-  if(cur.id==='done') rows.sort((a,b)=>b.updatedAt-a.updatedAt);
+  /* done-only views read newest-first — priority/SLA order is meaningless after solve */
+  if(cur && (cur.def.stateKinds||[]).join()==='done') rows.sort((a,b)=>b.updatedAt-a.updatedAt);
 
   const bulkN = state.bulk.filter(id=>rows.some(r=>r.id===id)).length;
   return `
@@ -70,15 +106,16 @@ function viewTickets(){
       <button class="btn sm" onclick="copyTicketsCSV()" title="Copies the CSV for the rows currently shown">Copy</button>
       <button class="btn primary" onclick="exportTicketsCSV()" title="Exports exactly the rows currently shown — overview + filters applied">${icon(IC.export)}Export CSV</button>
     </span>`:''}
-    <div class="seg wrap">${ov.map(o=>`<button class="${state.overview===o.id?'on':''}" onclick="setOverview('${o.id}')">${o.label}<span class="pip">${o.n}</span></button>`).join('')}</div>
+    <div class="seg wrap">${ov.map(o=>`<button class="${state.overview===o.id?'on':''}" onclick="setOverview('${jsq(o.id)}')">${esc(o.label)}<span class="pip">${o.n}</span></button>`).join('')}</div>
+    <button class="btn sm ghost" onclick="tabsModal()" title="Customize tabs — reorder, hide, add personal tabs" style="padding:4px 8px">⚙</button>
     <span class="spacer"></span>
     ${can('create')?`<button class="btn primary" onclick="newTicketModal()">${icon(IC.plus)}New ticket</button>`:''}
   </div>
   <div class="toolbar">
     <div class="search">${icon(IC.search)}<input type="text" placeholder="Search title, number, client…" value="${esc(f.q)}" data-fkey="qf-q" oninput="setQF('q',this.value)"></div>
-    <select onchange="setQF('group',this.value)">${['all',...GROUPS.filter(g=>!isArch(g)||f.group===g.id).map(g=>g.id)].map(g=>`<option value="${g}" ${f.group===g?'selected':''}>${g==='all'?'All groups':grp(g).name+(isArch(grp(g))?' (archived)':'')}</option>`).join('')}</select>
-    <select onchange="setQF('prio',this.value)"><option value="all">Any priority</option>${PRIOS.filter(p=>!isArch(p)||f.prio==String(p.id)).map(p=>`<option value="${p.id}" ${f.prio==String(p.id)?'selected':''}>${p.label}${isArch(p)?' (archived)':''}</option>`).join('')}</select>
-    <span style="display:inline-block;min-width:180px;vertical-align:middle">${combo('qfClient', [{v:'all',label:'All clients',blank:true},...CLIENTS.filter(c=>c.status!=='archived'||f.client===c.id).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''}))], f.client, function(){ setQF('client', document.getElementById('qfClient').value); }, 'All clients')}</span>
+    <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('qfGroup', GROUPS.filter(g=>!isArch(g)||f.group.includes(g.id)).map(g=>({v:g.id,label:g.name+(isArch(g)?' (archived)':'')})), f.group, 'setQFGroup', 'All groups')}</span>
+    <span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('qfPrio', PRIOS.filter(p=>!isArch(p)||f.prio.some(v=>String(v)===String(p.id))).map(p=>({v:p.id,label:p.label+(isArch(p)?' (archived)':'')})), f.prio, 'setQFPrio', 'Any priority')}</span>
+    <span style="display:inline-block;min-width:180px;vertical-align:middle">${multiCombo('qfClient', CLIENTS.filter(c=>c.status!=='archived'||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''})), f.client, 'setQFClient', 'All clients')}</span>
   </div>
   <div class="card">
     ${rows.length? `<table class="tbl">
@@ -98,6 +135,125 @@ function viewTickets(){
         </tr>`).join('')}</tbody></table>`
     : `<div class="empty">${icon(IC.ticket)}<div>No tickets match this view. Clear a filter or switch overview.</div></div>`}
   </div>`;
+}
+
+/* ---- Customize tabs: per-user order / visibility / personal tabs ---------
+   Works on a draft (state._tabsDraft) so Cancel costs nothing; Save applies
+   locally then mirrors the WHOLE prefs object via savePrefs (PUT
+   /auth/me/prefs). The admin tab set itself is standardized in Settings →
+   Queue tabs — this modal only shapes how *I* see it. ---- */
+function tabsModal(){
+  const p = state.prefs.overviews || {};
+  /* adminOverviews() (state.js) carries the shipped-default fallback — raw
+     DESK_UI.overviews is undefined until an admin first saves the card */
+  const adminIds = adminOverviews().filter(o=>!isArch(o)).map(d=>d.id);
+  const order = (p.order||[]).filter(id=>adminIds.includes(id));
+  adminIds.forEach(id=>{ if(!order.includes(id)) order.push(id); });
+  const custom = JSON.parse(JSON.stringify(p.custom||[]));
+  const known = adminIds.concat(custom.map(d=>d.id));
+  state._tabsDraft = { order, hidden:(p.hidden||[]).filter(id=>known.includes(id)), custom };
+  state._tabsBase = JSON.stringify(state._tabsDraft);
+  tabsDraw();
+}
+function tabsRow(def, i, n, isCustom){
+  const hid = state._tabsDraft.hidden.includes(def.id);
+  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)">
+    <button class="rowbtn" ${i===0?'disabled':''} onclick="tabsMove(${i},-1,${isCustom})" title="Move up">↑</button>
+    <button class="rowbtn" ${i===n-1?'disabled':''} onclick="tabsMove(${i},1,${isCustom})" title="Move down">↓</button>
+    <span style="flex:1;min-width:0;${hid?'opacity:.45':''}">${esc(def.label)}${isCustom?' <span class="mini muted">personal</span>':''}</span>
+    <label class="mini" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${hid?'':'checked'} onchange="tabsToggle('${jsq(def.id)}',this.checked)" style="width:auto;accent-color:var(--brand)">shown</label>
+    ${isCustom?`<button class="rowbtn" onclick="tabsRmCustom(${i})" title="Remove this personal tab">×</button>`:''}
+  </div>`;
+}
+function tabsDraw(){
+  const d = state._tabsDraft;
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>Customize queue tabs</h3><p>Order, visibility and personal tabs are yours alone — the shared tab set is standardized by admins in Settings → Queue tabs.</p></div>
+    <div class="modal-body">
+      ${d.order.map((id,i)=>{ const def=adminOverviews().find(x=>x.id===id); return def? tabsRow(def,i,d.order.length,false) : ''; }).join('')}
+      ${d.custom.length?`<div class="mini muted" style="margin:10px 0 2px;text-transform:uppercase;letter-spacing:.06em">Personal tabs</div>`:''}
+      ${d.custom.map((def,i)=>tabsRow(def,i,d.custom.length,true)).join('')}
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <div class="mini muted" style="text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Add a personal tab</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="tabLabel" placeholder="Label" style="flex:1;min-width:150px">
+          <select id="tabScope" style="width:auto" title="Whose tickets the tab shows">
+            <option value="all">Anyone's</option><option value="mine">Mine</option><option value="unassigned">Unassigned</option>
+          </select>
+          <span class="mini" style="display:inline-flex;gap:9px;align-items:center" title="Which state kinds count — all three checked = no constraint">
+            ${['open','paused','done'].map(k=>`<label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer"><input type="checkbox" id="tabK-${k}" ${k!=='done'?'checked':''} style="width:auto;accent-color:var(--brand)">${k}</label>`).join('')}
+          </span>
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px">
+          <div style="flex:1;min-width:170px"><div class="mini muted">Boards — any of; none = all</div>
+            <div style="max-height:110px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:4px">
+              ${aGROUPS().map(g=>`<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;padding:2px 0;cursor:pointer"><input type="checkbox" id="tabG-${g.id}" style="width:auto;accent-color:var(--brand)">${esc(g.name)}</label>`).join('')||'<span class="mini muted">No boards.</span>'}
+            </div></div>
+          <div style="flex:1;min-width:150px"><div class="mini muted">Priorities — any of; none = all</div>
+            <div style="max-height:110px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:4px">
+              ${aPRIOS().map(p=>`<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;padding:2px 0;cursor:pointer"><input type="checkbox" id="tabP-${p.id}" style="width:auto;accent-color:var(--brand)">${esc(p.label)}</label>`).join('')}
+            </div></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+          <input type="text" id="tabTags" placeholder="tags, comma-separated — any of" style="flex:1;min-width:160px">
+          <label class="mini" style="display:inline-flex;gap:5px;align-items:center">updated in last <input type="number" id="tabDays" min="1" style="width:64px"> days</label>
+          <button class="btn sm" onclick="tabsAddCustom()">Add tab</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="tabsSave()">Save</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+}
+function tabsMove(i, dir, isCustom){
+  const arr = isCustom? state._tabsDraft.custom : state._tabsDraft.order;
+  const j = i+dir; if(j<0 || j>=arr.length) return;
+  [arr[i],arr[j]] = [arr[j],arr[i]];
+  tabsDraw();
+}
+function tabsToggle(id, on){
+  const d = state._tabsDraft;
+  if(on) d.hidden = d.hidden.filter(x=>x!==id);
+  else if(!d.hidden.includes(id)) d.hidden.push(id);
+  tabsDraw();
+}
+function tabsRmCustom(i){
+  const d = state._tabsDraft;
+  const gone = d.custom.splice(i,1)[0];
+  if(gone) d.hidden = d.hidden.filter(x=>x!==gone.id);
+  tabsDraw();
+}
+function tabsAddCustom(){
+  const label = document.getElementById('tabLabel').value.trim();
+  if(!label){ toast('Give the tab a label first.'); return; }
+  const d = state._tabsDraft;
+  const taken = adminOverviews().map(x=>x.id).concat(d.custom.map(x=>x.id));
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'tab';
+  let id = base, ix = 2;
+  while(taken.includes(id)) id = base+'-'+(ix++);
+  const def = { id, label, scope: document.getElementById('tabScope').value };
+  const kinds = ['open','paused','done'].filter(k=>document.getElementById('tabK-'+k).checked);
+  if(kinds.length && kinds.length<3) def.stateKinds = kinds;   /* all three = no constraint — omit */
+  const gs = aGROUPS().filter(g=>document.getElementById('tabG-'+g.id)?.checked).map(g=>g.id);
+  if(gs.length) def.groups = gs;
+  const ps = aPRIOS().filter(p=>document.getElementById('tabP-'+p.id)?.checked).map(p=>p.id);
+  if(ps.length) def.prios = ps;
+  const tags = (document.getElementById('tabTags').value||'').split(',').map(s=>s.trim().toLowerCase().replace(/\s+/g,'-')).filter(Boolean);
+  if(tags.length) def.tags = tags;
+  const days = parseInt(document.getElementById('tabDays').value, 10);
+  if(days>0) def.recentDays = days;
+  d.custom.push(def);
+  tabsDraw();
+}
+function tabsSave(){
+  const d = state._tabsDraft; if(!d) return;
+  if(JSON.stringify(d)===state._tabsBase){ state._tabsDraft=null; closeModal(); return; }   /* untouched — nothing to write */
+  state._tabsDraft = null;
+  toast('Queue tabs saved — the layout is yours alone.');
+  closeModal();
+  /* savePrefs applies the merge, diffs against the UNMUTATED state.prefs,
+     renders, and PUTs — assigning state.prefs first would blind its guard */
+  savePrefs({ overviews: { order:d.order, hidden:d.hidden, custom:d.custom } });
 }
 
 /* ---- bulk actions — each change audited individually ---- */
@@ -138,12 +294,12 @@ function bulkApply(k, v){
 
 /* ---- CSV: exports exactly the rows currently shown ---- */
 function ticketsCSVRows(){
-  const ov = overviews(); const cur = ov.find(o=>o.id===state.overview) || ov[0];
-  let rows = scoped().filter(cur.f);
+  const ov = overviews(); const cur = ov.find(o=>o.id===state.overview) || ov[0] || null;
+  let rows = cur? scoped().filter(cur.f) : [];
   const f = state.qf;
-  if(f.group!=='all') rows = rows.filter(t=>t.groupId===f.group);
-  if(f.prio!=='all') rows = rows.filter(t=>String(t.prio)===f.prio);
-  if(f.client!=='all') rows = rows.filter(t=>t.clientId===f.client);
+  if(f.group.length) rows = rows.filter(t=>f.group.includes(t.groupId));
+  if(f.prio.length) rows = rows.filter(t=>f.prio.some(v=>String(v)===String(t.prio)));
+  if(f.client.length) rows = rows.filter(t=>f.client.includes(t.clientId));
   const data = [['number','title','client','contact','group','state','priority','owner','tags','opened','updated','hours_logged','sla_due','sla_breached']];
   rows.forEach(t=>{ const sla = slaInfo(t);
     data.push([t.id, TITLES[t.id]||firstLine(t), client(t.clientId).name, contact(t.contactId)?.email||'', grp(t.groupId).name,

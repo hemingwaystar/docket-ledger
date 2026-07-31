@@ -153,7 +153,8 @@ def notifications(request: Request):
 
 
 class MarkRead(BaseModel):
-    ids: list[str]
+    ids: list[str] = []
+    all: bool = False                  # true → ids ignored, every unread I can see
 
 
 @router.post("/notifications/read")
@@ -163,7 +164,22 @@ def mark_read(body: MarkRead, request: Request):
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
         with conn.cursor() as cur:
-            cur.execute("""UPDATE desk.notifications SET read_at = now()
-                            WHERE id = ANY(%s::uuid[]) AND read_at IS NULL""",
-                        (body.ids,))
+            if body.all:
+                # same visibility scope as _notifs: mine OR global OR my groups
+                cur.execute("""UPDATE desk.notifications SET read_at = now()
+                                WHERE read_at IS NULL
+                                  AND (agent_id = %(me)s
+                                       OR (agent_id IS NULL AND group_id IS NULL)
+                                       OR group_id IN (SELECT group_id FROM shared.agent_groups
+                                                        WHERE agent_id = %(me)s))""",
+                            {"me": who["agent_id"]})
+            else:
+                # ids are scoped to my visibility too — same invariant, both branches
+                cur.execute("""UPDATE desk.notifications SET read_at = now()
+                                WHERE id = ANY(%(ids)s::uuid[]) AND read_at IS NULL
+                                  AND (agent_id = %(me)s
+                                       OR (agent_id IS NULL AND group_id IS NULL)
+                                       OR group_id IN (SELECT group_id FROM shared.agent_groups
+                                                        WHERE agent_id = %(me)s))""",
+                            {"ids": body.ids, "me": who["agent_id"]})
         return {"ok": True}

@@ -54,13 +54,23 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 (mail_to,) = cur.fetchone()
                 if not mail_to:
                     raise HTTPException(409, "No recipient — the ticket has no contact or inbound mail")
+                # sender: group_sendas override (live + outbound, 0026) → fed-by
+                # mailbox — same order as the worker's trigger mail
                 cur.execute("""SELECT m.address, m.display_name, m.outbound
-                                 FROM desk.mailboxes m
-                                 JOIN desk.tickets t ON t.group_id = m.group_id
-                                WHERE t.id = %s AND NOT m.paused
-                                ORDER BY m.outbound DESC, m.address LIMIT 1""",
+                                 FROM desk.group_sendas gs
+                                 JOIN desk.mailboxes m ON m.id = gs.mailbox_id
+                                 JOIN desk.tickets t ON t.group_id = gs.group_id
+                                WHERE t.id = %s AND NOT m.paused AND m.outbound""",
                             (ticket_id,))
                 mbrow = cur.fetchone()
+                if mbrow is None:
+                    cur.execute("""SELECT m.address, m.display_name, m.outbound
+                                     FROM desk.mailboxes m
+                                     JOIN desk.tickets t ON t.group_id = m.group_id
+                                    WHERE t.id = %s AND NOT m.paused
+                                    ORDER BY m.outbound DESC, m.address LIMIT 1""",
+                                (ticket_id,))
+                    mbrow = cur.fetchone()
                 if mbrow is None:
                     raise HTTPException(409, "No mailbox is attached to this ticket's group")
                 mb_addr, mb_name, mb_outbound = mbrow

@@ -55,13 +55,35 @@ git (`docs/STATE.md`) so it travels with the code.
 > compiled (real CPython via wasm), route tables diffed, endpoint parity
 > 68/68, demo-grep zero hits across 50 files.
 >
+> ⚙️ **BUILD 10 (2026-07-31): five user asks, shipped.** (1) Bell "Mark all
+> read" (server-scoped to YOUR visible rows; the ids path gained the same
+> guard). (2) Queue tabs are OverviewDefs: admin-standardized in Settings →
+> Queue tabs (`desk_ui` app_config, rides bootstrap), per-user
+> reorder/hide/personal tabs via the queue's ⚙ (PUT /auth/me/prefs —
+> account-scoped uprefs). The five shipped tabs are the default; parity is
+> machine-verified. (3) Multi-select filter dropdowns across both apps'
+> bars + the builder value pickers (engine comma any-of — semantics were
+> already any-of; now documented; comma-labels honestly disabled).
+> (4) Per-board outbound sender override — **MIGRATION 0026** + PATCH
+> /api/settings/groups/{id}/sendas + both resolvers + a routing-card
+> picker; one eligibility rule (outbound + unpaused) at every site.
+> (5) Dashboard Queue-by-state show/hide (admin default + per-user ⚙).
+> Verified same as build 9: browser-engine parse + empty-state renders,
+> stock-install tabs-modal probe, multiCombo round-trip, 44/44 .py
+> compile, endpoint parity, grants vs 0026. Design: docs/BUILD10-DESIGN.md.
+> **The build-8 incident is CLOSED**: the malformed desk.ticket_links table
+> (created by a truncated upload of the original 0025 — the GitHub web
+> uploader, since retired) was dropped empty via console psql and the
+> hardened 0025 applied clean; build 9 confirmed live by screenshots.
+>
 > **Still open, in order (details in §5):**
 > 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
-> 2. **USER: the build-8 deploy incident console surgery FIRST** (§6 —
->    apply the idempotent 0025 body via psql, record it, audit row, then
->    `docker compose up -d`; six green containers = desk-api back).
->    Build 9 deploys only AFTER that.
-> 3. **USER: deploy build 9** — full image rebuild required (webui is
+> 2. ~~USER: build-8 console surgery~~ **DONE 2026-07-31** — see the
+>    build-10 banner above; ledger row 44 has the anatomy.
+> 3. **USER: deploy build 10** — `git pull && ./deploy.sh` (0026 applies
+>    before the rebuilt code starts — deploy.sh's order is load-bearing
+>    on this drop). Then the §5 build-10 walks.
+> 3b. **USER (previously): deploy build 9** — full image rebuild required (webui is
 >    COPYed into images): `./deploy.sh` after pushing. Then run the §5
 >    build-9 verify walks (top of the list).
 > 4. **USER: served-UI staleness check** — markers moved in build 9: grep
@@ -374,6 +396,30 @@ resolves to (explicit override → ticket contact → last inbound sender).
     demo-grep hits across 50 webui files. Contract + full fix list:
     docs/REWORK-DESIGN.md.
 
+18. **Build 10 (2026-07-31) — five features + the incident autopsy.**
+    Deploying build 9 first surfaced the build-8 incident's TRUE root
+    cause (row 44: a truncated web-upload committed a malformed
+    ticket_links table; DROP empty + re-migrate closed it) — and the
+    web-upload path itself was retired: bundle→repo now goes through a
+    real git client with sha256 verification ("Add files via upload"
+    never again). Then the user's five asks: bell mark-all-read
+    (visibility-scoped, both branches); admin-standardized +
+    user-customizable queue tabs (OverviewDef vocabulary, desk_ui
+    app_config + uprefs:<uuid> via PUT /auth/me/prefs, the shipped five
+    tabs as the machine-verified-parity default); multi-select filter
+    dropdowns everywhere incl. the builder value pickers (comma any-of —
+    engine semantics were already any-of, now contractual; comma-labels
+    disabled honestly); per-board outbound sender override (migration
+    0026 desk.group_sendas, PATCH /api/settings/groups/{id}/sendas, both
+    resolvers + bootstrap share one eligibility rule); dashboard
+    Queue-by-state show/hide (admin default + per-user prefs). The two
+    build workflows cross-verified each other's seams (the backend sweep
+    caught four frontend blockers before the frontend's own verify ran);
+    all fixed pre-push. Battery: browser parse + empty-state renders +
+    stock-install modal probe + functional multiCombo round-trip, 44/44
+    .py CPython compile, endpoint parity, 0026 grants audit. Design:
+    docs/BUILD10-DESIGN.md.
+
 ---
 
 ## 4. Live-debug ledger — every production bug, cause → fix → lesson
@@ -450,6 +496,7 @@ touched history: entries keep the period they were written into.
 | 42 | (found by the build-9 rework) Project flat-fee pricing never saw server data — bootstrap's `projects` payload was discarded on every fresh load | the hydration branch guarded `if(state.projects!==undefined)` but the state literal never declared `projects` — only a suite-bridge event created it lazily, so direct Ledger loads dropped the key | build 9: `state.projects` is declared; the branch hydrates unconditionally (clear-then-fill) | An existence-guard on a key you own is a smell — declare the shape, hydrate unconditionally; guards belong on SERVER payloads, not on your own state |
 | 43 | (caught pre-ship by the build-9 verify battery, would have been row-#30's twin) The new ticket-states editor would have toasted rename/archive success then reverted on refresh — for EVERY pre-existing state | bootstrap emitted states without their server uuid while the editor's PATCH gated on that uuid (`sid`) — the exact lying-chip anatomy of rows 30/38, reproduced by the rework itself before the adversarial review caught it | bootstrap emits `sid`; mapIn carries it; also fixed in the same pass: vcfg hydration dropped `postToThread` (an unrelated Settings edit would have silently re-enabled thread-posting an admin turned off) | The bug classes you just abolished will try to reincarnate in the new code — run the same battery against the rework that the rework was born from; adversarial verify catches what authorship can't |
 
+| 44 | (closes the build-8 incident, 2026-07-31) migrate exited 3 on EVERY attempt — first masked as "relation ticket_links already exists", then, with the hardened 0025 finally on the VM, as the REAL error: column "voided_at" does not exist | the original build-8 upload (GitHub web UI drag-drop) shipped a TRUNCATED 0025 whose CREATE TABLE lacked voided_at/voided_by; with no tx wrapper it COMMITTED the malformed table before dying on the first index; every later attempt then hit the committed-wrong object — IF NOT EXISTS checks EXISTENCE, not correctness, so even the idempotent rewrite skipped the bad table and failed on its indexes | verified the table empty (links shipped in build 8 and desk-api had been down since, so nothing could have written a row), DROP TABLE via console psql, re-ran migrate: hardened 0025 applied clean and recorded; the web-upload path is retired — pushes now come from a real git client with sha256 verification | Idempotency heals a MISSING object, never a WRONG one — after any partial apply, inspect the committed object against the file, do not trust existence; and a committed-wrong object explains "impossible" persistent failures better than any corruption theory |
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -484,6 +531,27 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **BUILD 10 — migrate applies 0026** (`apply 0026_group_sendas.sql`,
+      no ERROR lines — deploy.sh runs migrate BEFORE the rebuilt code,
+      which queries the new table unconditionally).
+- [ ] **Build 10 — bell:** "Mark all read" zeroes the badge and SURVIVES
+      refresh; another agent's bell is untouched.
+- [ ] **Build 10 — queue tabs:** stock queue shows the same five tabs with
+      identical counts as before; ⚙ opens Customize on a FRESH install; a
+      personal reorder/hide survives refresh AND a different browser (it
+      is account-scoped); Settings → Queue tabs edits change every user's
+      default; admin Hide actually removes the tab from agents' queues.
+- [ ] **Build 10 — multi-select filters:** pick two groups in the queue
+      bar → union of both; clear → all; same on reports/audit and the
+      Ledger bars; a trigger condition with two picked states fires on
+      either (the Runs counter proves it).
+- [ ] **Build 10 — sendas:** override a board to another outbound address
+      → routing card chips "Override"; an agent reply AND a trigger email
+      both send from the override (check the customer-visible From);
+      clear → derived returns; a paused or receive-only mailbox can't be
+      picked (and curl answers 422).
+- [ ] **Build 10 — dashboard:** hide a state via the card's ⚙ → survives
+      refresh; reset returns to the admin default.
 - [ ] **BUILD 9 smoke (FIRST — everything else assumes it):** both apps
       load with real data (shells + css/ + js/ all served; webui is baked
       into images, so a stale UI here means the rebuild step was skipped);

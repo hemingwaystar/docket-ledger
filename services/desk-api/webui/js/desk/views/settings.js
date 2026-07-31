@@ -1,30 +1,38 @@
 /* ==========================================================================
    js/desk/views/settings.js — viewSettings plus the shared-directory editors
    the Directory page's cards call: groups, agents & membership, activity
-   types — and the desk vocabularies: ticket states, priorities, caller
-   verification config, secrets, and the read-only PAT list.
+   types — and the desk vocabularies: ticket states, priorities, queue-tab &
+   dashboard defaults (desk_ui), caller verification config, secrets, and
+   the read-only PAT list.
    Owns: viewSettings · groupModal/saveGroup/archiveGroup · agentModal/
    saveAgent/deactivateAgent/toggleMembership/setAgentRole · typeModal/
    saveType/archiveType · stateModal/saveState/archiveState/moveState ·
-   prioModal/savePrio/archivePrio · vcfgSet/vcfgToggle/vcfgTogglePost ·
-   secretRow/secretSave · tokensRefresh/tokenRows.
+   prioModal/savePrio/archivePrio · deskUiCard/ovModal/saveOverview/
+   moveOverview/hideOverview/dashDefToggle/deskUiPush (+ deskOvs/
+   ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
+   vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows.
    Endpoints: POST /api/directory/groups · PATCH /api/directory/groups/{id} ·
    POST /api/directory/agents · PATCH /api/directory/agents/{email} ·
    POST /api/directory/types · PATCH /api/directory/types/{id} ·
    POST /api/settings/states · PATCH /api/settings/states/{state_id} ·
    POST /api/settings/priorities · PATCH /api/settings/priorities/{id} ·
-   PUT /api/settings/config/verification · PUT /api/settings/secrets/{name} ·
-   GET /api/settings/tokens.
-   Invariants: archive-first everywhere — nothing here deletes (row 35).
-   Local state mutates first, the API call fires only when something actually
-   changed (row 21), oops() on refusal. Verification channel toggles mirror
-   IMMEDIATELY with rollback (bug-#30 class, row 34) — never debounced.
-   System ticket states are machine-written and excluded from editing (0025);
-   a state's kind and a core state's label are immutable server-side. The
-   SLA/business-hours cards render here but persist via automations.js's
-   config mirrors (slaSet/bizDay/bizHours/bizHolidays); the auth card's
-   handlers (authSet/authToggle*) and cannedModal live there too; entraSet
-   lives in roles.js. PATCHing a state needs its server uuid (row.sid).
+   PUT /api/settings/config/desk_ui · PUT /api/settings/config/verification ·
+   PUT /api/settings/secrets/{name} · GET /api/settings/tokens.
+   Invariants: archive-first everywhere — nothing here deletes (row 35);
+   hiding a queue tab marks its OverviewDef active:false IN PLACE, the
+   definition never leaves desk_ui.overviews. Local state mutates first, the
+   API call fires only when something actually changed (row 21), oops() on
+   refusal. Verification channel toggles mirror IMMEDIATELY with rollback
+   (bug-#30 class, row 34) — never debounced. desk_ui always saves WHOLE
+   ({overviews, dashboardStates} — design §Storage's pinned shape); the
+   working list starts from DESK_UI / DEFAULT_OVERVIEWS (state.js), seeded
+   in full on the first edit. System ticket states are machine-written and
+   excluded from editing (0025); a state's kind and a core state's label are
+   immutable server-side. The SLA/business-hours cards render here but
+   persist via automations.js's config mirrors (slaSet/bizDay/bizHours/
+   bizHolidays); the auth card's handlers (authSet/authToggle*) and
+   cannedModal live there too; entraSet lives in roles.js. PATCHing a state
+   needs its server uuid (row.sid).
    ========================================================================== */
 
 /* ---- groups: rename / add / archive (shared.groups) --------------------- */
@@ -371,6 +379,165 @@ function archivePrio(pid){
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
 }
 
+/* ---- queue tabs & dashboard defaults — ONE app_config key, desk_ui:
+   {overviews:[OverviewDef,...], dashboardStates:[shown label,...]} (design
+   §Storage — pinned shape, both sides). This card edits the ADMIN defaults
+   everyone starts from; per-user shaping (reorder/hide/personal tabs, the
+   dashboard card's ⚙) lives in prefs, not here. The working list is
+   DESK_UI.overviews when customized, else DEFAULT_OVERVIEWS; the first edit
+   seeds the whole shipped list so the PUT always carries complete truth.
+   A hidden tab is active:false in place — archive-style, never removed. --- */
+const deskOvs = () => (Array.isArray(DESK_UI.overviews)&&DESK_UI.overviews.length)? DESK_UI.overviews : DEFAULT_OVERVIEWS;
+function ensureDeskOvs(){
+  if(!Array.isArray(DESK_UI.overviews)||!DESK_UI.overviews.length)
+    DESK_UI.overviews = JSON.parse(JSON.stringify(DEFAULT_OVERVIEWS));
+  return DESK_UI.overviews;
+}
+let _duiT = null;
+function deskUiPush(){ clearTimeout(_duiT); _duiT = setTimeout(()=>{
+  $fetch('/api/settings/config/desk_ui',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({value:DESK_UI})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+},600); }
+function ovSlug(label, taken){
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'tab';
+  let id = base, n = 2;
+  while(taken.some(o=>o.id===id)) id = base+'-'+(n++);
+  return id;
+}
+function ovSummary(o){
+  const parts = [{all:"everyone's tickets",mine:'assigned to the viewer',unassigned:'unassigned'}[o.scope]||o.scope];
+  if(o.stateKinds?.length) parts.push(o.stateKinds.join(' / '));
+  if(o.states?.length) parts.push('states: '+o.states.join(', '));
+  if(o.groups?.length) parts.push('boards: '+o.groups.map(g=>grp(g)?.name||g).join(', '));
+  if(o.prios?.length) parts.push('priority: '+o.prios.map(p=>prio(Number(p))?.label||p).join(', '));
+  if(o.tags?.length) parts.push('tags: '+o.tags.join(', '));
+  if(o.recentDays) parts.push('updated in the last '+o.recentDays+'d');
+  return parts.join(' · ');
+}
+function moveOverview(id, dir){
+  const list = ensureDeskOvs();
+  const i = list.findIndex(o=>o.id===id), j = i+dir;
+  if(i<0 || j<0 || j>=list.length) return;
+  [list[i],list[j]] = [list[j],list[i]];
+  log('Queue tabs reordered', `${list[j].label} ↔ ${list[i].label}`);
+  render();
+  deskUiPush();
+}
+function hideOverview(id){
+  const list = ensureDeskOvs();
+  const o = list.find(x=>x.id===id); if(!o) return;
+  const was = isArch(o);
+  if(!was && list.filter(x=>!isArch(x)).length<=1){ toast('At least one queue tab has to stay visible.'); return; }
+  if(was) delete o.active; else o.active = false;
+  log(was?'Queue tab restored':'Queue tab hidden', o.label);
+  toast(`“${o.label}” ${was?'is back in everyone’s tab bar':'hidden — the definition stays; restore it any time'}.`);
+  render();
+  deskUiPush();
+}
+function dashDefToggle(label, on){
+  const all = aSTATES().map(s=>s.label);
+  const shown = Array.isArray(DESK_UI.dashboardStates)? DESK_UI.dashboardStates.slice() : all.slice();
+  if(on===shown.includes(label)) return;             /* no change — nothing to mirror */
+  const next = on ? all.filter(l=>shown.includes(l)||l===label) : shown.filter(l=>l!==label);
+  /* every active state shown = same as absent; stay absent so future states
+     default to visible instead of being pinned out by an old list */
+  if(all.every(l=>next.includes(l))) delete DESK_UI.dashboardStates;
+  else DESK_UI.dashboardStates = next;
+  log('Dashboard default changed', `Queue by state · ${label} ${on?'shown':'hidden'} by default`);
+  render();
+  deskUiPush();
+}
+function ovModal(id){
+  if(!can('manage_settings')) return;
+  const o0 = id? deskOvs().find(x=>x.id===id) : { scope:'all' };
+  if(!o0) return;
+  const has = (arr,v)=>Array.isArray(arr)&&arr.includes(v);
+  const ck = (cls,v,on,label)=>`<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="${cls}" value="${esc(v)}" ${on?'checked':''} style="width:auto;accent-color:var(--brand)">${esc(label)}</label>`;
+  /* archived states/boards/tiers stay out of the boxes unless this def
+     already carries them (row 37) */
+  const stOpts = aSTATES().map(s=>({v:s.label,l:s.label}));
+  (o0.states||[]).forEach(v=>{ if(!stOpts.some(x=>x.v===v)) stOpts.push({v,l:v+' (archived)'}); });
+  const gOpts = aGROUPS().map(g=>({v:g.id,l:g.name}));
+  (o0.groups||[]).forEach(v=>{ if(!gOpts.some(x=>x.v===v)) gOpts.push({v,l:(grp(v)?.name||v)+' (archived)'}); });
+  const pOpts = aPRIOS().slice().sort((a,b)=>b.id-a.id).map(p=>({v:String(p.id),l:p.label}));
+  (o0.prios||[]).forEach(v=>{ if(!pOpts.some(x=>x.v===String(v))) pOpts.push({v:String(v),l:(prio(Number(v))?.label||('tier '+v))+' (archived)'}); });
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${id?'Edit queue tab — '+esc(o0.label):'Add queue tab'}</h3><p>A tab is a saved filter over the queue — a section left empty puts no constraint from that section. It lands in everyone's tab bar; people can still hide or reorder it for themselves.</p></div>
+    <div class="modal-body" style="max-height:62vh;overflow:auto">
+      <div class="grid g-2" style="gap:12px">
+        <div class="field"><label>Label</label><input type="text" id="ovLabel" value="${esc(o0.label||'')}" placeholder="e.g. Escalations"></div>
+        <div class="field"><label>Whose tickets</label><select id="ovScope">
+          <option value="all" ${o0.scope==='mine'||o0.scope==='unassigned'?'':'selected'}>Everyone's</option>
+          <option value="mine" ${o0.scope==='mine'?'selected':''}>Assigned to the viewer</option>
+          <option value="unassigned" ${o0.scope==='unassigned'?'selected':''}>Unassigned</option></select></div>
+      </div>
+      <div class="field"><label>State kind</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${[['open','Open — SLA runs'],['paused','Paused'],['done','Resolved']].map(([v,l])=>ck('ovKind',v,has(o0.stateKinds,v),l)).join('')}</div></div>
+      <div class="field"><label>Specific states</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${stOpts.map(x=>ck('ovState',x.v,has(o0.states,x.v),x.l)).join('')}</div></div>
+      <div class="field"><label>Boards</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${gOpts.map(x=>ck('ovGroup',x.v,has(o0.groups,x.v),x.l)).join('')}</div></div>
+      <div class="field"><label>Priorities</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${pOpts.map(x=>ck('ovPrio',x.v,(o0.prios||[]).some(p=>String(p)===x.v),x.l)).join('')}</div></div>
+      <div class="grid g-2" style="gap:12px">
+        <div class="field"><label>Tags (comma-separated — any of them)</label><input type="text" id="ovTags" value="${esc((o0.tags||[]).join(', '))}"></div>
+        <div class="field"><label>Updated in the last … days</label><input type="number" id="ovRecent" min="1" value="${o0.recentDays||''}" placeholder="no time window"></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveOverview('${id||''}')">${id?'Save tab':'Add tab'}</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('ovLabel').focus();
+}
+function saveOverview(id){
+  const label = document.getElementById('ovLabel').value.trim();
+  if(!label){ toast('The tab needs a label.'); return; }
+  const pick = cls => [...document.querySelectorAll('.'+cls+':checked')].map(el=>el.value);
+  const def = { id, label, scope: document.getElementById('ovScope').value };
+  const kinds = pick('ovKind');
+  if(kinds.length && kinds.length<3) def.stateKinds = kinds;   /* all three = any kind = omitted */
+  const states = pick('ovState'); if(states.length) def.states = states;
+  const groups = pick('ovGroup'); if(groups.length) def.groups = groups;
+  const prios = pick('ovPrio').map(Number); if(prios.length) def.prios = prios;
+  const tags = document.getElementById('ovTags').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if(tags.length) def.tags = tags;
+  const days = Math.floor(Number(document.getElementById('ovRecent').value));
+  if(days>=1) def.recentDays = days;
+  const list = ensureDeskOvs();
+  if(id){
+    const i = list.findIndex(o=>o.id===id); if(i<0) return;
+    if(list[i].active===false) def.active = false;             /* hidden survives an edit */
+    if(JSON.stringify(def)===JSON.stringify(list[i])){ closeModal(); render(); return; }
+    log('Queue tab updated', list[i].label===label? label : `${list[i].label} → ${label}`);
+    list[i] = def;
+  }else{
+    def.id = ovSlug(label, list);                    /* the id is permanent — prefs reference it */
+    list.push(def);
+    log('Queue tab added', label);
+  }
+  toast(`Tab “${label}” saved — it's in everyone's tab bar on their next load.`);
+  closeModal(); render();
+  deskUiPush();
+}
+function deskUiCard(){
+  const list = deskOvs();
+  const custom = Array.isArray(DESK_UI.overviews)&&DESK_UI.overviews.length;
+  return `
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Queue tabs &amp; dashboard</h3><span class="hint">the defaults everyone starts from — people fine-tune their own</span></div>
+      ${list.map((o,i)=>{ const arch=isArch(o); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${esc(o.label)}</b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Hidden</span>`:''}<p>${esc(ovSummary(o))}</p></div>
+        ${i>0?`<button class="rowbtn" onclick="moveOverview('${jsq(o.id)}',-1)" title="list earlier">↑</button>`:''}
+        ${i<list.length-1?`<button class="rowbtn" onclick="moveOverview('${jsq(o.id)}',1)" title="list later">↓</button>`:''}
+        <button class="rowbtn" onclick="ovModal('${jsq(o.id)}')">Edit</button>
+        <button class="rowbtn" onclick="hideOverview('${jsq(o.id)}')">${arch?'Show':'Hide'}</button></div>`;}).join('')}
+      <button class="btn sm" style="margin-top:12px" onclick="ovModal()">+ Add tab</button>
+      <div class="mini muted" style="margin-top:8px">${custom?'Customized — saved as the shared default for every agent.':'Showing the shipped defaults — the first change saves the whole list as the shared default.'} Hiding is archive-style: the definition stays and can be restored. Personal tabs and per-user order live on each person's queue (⚙), not here.</div>
+      <div class="card-head flush" style="margin-top:16px"><h3>Dashboard — queue by state</h3><span class="hint">shown by default · each person can override on the card</span></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
+        ${aSTATES().map(s=>{ const on=!Array.isArray(DESK_UI.dashboardStates)||DESK_UI.dashboardStates.includes(s.label);
+          return `<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" ${on?'checked':''} onchange="dashDefToggle('${jsq(s.label)}',this.checked)" style="width:auto;accent-color:var(--brand)">${esc(s.label)}</label>`;}).join('')}
+      </div>
+      <div class="mini muted" style="margin-top:8px">Unchecked states leave the dashboard's Queue-by-state card for anyone who hasn't set their own view; counts elsewhere are untouched. All boxes checked = new states show automatically.</div>
+    </div>`;
+}
+
 /* ---- caller verification config — one app_config key. Value edits are
    debounced; the Enable/Disable + thread-post toggles mirror IMMEDIATELY
    with rollback (bug-#30 class, row 34: the chip must never lie) ---------- */
@@ -527,6 +694,7 @@ function viewSettings(){
       <button class="btn sm" style="margin-top:12px" onclick="stateModal()">+ Add state</button>
       <div class="mini muted" style="margin-top:8px">Any state can be archived — tickets already in it keep it until moved. At least one running-SLA state and one resolved state must stay active. Core states keep their names (the mail pipeline resolves them by label); the cascade-written system state isn't editable; behavior is fixed at creation.</div>
     </div>
+    ${deskUiCard()}
     <div class="card card-pad">
       <div class="card-head flush"><h3>Priorities &amp; SLA</h3><span class="hint">tiers are editable — targets in hours drive the SLA column</span></div>
       ${PRIOS.slice().sort((a,b)=>b.id-a.id).map(p=>{ const arch=isArch(p); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${prioTag(p.id)}</b>${arch?` <span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Archived</span>`:''}</div>
