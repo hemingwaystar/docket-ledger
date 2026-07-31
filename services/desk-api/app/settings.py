@@ -12,9 +12,11 @@ Graph connection flow (single-tenant, application permissions):
      one scheduler pass.
 """
 import json
+import uuid as uuid_lib
 import httpx
 from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
+from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 from . import auth, crypto, db, helpers, mailer
@@ -382,3 +384,165 @@ def patch_canned(canned_id: str, body: PatchCanned, request: Request):
         auth.audit(conn, "desk", "Canned response updated", f"canned:{canned_id}",
                    f"{row[0]} · " + ", ".join(cols))
         return {"ok": True}
+
+
+def _uuid_or_404(value: str, what: str) -> str:
+    try:
+        uuid_lib.UUID(value)
+        return value
+    except ValueError:
+        raise HTTPException(404, f"No such {what}")
+
+
+class NewState(BaseModel):
+    label: str
+    kind: Literal["open", "paused", "done"]
+
+
+class PatchState(BaseModel):
+    label: str | None = None
+    active: bool | None = None         # false = archived, never deleted
+    position: int | None = None
+    # kind is immutable after create — it drives SLA/pending/reports
+
+
+@router.post("/states", status_code=201)
+def create_state(body: NewState, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""INSERT INTO desk.ticket_states (label, kind, position)
+                               SELECT %s, %s, coalesce(max(position), 0) + 1
+                                 FROM desk.ticket_states
+                               RETURNING id, active, position""",
+                            (body.label, body.kind))
+            except pg_errors.UniqueViolation:
+                raise HTTPException(409, f"A state named “{body.label}” already exists")
+            (sid, active, position) = cur.fetchone()
+        auth.audit(conn, "desk", "Ticket state added", f"state:{sid}",
+                   f"{body.label} ({body.kind})")
+        return {"id": str(sid), "label": body.label, "kind": body.kind,
+                "active": active, "position": position}
+
+
+@router.patch("/states/{state_id}")
+def patch_state(state_id: str, body: PatchState, request: Request):
+    _uuid_or_404(state_id, "state")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            cur.execute("""SELECT label, kind, active, position, is_system, is_core
+                             FROM desk.ticket_states WHERE id = %s""", (state_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such state")
+            if row[4]:
+                raise HTTPException(422, f"“{row[0]}” is a system state — "
+                                          "machine-written by the parent-close cascade; it can't be edited")
+            cols = {k: v for k, v in body.model_dump().items() if v is not None}
+            # core states keep their names: the mail pipeline resolves 'New'/'Open'
+            # by label (worker.py) — archive/reorder is fine, rename is not
+            if row[5] and "label" in cols and cols["label"] != row[0]:
+                raise HTTPException(409, "Core states keep their names — add a custom state instead")
+            if cols:
+                sets = ", ".join(f"{k} = %s" for k in cols)
+                try:
+                    cur.execute(f"""UPDATE desk.ticket_states SET {sets} WHERE id = %s
+                                    RETURNING label, kind, active, position""",
+                                (*cols.values(), state_id))
+                except pg_errors.UniqueViolation:
+                    raise HTTPException(409, f"A state named “{cols.get('label')}” already exists")
+                row = cur.fetchone()
+        if cols:
+            auth.audit(conn, "desk", "Ticket state updated", f"state:{state_id}",
+                       f"{row[0]} · " + ", ".join(cols))
+        return {"id": state_id, "label": row[0], "kind": row[1],
+                "active": row[2], "position": row[3]}
+
+
+class NewPriority(BaseModel):
+    label: str
+    rank: int
+
+
+class PatchPriority(BaseModel):
+    label: str | None = None
+    rank: int | None = None
+    active: bool | None = None         # false = archived, never deleted
+
+
+@router.post("/priorities", status_code=201)
+def create_priority(body: NewPriority, request: Request):
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            # sla_* columns are 0001 relics (SLA config lives in app_config, 0020)
+            # but NOT NULL — filled with the seed's 'Normal' values, never surfaced
+            try:
+                cur.execute("""INSERT INTO desk.priorities
+                                 (label, rank, sla_first_response_hours, sla_resolution_hours)
+                               VALUES (%s, %s, 8, 48) RETURNING id, active""",
+                            (body.label, body.rank))
+            except pg_errors.UniqueViolation as e:
+                if (e.diag.constraint_name or "").endswith("rank_key"):
+                    raise HTTPException(409, f"Rank {body.rank} is taken — ranks are unique")
+                raise HTTPException(409, f"A priority named “{body.label}” already exists")
+            (pid, active) = cur.fetchone()
+        auth.audit(conn, "desk", "Priority added", f"priority:{pid}",
+                   f"{body.label} · rank {body.rank}")
+        return {"id": str(pid), "label": body.label, "rank": body.rank,
+                "active": active}
+
+
+@router.patch("/priorities/{priority_id}")
+def patch_priority(priority_id: str, body: PatchPriority, request: Request):
+    _uuid_or_404(priority_id, "priority")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        with conn.cursor() as cur:
+            cur.execute("""SELECT label, rank, active FROM desk.priorities
+                            WHERE id = %s""", (priority_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such priority")
+            cols = {k: v for k, v in body.model_dump().items() if v is not None}
+            # 'Normal' is the ingestion fallback: the worker files unrouted mail
+            # under it by label (worker.py) — it keeps its name
+            if row[0] == "Normal" and cols.get("label") not in (None, "Normal"):
+                raise HTTPException(409, "“Normal” is the ingestion fallback priority — it keeps its name")
+            if cols:
+                sets = ", ".join(f"{k} = %s" for k in cols)
+                try:
+                    cur.execute(f"""UPDATE desk.priorities SET {sets} WHERE id = %s
+                                    RETURNING label, rank, active""",
+                                (*cols.values(), priority_id))
+                except pg_errors.UniqueViolation as e:
+                    if (e.diag.constraint_name or "").endswith("rank_key"):
+                        raise HTTPException(409, f"Rank {cols.get('rank')} is taken — ranks are unique")
+                    raise HTTPException(409, f"A priority named “{cols.get('label')}” already exists")
+                row = cur.fetchone()
+        if cols:
+            auth.audit(conn, "desk", "Priority updated", f"priority:{priority_id}",
+                       f"{row[0]} · " + ", ".join(cols))
+        return {"id": priority_id, "label": row[0], "rank": row[1], "active": row[2]}
+
+
+@router.get("/tokens")
+def list_tokens(request: Request):
+    """Metadata only — name and timestamps; token material never leaves.
+    No mint/revoke here: PATs stay operator-minted (scripts/create-token.sh)."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_settings")
+        ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""SELECT label, created_at, last_used_at FROM shared.api_tokens
+                            WHERE revoked_at IS NULL ORDER BY created_at DESC""")
+            return {"tokens": [{"name": r["label"], "createdAt": ms(r["created_at"]),
+                                "lastUsedAt": ms(r["last_used_at"])}
+                               for r in cur.fetchall()]}

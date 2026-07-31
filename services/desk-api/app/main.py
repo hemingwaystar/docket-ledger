@@ -1,5 +1,6 @@
 """desk-api — Docket's backend, split by concern:
-  tickets.py    reads (window.DocketAPI mirror) + create/article/props/tags/merge
+  tickets/      reads + bootstrap (window.DocketAPI mirror) + create/article/
+                props/tags/time/merge/links — one router per concern
   directory.py  groups, agents, clients (+routing domains), contacts, roles read
   projects.py   checklist lifecycle: create → tasks/billing → submit → approve → unlock
 Auth: Bearer PAT (auth.py). Invariants live in the DB; routers stay thin."""
@@ -11,7 +12,8 @@ from . import attachments, automations, db, oidc, sessions, settings, tickets, d
 app = FastAPI(title="desk-api")
 app.include_router(sessions.router)
 app.include_router(settings.router)
-app.include_router(tickets.router)
+for r in tickets.routers:
+    app.include_router(r)
 app.include_router(directory.router)
 app.include_router(projects.router)
 app.include_router(automations.router)

@@ -4,7 +4,7 @@ and thread view use:
   POST /api/uploads              multipart file → staged row (article_id NULL,
                                  staged_by = the uploader). The composer
                                  uploads first, then posts the article with
-                                 attachment_ids; tickets.py links the rows and
+                                 attachment_ids; tickets/articles.py links the rows and
                                  hands reply files to the mailer. Staged rows
                                  never linked are swept by the worker after a
                                  day. 20 MB/file cap here; the nginx front's

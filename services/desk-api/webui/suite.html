@@ -8,34 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root{
-  --brand:#0e6e63; --ink:#152029; --ink-2:#3d4b57; --ink-3:#75828d;
-  --paper:#f5f6f4; --surface:#ffffff; --line:#e4e7e3; --seal:#b0862f;
-}
-*{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:var(--paper);display:flex;flex-direction:column;overflow:hidden}
-.topbar{background:var(--ink);color:#e8edf0;display:flex;align-items:center;gap:18px;padding:0 18px;height:52px;flex:none;border-bottom:3px solid var(--brand)}
-.mark{display:flex;align-items:center;gap:10px}
-.mark .lg{width:30px;height:30px;border-radius:8px;background:var(--brand);display:grid;place-items:center;font-family:'IBM Plex Mono',monospace;font-weight:600;color:#fff;font-size:13px;letter-spacing:.02em}
-.mark b{font-size:14.5px;letter-spacing:.01em}
-.mark span{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#8fa0ab;margin-top:1px}
-.tabs{display:flex;gap:4px;background:#0f1820;border-radius:10px;padding:4px}
-.tabs button{border:0;background:transparent;color:#aebbc4;font:inherit;font-size:13px;font-weight:500;padding:6px 16px;border-radius:7px;cursor:pointer}
-.tabs button.on{background:var(--brand);color:#fff}
-.tabs button:hover:not(.on){color:#e8edf0}
-.hint{font-size:12px;color:#8fa0ab;margin-left:auto;display:flex;align-items:center;gap:8px}
-.hint .dot{width:7px;height:7px;border-radius:50%;background:#3ddc97;display:inline-block}
-.stage{flex:1;display:flex;min-height:0;background:var(--paper)}
-.pane{flex:1;min-width:0;display:none;position:relative}
-.pane.show{display:block}
-.pane iframe{width:100%;height:100%;border:0;display:block;background:var(--paper)}
-.stage.split .pane{display:block;flex:1}
-.stage.split .pane + .pane{border-left:3px solid var(--ink)}
-/* (pane caps removed — each app's own rail already names it) */
-@media (max-width: 1100px){ .stage.split{flex-direction:column} .stage.split .pane + .pane{border-left:0;border-top:3px solid var(--ink)} }
-</style>
+<link rel="stylesheet" href="css/suite.css">
 </head>
 <body>
 <div class="topbar">
@@ -51,54 +24,6 @@ body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:var(--
   <div class="pane show" id="pane-docket"><iframe id="fr-docket" src="desk.html" title="Docket"></iframe></div>
   <div class="pane" id="pane-ledger"><iframe id="fr-ledger" src="about:blank" data-live-ledger="1" title="Ledger"></iframe></div>
 </div>
-<script>
-/* Both iframes stay mounted the whole time, so each app keeps its state while
-   hidden — switching tabs never resets the demo. */
-let view = 'docket';
-function show(v){
-  view = v;
-  const stage = document.getElementById('stage');
-  stage.classList.toggle('split', v==='split');
-  document.getElementById('pane-docket').classList.toggle('show', v==='docket'||v==='split');
-  document.getElementById('pane-ledger').classList.toggle('show', v==='ledger'||v==='split');
-  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on', b.dataset.v===v));
-}
-/* Message relay — the "shared database" of the prototype.
-   Docket time events → Ledger; Ledger ticket jumps → Docket. */
-const fr = id => document.getElementById(id).contentWindow;
-window.addEventListener('message', ev=>{
-  /* relay only for our own two frames — nothing else gets a voice */
-  if(ev.source!==fr('fr-docket') && ev.source!==fr('fr-ledger')) return;
-  const d = ev.data || {};
-  if(d.src==='docket'){
-    if(d.type==='suite-nav'){ show(d.app==='ledger'?'ledger':'docket'); return; }
-    fr('fr-ledger').postMessage(d, '*');
-    if(d.type==='time-logged') flash('Time entry flowed Docket \u2192 Ledger');
-    if(d.type==='time-updated') flash('Entry edit flowed Docket \u2192 Ledger');
-    if(d.type==='time-removed') flash('Removal flowed Docket \u2192 Ledger (voided there)');
-  }
-  if(d.src==='ledger'){
-    fr('fr-docket').postMessage(d, '*');
-    if(d.type==='open-ticket'){ show(view==='split'?'split':'docket'); flash('Jumped Ledger \u2192 Docket ticket #'+d.ticket); }
-    if(d.type==='entry-removed') flash('Removal flowed Ledger \u2192 Docket');
-    if(d.type==='entry-updated') flash('Entry edit flowed Ledger \u2192 Docket');
-  }
-});
-let flashT = null;
-function flash(msg){
-  const el = document.getElementById('hintTxt');
-  el.textContent = '\u26a1 ' + msg;
-  clearTimeout(flashT);
-  flashT = setTimeout(()=>{ el.textContent = 'Log time on a ticket in Docket — watch it land in Ledger live'; }, 5000);
-}
-</script>
-<script>
-/* live: on the nginx front (standard https port) Ledger is proxied under
-   /ledger/; on direct NetBird access it stays on its own service port */
-document.getElementById('fr-ledger').src =
-  (location.port===''||location.port==='443'||location.port==='80')
-    ? '/ledger/ui/ledger.html'
-    : location.protocol + '//' + location.hostname + ':8082/ui/ledger.html';
-</script>
+<script src="js/suite-shell.js"></script>
 </body>
 </html>

@@ -1,0 +1,21 @@
+/* login.css — sign-in card (login.html).
+   map: tokens · card + logo · form fields · button · error strip · footer */
+:root{--brand:#0e6e63;--ink:#1d2b36;--mut:#5b6b78;--line:#dde5ea;--bg:#f2f5f7;--bad:#b23c3c}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);
+     min-height:100vh;display:grid;place-items:center}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:34px 34px 28px;
+      width:min(94vw,380px);box-shadow:0 10px 30px rgba(21,32,41,.08)}
+.logo{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+.logo img{width:44px;height:44px;border-radius:10px}
+.logo b{font-size:17px;display:block}.logo span{color:var(--mut);font-size:12.5px}
+label{display:block;font-size:12.5px;font-weight:600;color:var(--mut);margin:14px 0 5px}
+input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font:inherit}
+input:focus{outline:2px solid var(--brand);outline-offset:-1px;border-color:var(--brand)}
+button{width:100%;margin-top:20px;padding:11px;border:0;border-radius:9px;background:var(--brand);
+       color:#fff;font:600 15px/1 inherit;cursor:pointer}
+button:hover{filter:brightness(1.06)}
+.err{display:none;margin-top:14px;padding:9px 12px;border-radius:8px;background:#fbeaea;
+     color:var(--bad);font-size:13px}
+#mfaRow{display:none}
+.foot{margin-top:18px;text-align:center;color:var(--mut);font-size:12px}

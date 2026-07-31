@@ -1,0 +1,613 @@
+/* ==========================================================================
+   js/desk/views/settings.js — viewSettings plus the shared-directory editors
+   the Directory page's cards call: groups, agents & membership, activity
+   types — and the desk vocabularies: ticket states, priorities, caller
+   verification config, secrets, and the read-only PAT list.
+   Owns: viewSettings · groupModal/saveGroup/archiveGroup · agentModal/
+   saveAgent/deactivateAgent/toggleMembership/setAgentRole · typeModal/
+   saveType/archiveType · stateModal/saveState/archiveState/moveState ·
+   prioModal/savePrio/archivePrio · vcfgSet/vcfgToggle/vcfgTogglePost ·
+   secretRow/secretSave · tokensRefresh/tokenRows.
+   Endpoints: POST /api/directory/groups · PATCH /api/directory/groups/{id} ·
+   POST /api/directory/agents · PATCH /api/directory/agents/{email} ·
+   POST /api/directory/types · PATCH /api/directory/types/{id} ·
+   POST /api/settings/states · PATCH /api/settings/states/{state_id} ·
+   POST /api/settings/priorities · PATCH /api/settings/priorities/{id} ·
+   PUT /api/settings/config/verification · PUT /api/settings/secrets/{name} ·
+   GET /api/settings/tokens.
+   Invariants: archive-first everywhere — nothing here deletes (row 35).
+   Local state mutates first, the API call fires only when something actually
+   changed (row 21), oops() on refusal. Verification channel toggles mirror
+   IMMEDIATELY with rollback (bug-#30 class, row 34) — never debounced.
+   System ticket states are machine-written and excluded from editing (0025);
+   a state's kind and a core state's label are immutable server-side. The
+   SLA/business-hours cards render here but persist via automations.js's
+   config mirrors (slaSet/bizDay/bizHours/bizHolidays); the auth card's
+   handlers (authSet/authToggle*) and cannedModal live there too; entraSet
+   lives in roles.js. PATCHing a state needs its server uuid (row.sid).
+   ========================================================================== */
+
+/* ---- groups: rename / add / archive (shared.groups) --------------------- */
+let nextGroupIx = 1;
+function groupModal(gid){
+  if(!can('manage_settings')) return;
+  const g0 = gid? grp(gid) : {};
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${gid?'Rename group':'Add group'}</h3><p>A group is a board, a routing target and an access scope in one. Mailboxes, boards and role visibility all key off it.</p></div>
+    <div class="modal-body"><div class="field"><label>Group name</label><input type="text" id="gpName" value="${esc(g0.name||'')}" placeholder="e.g. Security"></div></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveGroup('${gid||''}')">${gid?'Save':'Add group'}</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('gpName').focus();
+}
+function saveGroup(gid){
+  const name = document.getElementById('gpName').value.trim();
+  if(!name){ toast('The group needs a name.'); return; }
+  if(gid){
+    const g = grp(gid); if(!g) return;
+    const was = g.name;
+    if(name===was){ closeModal(); render(); return; }
+    log('Group renamed', `${was} → ${name}`); g.name = name;
+    bridgeSend('dir-group-upsert', { group:{ id:g.id, name, active:!isArch(g) } });
+    toast(`Group “${name}” saved.`);
+    closeModal(); render();
+    $fetch('/api/directory/groups/'+encodeURIComponent(gid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });
+    return;
+  }
+  const g = { id:'g_x'+(nextGroupIx++), name };
+  GROUPS.push(g); GROUP_SENDAS[g.id] = (outboundBoxes()[0]||{}).id;
+  log('Group added', name);
+  bridgeSend('dir-group-upsert', { group:{ id:g.id, name, active:true } });
+  toast(`Group “${name}” saved.`);
+  closeModal(); render();
+  $fetch('/api/directory/groups',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(()=>hydrate(),400); });           /* swap temp id for server truth */
+}
+function archiveGroup(gid){
+  const g = grp(gid); if(!g) return;
+  if(!isArch(g) && aGROUPS().length<=1){ toast('At least one group has to stay active.'); return; }
+  g.active = isArch(g)? true : false;
+  bridgeSend('dir-group-upsert', { group:{ id:g.id, name:g.name, active:!isArch(g) } });
+  if(isArch(g)){ MAILBOXES.filter(m=>m.groupId===gid && m.status==='connected').forEach(m=>{ m.status='paused'; });
+    log('Group archived', `${g.name} — pickers hide it, tickets keep it, its mailboxes paused`); toast(`${g.name} archived. Its inbound mailboxes were paused; existing tickets stay put.`); }
+  else { log('Group restored', g.name); toast(`${g.name} restored — resume its mailboxes in Automations if you want mail flowing again.`); }
+  render();
+  $fetch('/api/directory/groups/'+encodeURIComponent(gid),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({active:g.active!==false})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(()=>hydrate(),400); });
+}
+
+/* ---- agents: add / deactivate / membership / role (shared.agents) ------- */
+function agentModal(){
+  if(!can('manage_settings')) return;
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>Add person</h3><p>Creates the agent record sign-in matches on — SSO users can sign in the moment they’re added. Group membership drives ticket visibility here and client access in Ledger.</p></div>
+    <div class="modal-body">
+      <div class="grid g-2" style="gap:12px">
+        <div class="field"><label>Full name</label><input type="text" id="agName" placeholder="First Last"></div>
+        <div class="field"><label>Email (sign-in identity)</label><input type="text" id="agEmail" placeholder="person@hemingwaytechsolutions.com"></div>
+        <div class="field"><label>Initials</label><input type="text" id="agInit" placeholder="auto from the name" maxlength="3"></div>
+        <div class="field"><label>Role</label><select id="agRole">${state.roleDefs.filter(r=>r.active!==false&&r.name!=='Customer').map(r=>`<option ${r.name==='Technician'?'selected':''}>${esc(r.name)}</option>`).join('')}</select></div>
+      </div>
+      <div class="field" style="margin-top:8px"><label>Groups</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${aGROUPS().map((g,i)=>`<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="agGrp" value="${g.id}" ${i===0?'checked':''} style="width:auto;accent-color:var(--brand)">${esc(g.name)}</label>`).join('')}</div></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveAgent()">Add person</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('agName').focus();
+}
+function saveAgent(){
+  const name = document.getElementById('agName').value.trim();
+  const email = document.getElementById('agEmail').value.trim().toLowerCase();
+  if(!name){ toast('Give them a name.'); return; }
+  if(!email.includes('@')){ toast('The email is what sign-in matches — it needs to be real.'); return; }
+  if(AGENTS.some(x=>(x.email||'').toLowerCase()===email)){ toast('That email is already in the directory.'); return; }
+  let initials = document.getElementById('agInit').value.trim().toUpperCase();
+  if(!initials) initials = name.split(/\s+/).map(w=>w[0]).join('').slice(0,3).toUpperCase();
+  const role = document.getElementById('agRole').value;
+  const groups = [...document.querySelectorAll('.agGrp:checked')].map(el=>el.value);
+  if(!groups.length){ toast('Pick at least one group — membership drives visibility.'); return; }
+  const a = { id:'ag'+Date.now(), name, email, initials, role, groups };
+  AGENTS.push(a);
+  log('Agent added', `${name} <${email}> · ${role} · ${groups.map(g=>grp(g)?.name||g).join(', ')}`);
+  toast(`${name.split(' ')[0]} added — they can sign in now.`);
+  closeModal(); render();
+  $fetch('/api/directory/agents',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:a.name, email:a.email, initials:a.initials,
+                         role:a.role, groups:a.groups.slice()})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(()=>hydrate(),400); });           /* swap temp id for server truth */
+}
+function deactivateAgent(tid){
+  if(!can('manage_settings')) return;
+  const a = agent(tid); if(!a) return;
+  if(tid===state.meId){ toast('You can’t deactivate yourself — another admin has to.'); return; }
+  if(!confirm(`Deactivate ${a.name}? They can’t sign in and leave the pickers; their tickets and time stay. Re-adding the same email restores them.`)) return;
+  const email = a.email;
+  AGENTS.splice(AGENTS.findIndex(x=>x.id===tid),1);
+  log('Agent deactivated', a.name);
+  toast(`${a.name.split(' ')[0]} deactivated.`);
+  render();
+  $fetch('/api/directory/agents/'+encodeURIComponent(email),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({active:false})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+function toggleMembership(gid, tid){
+  if(!can('manage_settings')) return;
+  const a = agent(tid); if(!a) return;
+  const has = a.groups.includes(gid);
+  if(has && a.groups.length===1){ toast(`${a.name.split(' ')[0]} needs at least one group.`); return; }
+  if(has) a.groups.splice(a.groups.indexOf(gid),1); else a.groups.push(gid);
+  log(has?'Removed from group':'Added to group', `${a.name} ${has?'−':'+'} ${grp(gid).name}`);
+  bridgeSend('dir-agent-upsert', { agent:{ id:a.id, name:a.name, initials:a.initials, groups:a.groups.slice() } });
+  toast(`${a.name.split(' ')[0]} ${has?'removed from':'added to'} ${grp(gid).name} — applies in Ledger too.`);
+  render();
+  /* the mirror sends the FULL groups list; a refusal re-hydrates via oops()
+     so the checkboxes tell the truth (bug-#30 class) */
+  $fetch('/api/directory/agents/'+encodeURIComponent(a.email),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:a.groups.slice()})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+function setAgentRole(tid, role){
+  const a = agent(tid); if(!a || a.role===role) return;
+  const was = a.role;
+  a.role = role;
+  log('Agent role assigned', `${a.name}: ${was||'—'} → ${role}${AUTH_CFG.roleMapping?' · NOTE: Entra mapping is on — overwritten at next sign-in':''}`);
+  bridgeSend('dir-agent-upsert', { agent:{ id:a.id, name:a.name, initials:a.initials, groups:a.groups.slice() } });
+  render();
+  $fetch('/api/directory/agents/'+encodeURIComponent(a.email),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({role:a.role})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+
+/* ---- activity types: rename / add / archive (ledger.activity_types —
+   names + lifecycle here; billable + rates stay in Ledger) --------------- */
+let nextTypeIx = 1;
+function typeModal(xid){
+  if(!can('manage_settings')) return;
+  const x0 = xid? ATYPES.find(a=>a.id===xid) : {};
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${xid?'Rename activity type':'Add activity type'}</h3><p>Types are shared: the ticket timer logs against them here; billable status and rates are configured in Ledger.</p></div>
+    <div class="modal-body"><div class="field"><label>Name</label><input type="text" id="atName" value="${esc(x0.name||'')}" placeholder="e.g. After-hours"></div></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveType('${xid||''}')">${xid?'Save':'Add type'}</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('atName').focus();
+}
+function saveType(xid){
+  const name = document.getElementById('atName').value.trim();
+  if(!name){ toast('The type needs a name.'); return; }
+  if(xid){
+    const x = ATYPES.find(a=>a.id===xid); if(!x) return;
+    const was = x.name;
+    if(name===was){ closeModal(); render(); return; }
+    log('Activity type renamed', `${was} → ${name}`); x.name = name;
+    bridgeSend('dir-type-upsert', { typeRec:{ id:x.id, name, billable:!!x.billable, active:!isArch(x) } });
+    toast(`Type “${name}” saved — set its rate in Ledger.`);
+    closeModal(); render();
+    if(isUuid(xid)) $fetch('/api/directory/types/'+encodeURIComponent(xid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    return;
+  }
+  const x = { id:'at'+(nextTypeIx++), name, billable:false };
+  ATYPES.push(x);
+  log('Activity type added', name);
+  bridgeSend('dir-type-upsert', { typeRec:{ id:x.id, name, billable:false, active:true } });
+  toast(`Type “${name}” saved — set its rate in Ledger.`);
+  closeModal(); render();
+  $fetch('/api/directory/types',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(()=>hydrate(),400); });           /* swap temp id for server truth */
+}
+function archiveType(xid){
+  const x = ATYPES.find(a=>a.id===xid); if(!x) return;
+  if(x.name==='Unclassified'){ toast('Unclassified is the sentinel — it has to stay.'); return; }
+  if(!isArch(x) && aATYPES().filter(t=>t.name!=='Unclassified').length<=1){ toast('At least one working type has to stay active.'); return; }
+  x.active = isArch(x)? true : false;
+  log(isArch(x)?'Activity type archived':'Activity type restored', `${x.name}${isArch(x)?' — hidden from pickers; entries carrying it keep it':''}`);
+  bridgeSend('dir-type-upsert', { typeRec:{ id:x.id, name:x.name, billable:!!x.billable, active:!isArch(x) } });
+  toast(`“${x.name}” ${isArch(x)?'archived — gone from pickers in both apps; existing entries untouched':'restored'}.`);
+  render();
+  if(isUuid(xid)) $fetch('/api/directory/types/'+encodeURIComponent(xid),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({active:!isArch(x)})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+
+/* ---- ticket states: add / rename / archive / reorder (desk.ticket_states).
+   The kind is immutable after create; core states keep their labels (the
+   mail pipeline resolves them by label); system states aren't editable at
+   all — the server 422s and the card doesn't offer it. -------------------- */
+function stateModal(sid){
+  if(!can('manage_settings')) return;
+  const s0 = sid? st8(sid) : {};
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${sid?'Edit state — '+esc(s0.label):'Add state'}</h3><p>The label is yours; the <b>type</b> defines behavior everywhere — SLA clocks, the pending/hold tab, "recently solved", reports — and is fixed once the state exists.</p></div>
+    <div class="modal-body">
+      <div class="grid g-2" style="gap:12px">
+        <div class="field"><label>Label</label><input type="text" id="stLabel" value="${esc(s0.label||'')}" placeholder="e.g. Waiting on vendor"></div>
+        <div class="field"><label>Behaves as</label><select id="stType" ${sid?'disabled title="behavior is load-bearing — the kind is immutable after create"':''}>
+          <option value="open" ${s0.type==='open'?'selected':''}>Open — SLA clock runs</option>
+          <option value="paused" ${s0.type==='paused'?'selected':''}>Paused — SLA clock stops</option>
+          <option value="done" ${s0.type==='done'?'selected':''}>Done — counts as resolved</option></select></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveState('${sid||''}')">${sid?'Save state':'Add state'}</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('stLabel').focus();
+}
+function saveState(sid){
+  const label = document.getElementById('stLabel').value.trim();
+  if(!label){ toast('The state needs a label.'); return; }
+  if(sid){
+    const s = st8(sid); if(!s || s.core || s.system) return;
+    const was = s.label;
+    if(label===was){ closeModal(); render(); return; }
+    log('State updated', `${was} → ${label}`); s.label = label;
+    toast(`State “${label}” saved.`);
+    closeModal(); render();
+    if(isUuid(s.sid)) $fetch('/api/settings/states/'+encodeURIComponent(s.sid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({label})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+        setTimeout(()=>hydrate(),400); });         /* the state's slug id re-derives from the label */
+    return;
+  }
+  const kind = document.getElementById('stType').value;
+  const s = { id:label.toLowerCase().replace(/\s+/g,'-'), sid:null, label, type:kind,
+              cls:'st-hold', desc:'', core:false, active:true, system:false };
+  STATES.push(s);
+  log('State added', `${label} (${kind})`);
+  toast(`State “${label}” saved — it's in every state picker now.`);
+  closeModal(); render();
+  $fetch('/api/settings/states',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({label, kind})})
+    .then(async r=>{ const d = await r.json().catch(()=>({}));
+      if(!r.ok) return oops(d);
+      s.sid = d.id;
+      setTimeout(()=>hydrate(),400); });
+}
+function archiveState(sid){
+  const s = st8(sid); if(!s || s.system) return;
+  if(!isArch(s)){
+    const remaining = aSTATES().filter(x=>x.id!==sid);
+    if(!remaining.some(x=>x.type==='open')){ toast('That’s the last active running-SLA state — add or restore another first.'); return; }
+    if(!remaining.some(x=>x.type==='done')){ toast('That’s the last active resolved state — add or restore another first.'); return; }
+    s.active = false;
+    const inIt = state.tickets.filter(t=>t.st===sid).length;
+    log('State archived', `${s.label}${inIt?` · ${inIt} ticket${inIt===1?'':'s'} still in it`:''}`);
+    toast(`“${s.label}” archived — gone from pickers${inIt?`; ${inIt} ticket${inIt===1?' keeps':'s keep'} it until moved`:''}.`);
+  } else { s.active = true; log('State restored', s.label); toast(`“${s.label}” restored.`); }
+  render();
+  if(isUuid(s.sid)) $fetch('/api/settings/states/'+encodeURIComponent(s.sid),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({active:s.active!==false})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+function moveState(sid, dir){
+  const i = STATES.findIndex(x=>x.id===sid), j = i+dir;
+  if(i<0 || j<0 || j>=STATES.length) return;
+  if(STATES[i].system || STATES[j].system) return;   /* the cascade state keeps its slot */
+  [STATES[i],STATES[j]] = [STATES[j],STATES[i]];
+  log('States reordered', `${STATES[j].label} ↔ ${STATES[i].label}`);
+  render();
+  /* positions are 1..N in list order (seeded that way; creates append max+1),
+     so each swapped row's new position is its index+1 */
+  [i,j].forEach(ix=>{ const s = STATES[ix];
+    if(isUuid(s.sid)) $fetch('/api/settings/states/'+encodeURIComponent(s.sid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({position:ix+1})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  });
+}
+
+/* ---- priorities: rename / add / archive (desk.priorities — label/rank/
+   active only; SLA hours live in app_config and mirror via slaSet) -------- */
+function prioModal(pid){
+  if(!can('manage_settings')) return;
+  const p0 = pid? prio(pid) : {};
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${pid?'Rename priority — '+esc(p0.label):'Add priority tier'}</h3><p>${pid?'The flag color follows the tier order.':'New tiers slot in as the most urgent — they sort first everywhere and get their own SLA targets.'}</p></div>
+    <div class="modal-body">
+      <div class="grid g-2" style="gap:12px">
+        <div class="field"><label>Label</label><input type="text" id="prLabel" value="${esc(p0.label||'')}" placeholder="e.g. Critical"></div>
+        ${pid?'':`<div class="field"><label>First response (h)</label><input type="number" id="prFr" value="1" min="1"></div>
+        <div class="field"><label>Resolution (h)</label><input type="number" id="prRes" value="4" min="1"></div>`}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="savePrio(${pid||0})">${pid?'Save tier':'Add tier'}</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('prLabel').focus();
+}
+function savePrio(pid){
+  const label = document.getElementById('prLabel').value.trim();
+  if(!label){ toast('The tier needs a label.'); return; }
+  if(pid){
+    const p = prio(pid); if(!p) return;
+    const was = p.label;
+    if(label===was){ closeModal(); render(); return; }
+    log('Priority updated', `${was} → ${label}`); p.label = label;
+    toast(`Priority “${label}” saved.`);
+    closeModal(); render();
+    if(isUuid(p.pid)) $fetch('/api/settings/priorities/'+encodeURIComponent(p.pid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({label})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    return;
+  }
+  const rank = Math.max(0, ...PRIOS.map(p=>p.rank||p.id)) + 1;
+  const p = { id:rank, pid:null, rank, label,
+              cls:'p'+Math.min(4,Math.max(1,rank)), active:true };
+  PRIOS.push(p);
+  SLA[rank] = { fr:Number(document.getElementById('prFr').value)||1,
+                res:Number(document.getElementById('prRes').value)||4 };
+  log('Priority added', `${label} (tier ${rank})`);
+  toast(`Priority “${label}” saved.`);
+  closeModal(); render();
+  slaPush();                                       /* the new tier's SLA targets → app_config */
+  $fetch('/api/settings/priorities',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({label, rank})})
+    .then(async r=>{ const d = await r.json().catch(()=>({}));
+      if(!r.ok) return oops(d);
+      p.pid = d.id;
+      setTimeout(()=>hydrate(),400); });
+}
+function archivePrio(pid){
+  const p = prio(pid); if(!p) return;
+  if(!isArch(p) && aPRIOS().length<=1){ toast('At least one priority tier has to stay active.'); return; }
+  p.active = isArch(p)? true : false;
+  if(isArch(p)){ log('Priority archived', p.label); toast(`“${p.label}” archived — gone from pickers; tickets carrying it keep their SLA.`); }
+  else { log('Priority restored', p.label); toast(`“${p.label}” restored.`); }
+  render();
+  if(isUuid(p.pid)) $fetch('/api/settings/priorities/'+encodeURIComponent(p.pid),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({active:p.active!==false})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+
+/* ---- caller verification config — one app_config key. Value edits are
+   debounced; the Enable/Disable + thread-post toggles mirror IMMEDIATELY
+   with rollback (bug-#30 class, row 34: the chip must never lie) ---------- */
+let _vcfgT = null;
+function vcfgPush(){ clearTimeout(_vcfgT); _vcfgT = setTimeout(()=>{
+  $fetch('/api/settings/config/verification',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+},600); }
+function vcfgSet(path, v, srcEl){
+  const [a,b] = path.split('.');
+  if(b) VCFG[a] = VCFG[a]||{};
+  const was = b? VCFG[a][b] : VCFG[a];
+  let nv = v;
+  if(path==='ttlMin' || path==='attempts'){ nv = Number(v); if(isNaN(nv)||nv<1){ commitRender(srcEl); return; } }
+  if(b) VCFG[a][b] = nv; else VCFG[a] = nv;
+  if(nv===was){ commitRender(srcEl); return; }
+  log('Verification config changed', `${path}: ${was===''||was==null?'—':was} → ${nv===''?'—':nv}`);
+  commitRender(srcEl);
+  vcfgPush();
+}
+function vcfgToggle(chan){
+  const other = chan==='sms'?'email':'sms';
+  if(VCFG[chan].enabled && !VCFG[other].enabled){ toast('Keep at least one verification channel enabled.'); return; }
+  const was = VCFG[chan].enabled;
+  VCFG[chan].enabled = !was;
+  log('Verification channel '+(VCFG[chan].enabled?'enabled':'disabled'), chan.toUpperCase());
+  render();
+  $fetch('/api/settings/config/verification',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
+    .then(async r=>{ if(!r.ok){ VCFG[chan].enabled=was; render();
+      return oops(await r.json().catch(()=>0)); } })
+    .catch(()=>{ VCFG[chan].enabled=was; render();
+      toast('Live sync failed — the channel was NOT changed on the server.'); });
+}
+function vcfgTogglePost(){
+  const was = VCFG.postToThread;
+  VCFG.postToThread = !was;
+  log('Verification audit posting '+(VCFG.postToThread?'enabled':'disabled'), 'thread posting — the Audit Log itself always records outcomes');
+  render();
+  $fetch('/api/settings/config/verification',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({value:VCFG})})
+    .then(async r=>{ if(!r.ok){ VCFG.postToThread=was; render();
+      return oops(await r.json().catch(()=>0)); } })
+    .catch(()=>{ VCFG.postToThread=was; render();
+      toast('Live sync failed — thread posting was NOT changed on the server.'); });
+}
+
+/* ---- secrets: write-only PUT — plaintext goes in, only set/rotated
+   metadata ever comes back ------------------------------------------------ */
+const SECRET_NAMES  = { graphSecret:'graph', entraSecret:'entra_oidc',
+                        voipKey:'voipms', twilioToken:'twilio' };
+const SECRET_LABELS = { graphSecret:'Graph app client secret',
+                        entraSecret:'Entra OIDC client secret',
+                        voipKey:'voip.ms API password',
+                        twilioToken:'Twilio auth token' };
+function secretRow(key){
+  const sx = SECRETS[key] || { set:false, at:null, by:'', label:SECRET_LABELS[key]||key };
+  return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0">
+    <span class="mini muted" style="width:170px">${esc(sx.label)}</span>
+    ${state._rotating===key
+      ? `<input type="password" id="sec-${key}" placeholder="paste new secret" style="width:220px;font-family:'IBM Plex Mono',monospace;font-size:12px">
+         <button class="btn sm primary" onclick="secretSave('${key}')">Save</button>
+         <button class="btn sm ghost" onclick="state._rotating=null;render()">Cancel</button>`
+      : `<span class="tape">${sx.set?'••••••••••••':'— not set —'}</span>
+         ${sx.set&&sx.at?`<span class="mini muted">rotated ${fmtDT(sx.at)}${sx.by?' by '+esc(sx.by):''}</span>`:''}
+         <button class="rowbtn" onclick="state._rotating='${key}';render()">${sx.set?'Rotate':'Set'}</button>`}
+  </div>`;
+}
+function secretSave(key){
+  const el = document.getElementById('sec-'+key);
+  const v = el? el.value : '';
+  if(!v || v.length<8){ toast('Secrets need at least 8 characters.'); return; }
+  const sx = SECRETS[key] || (SECRETS[key] = { set:false, at:null, by:'', label:SECRET_LABELS[key]||key });
+  const was = sx.set;
+  sx.set = true; sx.at = Date.now(); sx.by = state.user.name;
+  state._rotating = null;
+  log(was?'Secret rotated':'Secret set', `${sx.label} · by ${state.user.name} · stored encrypted, write-only — value never displayed again`);
+  toast(`${sx.label} ${was?'rotated':'saved'} — encrypted at rest, never shown again.`);
+  render();
+  if(!SECRET_NAMES[key]) return;
+  $fetch('/api/settings/secrets/'+SECRET_NAMES[key],{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({value:v})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(()=>hydrate(),400); });           /* pull the real rotation meta */
+}
+
+/* ---- personal access tokens: read-only metadata list. No mint/revoke in
+   the UI — PATs are operator-minted (scripts/create-token.sh) ------------- */
+let _tokens = null, _tokensAt = 0, _tokensBusy = false, _tokensErr = false;
+function tokensRefresh(){
+  if(_tokensBusy || (_tokens!==null && nowMs()-_tokensAt < 30000)) return;
+  _tokensBusy = true;
+  $fetch('/api/settings/tokens')
+    .then(async r=>{
+      _tokensBusy = false; _tokensAt = nowMs();
+      if(!r.ok){ _tokensErr = true; _tokens = _tokens||[]; }
+      else { const d = await r.json().catch(()=>({})); _tokens = d.tokens||[]; _tokensErr = false; }
+      if(state.view==='settings') render();
+    })
+    .catch(()=>{ _tokensBusy = false; _tokensAt = nowMs(); _tokensErr = true; _tokens = _tokens||[];
+      if(state.view==='settings') render(); });
+}
+function tokenRows(){
+  tokensRefresh();
+  if(_tokens===null) return `<div class="mini muted">Loading tokens…</div>`;
+  if(_tokensErr)     return `<div class="mini muted">Couldn’t load the token list — check desk-api logs.</div>`;
+  if(!_tokens.length) return `<div class="mini muted">No personal access tokens yet.</div>`;
+  return _tokens.map(k=>`<div class="setting-row"><div class="sl"><b>${esc(k.name)}</b><p>created ${fmtDT(k.createdAt)} · ${k.lastUsedAt?'last used '+fmtDT(k.lastUsedAt):'never used'}</p></div><span class="chip st-solved"><span class="cdot"></span>Active</span></div>`).join('');
+}
+
+/* ---- the Settings page -------------------------------------------------- */
+function viewSettings(){
+  const smsProv = VCFG.sms.provider||'voip.ms';
+  return `
+  <div class="grid g-2">
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Groups</h3><span class="hint">shared — managed in the Directory</span></div>
+      <div class="mini" style="margin-bottom:10px">${aGROUPS().length} active group${aGROUPS().length===1?'':'s'}${GROUPS.some(isArch)?` · ${GROUPS.filter(isArch).length} archived`:''} — groups, membership and archiving live in the shared <b>Directory</b>, so Docket and Ledger always agree.</div>
+      <button class="btn sm" onclick="go('directory')">Open Directory →</button>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>API access</h3><span class="hint">personal access tokens — script reports &amp; automations</span></div>
+      ${tokenRows()}
+      <div class="mini muted" style="margin-top:10px">Endpoints: <span class="tape">GET /api/tickets</span> · <span class="tape">GET /api/tickets/{id}</span> · <span class="tape">GET /api/reports/queue</span> · <span class="tape">GET /api/audit</span> — authenticate with <span class="tape">Authorization: Bearer &lt;token&gt;</span>.</div>
+      <div class="mini muted" style="margin-top:6px">Tokens are minted and revoked operator-side (<span class="tape">scripts/create-token.sh</span>) — values are hashed at rest and never shown here.</div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Canned responses</h3><span class="hint">insert from the composer · template variables render per ticket</span></div>
+      ${CANNED.map(c=>`<div class="setting-row"><div class="sl"><b>${esc(c.name)}</b><p>${esc(c.body.slice(0,80))}…</p></div><button class="rowbtn" onclick="cannedModal('${c.id}')">Edit</button></div>`).join('')}
+      <button class="btn sm" style="margin-top:12px" onclick="cannedModal()">+ Add canned response</button>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Business hours</h3><span class="hint">SLA clocks only run inside these</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i)=>`<label class="mini" style="display:inline-flex;gap:4px;align-items:center;text-transform:none;cursor:pointer"><input type="checkbox" ${BIZ.days.includes(i)?'checked':''} onchange="bizDay(${i},this.checked)" style="width:auto;accent-color:var(--brand)">${d}</label>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span class="mini muted">from</span><input type="number" min="0" max="23" value="${BIZ.start}" style="width:64px" onchange="bizHours('start',this.value,this)">
+        <span class="mini muted">to</span><input type="number" min="1" max="24" value="${BIZ.end}" style="width:64px" onchange="bizHours('end',this.value,this)">
+        <span class="mini muted">· holidays:</span><input type="text" value="${BIZ.holidays.join(', ')}" style="flex:1;min-width:200px;font-size:12px" onchange="bizHolidays(this.value,this)" placeholder="YYYY-MM-DD, comma-separated">
+      </div>
+      <div class="mini muted" style="margin-top:8px">A ticket opened Friday 5 PM won't breach on Saturday — due dates walk only working minutes.</div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Ticket states</h3><span class="hint">editable vocabulary — behavior comes from the type</span></div>
+      ${STATES.map((s,i)=>{ const arch=isArch(s); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b><span class="chip ${s.cls}"><span class="cdot"></span>${esc(s.label)}</span></b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}<p>${esc(s.desc||'')}</p></div>
+        <span class="mini muted">${s.type==='open'?'SLA runs':s.type==='paused'?'SLA paused':'resolved'}</span>
+        ${s.system?`<span class="mini muted">system — cascade-written</span>`:`
+        ${(i>0&&!STATES[i-1].system)?`<button class="rowbtn" onclick="moveState('${s.id}',-1)" title="list earlier">↑</button>`:''}
+        ${(i<STATES.length-1&&!STATES[i+1].system)?`<button class="rowbtn" onclick="moveState('${s.id}',1)" title="list later">↓</button>`:''}
+        ${s.core?'':`<button class="rowbtn" onclick="stateModal('${s.id}')">Edit</button>`}
+        <button class="rowbtn" onclick="archiveState('${s.id}')">${arch?'Restore':'Archive'}</button>`}</div>`;}).join('')}
+      <button class="btn sm" style="margin-top:12px" onclick="stateModal()">+ Add state</button>
+      <div class="mini muted" style="margin-top:8px">Any state can be archived — tickets already in it keep it until moved. At least one running-SLA state and one resolved state must stay active. Core states keep their names (the mail pipeline resolves them by label); the cascade-written system state isn't editable; behavior is fixed at creation.</div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Priorities &amp; SLA</h3><span class="hint">tiers are editable — targets in hours drive the SLA column</span></div>
+      ${PRIOS.slice().sort((a,b)=>b.id-a.id).map(p=>{ const arch=isArch(p); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${prioTag(p.id)}</b>${arch?` <span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Archived</span>`:''}</div>
+        <label class="mini muted">first response <input type="number" value="${SLA[p.id]?.fr??''}" min="1" style="width:64px;margin-left:6px" onchange="slaSet(${p.id},'fr',this.value,'${jsq(p.label)}')"></label>
+        <label class="mini muted">resolution <input type="number" value="${SLA[p.id]?.res??''}" min="1" style="width:64px;margin-left:6px" onchange="slaSet(${p.id},'res',this.value,'${jsq(p.label)}')"></label>
+        <button class="rowbtn" onclick="prioModal(${p.id})">Rename</button>
+        <button class="rowbtn" onclick="archivePrio(${p.id})">${arch?'Restore':'Archive'}</button>
+      </div>`;}).join('')}
+      <button class="btn sm" style="margin-top:12px" onclick="prioModal()">+ Add priority tier</button>
+      <div class="mini muted" style="margin-top:8px">Higher tiers sort above lower ones in every queue; escalation rules ("at least High") compare by tier order. Archiving hides a tier from pickers while tickets that carry it keep their SLA.</div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Caller verification</h3><span class="hint">one-time codes for sensitive requests</span></div>
+      <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>SMS</b>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <select style="width:auto" onchange="vcfgSet('sms.provider',this.value,this)"><option ${smsProv==='voip.ms'?'selected':''}>voip.ms</option><option ${smsProv==='Twilio'?'selected':''}>Twilio</option></select>
+            <span class="mini muted">sending DID</span><input type="text" value="${esc(VCFG.sms.did)}" class="in-mono" style="width:140px" onchange="vcfgSet('sms.did',this.value,this)">
+          </div>
+          ${smsProv==='voip.ms'
+            ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">voip.ms API username</span><input type="text" value="${esc(VCFG.sms.apiUser)}" class="in-mono" style="width:220px" onchange="vcfgSet('sms.apiUser',this.value,this)"></div>${secretRow('voipKey')}`
+            : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">Twilio account SID</span><input type="text" value="${esc(VCFG.sms.twilioSid)}" placeholder="AC…" class="in-mono" style="width:220px" onchange="vcfgSet('sms.twilioSid',this.value,this)"></div>${secretRow('twilioToken')}`}
+        </div>
+        <button class="rowbtn" onclick="vcfgToggle('sms')">${VCFG.sms.enabled?'Disable':'Enable'}</button>
+        <span class="chip ${VCFG.sms.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.sms.enabled?'Connected':'Off'}</span></div>
+      <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Email</b>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <span class="mini muted">Microsoft Graph · sends from</span><input type="text" value="${esc(VCFG.email.from)}" class="in-mono" style="width:280px" onchange="vcfgSet('email.from',this.value,this)">
+            <span class="mini muted">(app-scoped Mail.Send)</span>
+          </div></div>
+        <button class="rowbtn" onclick="vcfgToggle('email')">${VCFG.email.enabled?'Disable':'Enable'}</button>
+        <span class="chip ${VCFG.email.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.email.enabled?'Connected':'Off'}</span></div>
+      <div class="setting-row"><div class="sl"><b>Policy</b><p>6-digit code · stored as a salted hash, never plaintext · destination always the contact record, shown masked</p></div>
+        <label class="mini muted">expires <input type="number" value="${VCFG.ttlMin}" min="1" max="60" style="width:56px;margin-left:6px" onchange="vcfgSet('ttlMin',this.value,this)"> min</label>
+        <label class="mini muted">attempts <input type="number" value="${VCFG.attempts}" min="1" max="5" style="width:56px;margin-left:6px" onchange="vcfgSet('attempts',this.value,this)"></label></div>
+      <div class="setting-row"><div class="sl"><b>Audit</b><p>Pass or fail, the outcome lands in the Audit Log always; this controls whether it's also posted to the ticket thread and tagged</p></div>
+        <button class="rowbtn" onclick="vcfgTogglePost()">${VCFG.postToThread?'Disable thread posts':'Enable thread posts'}</button>
+        <span class="chip ${VCFG.postToThread?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.postToThread?'Posting to thread':'Audit Log only'}</span></div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Channels</h3><span class="hint">how tickets arrive</span></div>
+      <div class="setting-row"><div class="sl"><b>Microsoft Graph mail</b><p>${MAILBOXES.length} mailbox${MAILBOXES.length===1?'':'es'} (${MAILBOXES.filter(m=>m.type==='shared').length} shared, ${MAILBOXES.filter(m=>m.type==='licensed').length} licensed) · webhook subscriptions + 60s delta poll · outbound routed per ticket/board${can('manage_automations')?` — <a href="#" onclick="go('automations');return false" style="color:var(--brand)">authenticate &amp; manage in Automations</a>`:''}</p></div><span class="chip ${GRAPH_AUTH.connected?'st-solved':'st-closed'}"><span class="cdot"></span>${GRAPH_AUTH.connected?'Connected':'Not authenticated'}</span></div>
+      <div class="setting-row"><div class="sl"><b>Ledger link</b><p>Time entries stream to the timesheet ledger over the shared database — no sync job, no extension</p></div><span class="chip st-solved"><span class="cdot"></span>Native</span></div>
+      <div class="setting-row"><div class="sl"><b>Customer portal</b><p>Kept in the schema in case it's ever wanted — not being built</p></div><span class="chip st-closed"><span class="cdot"></span>Not planned</span></div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Authentication</h3><span class="hint">who gets in, and as what</span></div>
+      <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Microsoft Entra ID SSO</b>
+          <div style="display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 10px;align-items:center;margin:8px 0 2px;max-width:560px">
+            <span class="mini muted">OIDC · tenant</span><input type="text" value="${esc(AUTH_CFG.tenant)}" class="in-mono" style="width:100%" onchange="authSet('tenant',this.value,this)">
+            <span class="mini muted">client ID</span><input type="text" value="${esc(AUTH_CFG.clientId)}" placeholder="Graph app's ID by default" class="in-mono" style="width:100%" onchange="authSet('clientId',this.value,this)">
+            <span class="mini muted">redirect URI</span><input type="text" value="${esc(AUTH_CFG.redirectUri)}" placeholder="https://…/auth/oidc/callback (blank = derive from request)" class="in-mono" style="width:100%" onchange="authSet('redirectUri',this.value,this)">
+          </div>
+          <div class="mini muted" style="margin-bottom:4px">Sessions are shared with Ledger — one sign-in, both apps.</div>
+          ${secretRow('entraSecret')}
+          <div class="mini muted">Secrets live encrypted in the shared database — never in compose files or env vars; rotate here, both apps pick it up live.</div>
+        </div>
+        <button class="rowbtn" onclick="authToggleSSO()">${AUTH_CFG.ssoConnected?'Disconnect':'Connect'}</button>
+        <span class="chip ${AUTH_CFG.ssoConnected?'st-solved':'st-closed'}"><span class="cdot"></span>${AUTH_CFG.ssoConnected?'Connected':'Off'}</span></div>
+      <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Entra role mapping</b>
+          <p style="margin-bottom:6px">${AUTH_CFG.roleMapping
+            ? 'Security groups → roles, applied at each sign-in. Manual role edits in the Directory are overwritten at the user’s next sign-in.'
+            : 'Disabled — every user’s role is assigned manually in the <b>Directory → Agents</b> card; Entra only authenticates.'}</p>
+          <div style="${AUTH_CFG.roleMapping?'':'opacity:.45;pointer-events:none'}">
+          ${state.roleDefs.filter(r=>r.active!==false).map(r=>`<div style="display:flex;gap:8px;align-items:center;margin:4px 0">
+            <input type="text" value="${esc(r.entra)}" placeholder="SG-…" class="in-mono" style="width:200px" onchange="entraSet('${jsq(r.name)}',this.value,this)">
+            <span class="mini muted">→ ${esc(r.name)}</span></div>`).join('')}
+          </div>
+        </div>
+        <button class="rowbtn" onclick="authToggleMapping()">${AUTH_CFG.roleMapping?'Disable':'Enable'}</button>
+        <span class="chip ${AUTH_CFG.roleMapping?'st-solved':'st-closed'}"><span class="cdot"></span>${AUTH_CFG.roleMapping?'Automatic':'Manual'}</span></div>
+      <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Local passwords &amp; MFA</b>
+          <p>${AUTH_CFG.localPasswords?'Enabled — fallback credentials active alongside SSO. Passwords are argon2id-hashed; MFA is TOTP (authenticator app).':'Disabled — no separate credentials to phish or rotate.'} Break-glass admin lives in the vault.</p>
+          ${AUTH_CFG.localPasswords?`
+          <div style="display:flex;gap:10px;align-items:center;margin:8px 0">
+            <span class="mini muted">MFA policy</span>
+            <select style="width:auto" onchange="authSet('mfa',this.value,this)"><option value="required" ${AUTH_CFG.mfa==='required'?'selected':''}>Required (TOTP)</option><option value="optional" ${AUTH_CFG.mfa==='optional'?'selected':''}>Optional</option></select>
+            <span class="mini muted">· per-person passwords and MFA are reset in <a href="#" onclick="go('directory');return false" style="color:var(--brand)">Directory → Agents</a> — no email links, resets are admin-direct</span>
+          </div>`:''}
+        </div>
+        <button class="rowbtn" onclick="authToggleLocal()">${AUTH_CFG.localPasswords?'Disable':'Enable'}</button>
+        <span class="chip ${AUTH_CFG.localPasswords?'st-solved':'st-closed'}"><span class="cdot"></span>${AUTH_CFG.localPasswords?'On':'Off'}</span></div>
+    </div>
+  </div>`;
+}
