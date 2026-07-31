@@ -36,7 +36,11 @@ function viewDashboard(){
 
   /* queue-by-state respects per-user visibility: shownDashboardStates()
      (state.js) resolves me.prefs.dashboardStates → admin desk_ui default →
-     all active states, keeping STATES position order */
+     all active states, keeping STATES position order. Rows render as the
+     .dash-qbs two-column grid (css/desk.css §dashboard): fixed label track
+     where the chip text wraps + a bar/count track, so every bar starts at
+     the same x. The chip goes through stateChip (render.js) like every
+     other chip site — state decor stays that one seam's business. */
   const shownStates = shownDashboardStates();
   const byState = shownStates.map(s=>({s, n: scoped().filter(t=>t.st===s.id).length}));
   const maxN = Math.max(1,...byState.map(x=>x.n));
@@ -66,7 +70,7 @@ function viewDashboard(){
       : `<div class="empty">${icon(IC.clock)}<div>Nothing on fire. The queue is inside its targets.</div></div>`}
     </div>
     <div>
-      <div class="card card-pad" style="position:relative">
+      <div class="card card-pad dash-qbs" style="position:relative">
         <div class="card-head" style="padding:0 0 12px;border:0"><h3>Queue by state</h3>
           ${personalStates?'':`<span class="hint">(admin default)</span>`}
           <span class="spacer"></span>
@@ -79,10 +83,9 @@ function viewDashboard(){
           <div class="mini muted" style="margin-top:7px;padding-top:7px;border-top:1px solid var(--line)">${personalStates?`<a href="#" onclick="resetDashStates();return false">Use admin default</a>`:'(admin default)'}</div>
         </div>`:''}
         ${byState.map(({s,n})=>`
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
-            <span style="width:118px;flex:0 0 auto"><span class="chip ${s.cls}"><span class="cdot"></span>${s.label}</span></span>
-            <div class="bar" style="flex:1"><i style="width:${(n/maxN*100).toFixed(0)}%"></i></div>
-            <span class="tape mini" style="width:20px;text-align:right">${n}</span>
+          <div class="qbs-row">
+            ${stateChip({st:s.id})}
+            <div class="qbs-meter"><div class="bar"><i style="width:${(n/maxN*100).toFixed(0)}%"></i></div><span class="tape mini qbs-n">${n}</span></div>
           </div>`).join('') || `<div class="mini muted" style="padding:6px 0">Every state is hidden — use ⚙ to pick which queues appear.</div>`}
       </div>
       ${can('see_billing')?`<div class="section-gap"></div>

@@ -29,7 +29,8 @@
    before the mirroring fetch; a change that didn't happen never calls out.
    Queue tabs come ONLY from effectiveOverviews() (state.js: admin
    desk_ui.overviews shaped by me.prefs.overviews) — no tab list is hardcoded
-   here. Queue filter values (qf group/prio/client) are ARRAYS: empty = all.
+   here. Queue filter values (qf group/prio/client/st/tag) are ARRAYS:
+   empty = all; qf.scope is ''(anyone)/'mine'/'unassigned'.
    ========================================================================== */
 
 /* ==========================================================================
@@ -48,6 +49,7 @@ function ovPred(def){
     if(def.stateKinds?.length && !def.stateKinds.includes(s.type)) return false;
     if(def.states?.length && !def.states.includes(s.label)) return false;
     if(def.groups?.length && !def.groups.includes(t.groupId)) return false;
+    if(def.clients?.length && !def.clients.includes(t.clientId)) return false;
     if(def.prios?.length && !def.prios.some(r=>String(r)===String(t.prio))) return false;
     if(def.tags?.length && !def.tags.some(x=>t.tags.includes(x))) return false;
     if(def.recentDays && t.updatedAt < nowMs()-def.recentDays*24*H) return false;
@@ -70,11 +72,48 @@ function setQF(k,v){ state.qf[k]=v; render(); }
 function setQFGroup(vals){ setQF('group', vals); }
 function setQFPrio(vals){ setQF('prio', vals); }
 function setQFClient(vals){ setQF('client', vals); }
+function setQFSt(vals){ setQF('st', vals); }
+function setQFTag(vals){ setQF('tag', vals); }
 /* stale-shape armor: anything that isn't an array (an old 'all', a bare id
    from a deep link) coerces in place — the ledger _mfNorm pattern */
 function qfNorm(){
-  ['group','prio','client'].forEach(k=>{ const v=state.qf[k];
+  ['group','prio','client','st','tag'].forEach(k=>{ const v=state.qf[k];
     if(!Array.isArray(v)) state.qf[k] = (v && v!=='all') ? [v] : []; });
+  if(!['','mine','unassigned'].includes(state.qf.scope)) state.qf.scope = '';
+  /* prune selections that no longer resolve (a renamed custom state re-slugs
+     its id; a tag's last ticket closes) — a ghost value would filter the
+     queue to zero rows with no visible chip to remove */
+  const known = {
+    group: new Set(GROUPS.map(g=>g.id)),
+    prio:  new Set(PRIOS.map(p=>String(p.id))),
+    client:new Set(CLIENTS.map(c=>c.id)),
+    st:    new Set(STATES.map(s=>String(s.id))),
+    tag:   new Set(state.tickets.flatMap(t=>t.tags||[])),
+  };
+  ['group','client','tag'].forEach(k=>{ state.qf[k] = state.qf[k].filter(v=>known[k].has(v)); });
+  ['prio','st'].forEach(k=>{ state.qf[k] = state.qf[k].filter(v=>known[k].has(String(v))); });
+}
+/* the same owner tests ovPred applies — the bar's scope select and any
+   scope-carrying tab always agree on what "mine"/"unassigned" mean */
+function qfScopeF(rows, scope){
+  if(scope==='mine') return rows.filter(t=>t.ownerId===state.meId);
+  if(scope==='unassigned') return rows.filter(t=>!t.ownerId);
+  return rows;
+}
+
+/* the bar's predicates over an already-overview-filtered slice — ONE
+   function so the queue table and ticketsCSVRows can never drift
+   (export = exactly what's shown, search box included) */
+function qfApply(rows){
+  qfNorm();
+  const f = state.qf;
+  if(f.group.length) rows = rows.filter(t=>f.group.includes(t.groupId));
+  if(f.prio.length) rows = rows.filter(t=>f.prio.some(v=>String(v)===String(t.prio)));
+  if(f.client.length) rows = rows.filter(t=>f.client.includes(t.clientId));
+  if(f.st.length) rows = rows.filter(t=>f.st.some(v=>String(v)===String(t.st)));
+  if(f.tag.length) rows = rows.filter(t=>f.tag.some(v=>t.tags.includes(v)));
+  if(f.q){ const q=f.q.toLowerCase(); rows = rows.filter(t=> (TITLES[t.id]||'').toLowerCase().includes(q) || String(t.id).includes(q) || client(t.clientId).name.toLowerCase().includes(q)); }
+  return qfScopeF(rows, f.scope);
 }
 
 function viewTickets(){
@@ -83,10 +122,7 @@ function viewTickets(){
   const cur = ov.find(o=>o.id===state.overview) || ov[0] || null;
   let rows = cur? scoped().filter(cur.f) : [];
   const f = state.qf;
-  if(f.group.length) rows = rows.filter(t=>f.group.includes(t.groupId));
-  if(f.prio.length) rows = rows.filter(t=>f.prio.some(v=>String(v)===String(t.prio)));
-  if(f.client.length) rows = rows.filter(t=>f.client.includes(t.clientId));
-  if(f.q){ const q=f.q.toLowerCase(); rows = rows.filter(t=> (TITLES[t.id]||'').toLowerCase().includes(q) || String(t.id).includes(q) || client(t.clientId).name.toLowerCase().includes(q)); }
+  rows = qfApply(rows);
   rows.sort((a,b)=> b.prio-a.prio || (slaInfo(a)?.due||9e15)-(slaInfo(b)?.due||9e15) || b.updatedAt-a.updatedAt);
   /* done-only views read newest-first — priority/SLA order is meaningless after solve */
   if(cur && (cur.def.stateKinds||[]).join()==='done') rows.sort((a,b)=>b.updatedAt-a.updatedAt);
@@ -116,6 +152,13 @@ function viewTickets(){
     <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('qfGroup', GROUPS.filter(g=>!isArch(g)||f.group.includes(g.id)).map(g=>({v:g.id,label:g.name+(isArch(g)?' (archived)':'')})), f.group, 'setQFGroup', 'All groups')}</span>
     <span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('qfPrio', PRIOS.filter(p=>!isArch(p)||f.prio.some(v=>String(v)===String(p.id))).map(p=>({v:p.id,label:p.label+(isArch(p)?' (archived)':'')})), f.prio, 'setQFPrio', 'Any priority')}</span>
     <span style="display:inline-block;min-width:180px;vertical-align:middle">${multiCombo('qfClient', CLIENTS.filter(c=>c.status!=='archived'||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''})), f.client, 'setQFClient', 'All clients')}</span>
+    <span style="display:inline-block;min-width:150px;vertical-align:middle" title="System states are listed too — filtering by them is legitimate">${multiCombo('qfSt', STATES.filter(s=>!isArch(s)||f.st.some(v=>String(v)===String(s.id))).map(s=>({v:s.id,label:s.label+(isArch(s)?' (archived)':'')})), f.st, 'setQFSt', 'Any state')}</span>
+    <span style="display:inline-block;min-width:130px;vertical-align:middle">${multiCombo('qfTag', [...new Set(scoped().flatMap(t=>t.tags))].sort().map(tg=>({v:tg,label:tg})), f.tag, 'setQFTag', 'Any tag')}</span>
+    <select style="width:auto" onchange="setQF('scope',this.value)" title="Whose tickets — same tests the queue tabs use">
+      <option value="">Anyone</option>
+      <option value="mine" ${f.scope==='mine'?'selected':''}>Mine</option>
+      <option value="unassigned" ${f.scope==='unassigned'?'selected':''}>Unassigned</option>
+    </select>
   </div>
   <div class="card">
     ${rows.length? `<table class="tbl">
@@ -194,6 +237,10 @@ function tabsDraw(){
             <div style="max-height:110px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:4px">
               ${aPRIOS().map(p=>`<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;padding:2px 0;cursor:pointer"><input type="checkbox" id="tabP-${p.id}" style="width:auto;accent-color:var(--brand)">${esc(p.label)}</label>`).join('')}
             </div></div>
+          <div style="flex:1;min-width:180px"><div class="mini muted">Clients — any of; none = all</div>
+            <div style="max-height:110px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:4px">
+              ${CLIENTS.filter(c=>c.status!=='archived').map(c=>`<label style="display:flex;gap:6px;align-items:center;font-size:12.5px;padding:2px 0;cursor:pointer"><input type="checkbox" id="tabC-${c.id}" style="width:auto;accent-color:var(--brand)">${esc(c.name)}</label>`).join('')||'<span class="mini muted">No clients.</span>'}
+            </div></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
           <input type="text" id="tabTags" placeholder="tags, comma-separated — any of" style="flex:1;min-width:160px">
@@ -238,6 +285,8 @@ function tabsAddCustom(){
   if(gs.length) def.groups = gs;
   const ps = aPRIOS().filter(p=>document.getElementById('tabP-'+p.id)?.checked).map(p=>p.id);
   if(ps.length) def.prios = ps;
+  const cs = CLIENTS.filter(c=>c.status!=='archived' && document.getElementById('tabC-'+c.id)?.checked).map(c=>c.id);
+  if(cs.length) def.clients = cs;
   const tags = (document.getElementById('tabTags').value||'').split(',').map(s=>s.trim().toLowerCase().replace(/\s+/g,'-')).filter(Boolean);
   if(tags.length) def.tags = tags;
   const days = parseInt(document.getElementById('tabDays').value, 10);
@@ -296,10 +345,7 @@ function bulkApply(k, v){
 function ticketsCSVRows(){
   const ov = overviews(); const cur = ov.find(o=>o.id===state.overview) || ov[0] || null;
   let rows = cur? scoped().filter(cur.f) : [];
-  const f = state.qf;
-  if(f.group.length) rows = rows.filter(t=>f.group.includes(t.groupId));
-  if(f.prio.length) rows = rows.filter(t=>f.prio.some(v=>String(v)===String(t.prio)));
-  if(f.client.length) rows = rows.filter(t=>f.client.includes(t.clientId));
+  rows = qfApply(rows);
   const data = [['number','title','client','contact','group','state','priority','owner','tags','opened','updated','hours_logged','sla_due','sla_breached']];
   rows.forEach(t=>{ const sla = slaInfo(t);
     data.push([t.id, TITLES[t.id]||firstLine(t), client(t.clientId).name, contact(t.contactId)?.email||'', grp(t.groupId).name,

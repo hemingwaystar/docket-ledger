@@ -396,37 +396,55 @@ def _uuid_or_404(value: str, what: str) -> str:
         raise HTTPException(404, f"No such {what}")
 
 
+# The state-chip palette — desk.css's .chip.st-* family, and nothing else
+# (no new CSS colors invented). Pinned BOTH sides: webui/js/desk/state.js
+# ST_PALETTE is the same literal list — change one, change the other.
+ST_PALETTE = ("st-new", "st-open", "st-pending", "st-hold", "st-solved", "st-closed")
+
+
+def _check_color(color: str | None):
+    if color is not None and color not in ST_PALETTE:
+        raise HTTPException(422, f"Unknown color — palette tokens: {', '.join(ST_PALETTE)}")
+
+
 class NewState(BaseModel):
     label: str
     kind: Literal["open", "paused", "done"]
+    color: str | None = None           # ST_PALETTE token; None = default decor
+    description: str | None = None     # free text; None = default decor
 
 
 class PatchState(BaseModel):
     label: str | None = None
     active: bool | None = None         # false = archived, never deleted
     position: int | None = None
+    color: str | None = None           # omitted = unchanged, explicit null = reset
+    description: str | None = None     # omitted = unchanged, explicit null = reset
     # kind is immutable after create — it drives SLA/pending/reports
 
 
 @router.post("/states", status_code=201)
 def create_state(body: NewState, request: Request):
+    _check_color(body.color)
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "manage_settings")
         with conn.cursor() as cur:
             try:
-                cur.execute("""INSERT INTO desk.ticket_states (label, kind, position)
-                               SELECT %s, %s, coalesce(max(position), 0) + 1
+                cur.execute("""INSERT INTO desk.ticket_states (label, kind, position, color, description)
+                               SELECT %s, %s, coalesce(max(position), 0) + 1, %s, %s
                                  FROM desk.ticket_states
                                RETURNING id, active, position""",
-                            (body.label, body.kind))
+                            (body.label, body.kind, body.color, body.description))
             except pg_errors.UniqueViolation:
                 raise HTTPException(409, f"A state named “{body.label}” already exists")
             (sid, active, position) = cur.fetchone()
+        decor = [k for k in ("color", "description") if getattr(body, k) is not None]
         auth.audit(conn, "desk", "Ticket state added", f"state:{sid}",
-                   f"{body.label} ({body.kind})")
+                   f"{body.label} ({body.kind})" + (" · " + ", ".join(decor) if decor else ""))
         return {"id": str(sid), "label": body.label, "kind": body.kind,
-                "active": active, "position": position}
+                "active": active, "position": position,
+                "color": body.color, "description": body.description}
 
 
 @router.patch("/states/{state_id}")
@@ -436,33 +454,41 @@ def patch_state(state_id: str, body: PatchState, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "manage_settings")
         with conn.cursor() as cur:
-            cur.execute("""SELECT label, kind, active, position, is_system, is_core
+            cur.execute("""SELECT label, kind, active, position, color, description,
+                                  is_system, is_core
                              FROM desk.ticket_states WHERE id = %s""", (state_id,))
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(404, "No such state")
-            if row[4]:
+            if row[6]:
                 raise HTTPException(422, f"“{row[0]}” is a system state — "
                                           "machine-written by the parent-close cascade; it can't be edited")
-            cols = {k: v for k, v in body.model_dump().items() if v is not None}
+            # label/active/position: null and omitted both mean "unchanged";
+            # color/description: omitted = unchanged, explicit null = reset to default
+            sent = body.model_dump(exclude_unset=True)
+            cols = {k: v for k, v in sent.items()
+                    if v is not None or k in ("color", "description")}
+            _check_color(cols.get("color"))
             # core states keep their names: the mail pipeline resolves 'New'/'Open'
-            # by label (worker.py) — archive/reorder is fine, rename is not
-            if row[5] and "label" in cols and cols["label"] != row[0]:
+            # by label (worker.py) — archive/reorder/decor is fine, rename is not
+            if row[7] and "label" in cols and cols["label"] != row[0]:
                 raise HTTPException(409, "Core states keep their names — add a custom state instead")
             if cols:
                 sets = ", ".join(f"{k} = %s" for k in cols)
                 try:
                     cur.execute(f"""UPDATE desk.ticket_states SET {sets} WHERE id = %s
-                                    RETURNING label, kind, active, position""",
+                                    RETURNING label, kind, active, position, color, description""",
                                 (*cols.values(), state_id))
                 except pg_errors.UniqueViolation:
                     raise HTTPException(409, f"A state named “{cols.get('label')}” already exists")
                 row = cur.fetchone()
         if cols:
             auth.audit(conn, "desk", "Ticket state updated", f"state:{state_id}",
-                       f"{row[0]} · " + ", ".join(cols))
+                       f"{row[0]} · " + ", ".join(k if v is not None else f"{k} reset"
+                                                  for k, v in cols.items()))
         return {"id": state_id, "label": row[0], "kind": row[1],
-                "active": row[2], "position": row[3]}
+                "active": row[2], "position": row[3],
+                "color": row[4], "description": row[5]}
 
 
 class NewPriority(BaseModel):

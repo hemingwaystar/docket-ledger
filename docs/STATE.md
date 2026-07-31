@@ -76,6 +76,22 @@ git (`docs/STATE.md`) so it travels with the code.
 > uploader, since retired) was dropped empty via console psql and the
 > hardened 0025 applied clean; build 9 confirmed live by screenshots.
 >
+> 🎨 **BUILD 11 (2026-07-31): board filters at criteria parity, state
+> decor, dashboard wrap.** (1) The queue filter bar gains state / tag /
+> owner-scope multi-filters and the tab vocabulary gains **clients** —
+> admin tabs, personal tabs and the bar all speak one OverviewDef
+> vocabulary; the search box now rides the same qfApply seam as the CSV
+> export (parity claim finally true), and ghost selections (renamed
+> state, vanished tag) self-prune. (2) **MIGRATION 0027**: per-state
+> `color` (palette token — the six st-* chip styles, pinned identically
+> in css/state.js/settings.py) + `description`, editable on core AND
+> custom states (labels stay protected; system states stay locked);
+> swatch click-again resets to shipped default. (3) The Queue-by-state
+> card wraps labels in a fixed grid track — every bar starts at the same
+> x. Battery: browser probes (prune / clients-predicate / color-reset /
+> palette), 44/44 .py compile, palette three-way equality.
+> Design: docs/BUILD11-DESIGN.md.
+>
 > **Still open, in order (details in §5):**
 > 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
 > 2. ~~USER: build-8 console surgery~~ **DONE 2026-07-31** — see the
@@ -420,6 +436,20 @@ resolves to (explicit override → ticket contact → last inbound sender).
     .py CPython compile, endpoint parity, 0026 grants audit. Design:
     docs/BUILD10-DESIGN.md.
 
+19. **Build 11 (2026-07-31) — filter parity, state decor, dashboard
+    wrap.** The queue filter bar reaches criteria parity with the tab
+    config (state/tag/owner-scope multi-filters; one qfApply seam now
+    also carries the search box, so table and CSV export finally agree
+    to the row; qfNorm prunes ghost selections); OverviewDef gains
+    `clients` across evaluator + admin card + personal tabs; migration
+    0027 adds per-state color (six-token palette pinned identically in
+    desk.css, state.js and settings.py — three-way equality is a battery
+    check) and description, editable on core and custom states with
+    click-again-to-reset and NULL-falls-through-to-shipped-decor
+    semantics; the Queue-by-state card gets a wrap-friendly fixed grid.
+    Verified with in-engine probes (prune, clients predicate, color
+    reset, palette) + the standing battery. Design: BUILD11-DESIGN.md.
+
 ---
 
 ## 4. Live-debug ledger — every production bug, cause → fix → lesson
@@ -531,6 +561,21 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **BUILD 11 — migrate applies 0027** (`apply 0027_state_decor.sql`,
+      no ERROR lines).
+- [ ] **Build 11 — advanced filters:** queue bar shows state + tag +
+      owner-scope alongside group/priority/client; two states picked =
+      union; typed search + filters + CSV export all agree row-for-row;
+      a personal tab filtered to one client shows exactly that client's
+      tickets; the admin Queue-tabs card can build a client-scoped tab.
+- [ ] **Build 11 — state decor:** recolor a custom state → chip changes
+      EVERYWHERE (queue, ticket view, dashboard, pickers) and survives
+      refresh; add a description → shows as the row subtitle; click the
+      ringed swatch → back to default; core states recolor fine but still
+      refuse rename; 'Closed: child ticket' offers no decor controls.
+- [ ] **Build 11 — dashboard wrap:** long state names (Waiting Client
+      Response) wrap inside a fixed-width pill; all bars start at the
+      same x; no ellipsis anywhere on the card.
 - [ ] **BUILD 10 — migrate applies 0026** (`apply 0026_group_sendas.sql`,
       no ERROR lines — deploy.sh runs migrate BEFORE the rebuilt code,
       which queries the new table unconditionally).

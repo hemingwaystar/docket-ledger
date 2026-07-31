@@ -7,6 +7,7 @@
    Owns: viewSettings · groupModal/saveGroup/archiveGroup · agentModal/
    saveAgent/deactivateAgent/toggleMembership/setAgentRole · typeModal/
    saveType/archiveType · stateModal/saveState/archiveState/moveState ·
+   stSwatches/stateColorSet/stateDescSet/stPalPick (state decor, 0027) ·
    prioModal/savePrio/archivePrio · deskUiCard/ovModal/saveOverview/
    moveOverview/hideOverview/dashDefToggle/deskUiPush (+ deskOvs/
    ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
@@ -28,7 +29,9 @@
    working list starts from DESK_UI / DEFAULT_OVERVIEWS (state.js), seeded
    in full on the first edit. System ticket states are machine-written and
    excluded from editing (0025); a state's kind and a core state's label are
-   immutable server-side. The SLA/business-hours cards render here but
+   immutable server-side — decor (color/description, 0027) is editable on
+   every NON-system state, core included: swatch clicks mirror immediately
+   (single-click state, row 34), descriptions debounce like typed fields. The SLA/business-hours cards render here but
    persist via automations.js's config mirrors (slaSet/bizDay/bizHours/
    bizHolidays); the auth card's handlers (authSet/authToggle*) and
    cannedModal live there too; entraSet lives in roles.js. PATCHing a state
@@ -249,6 +252,12 @@ function stateModal(sid){
           <option value="paused" ${s0.type==='paused'?'selected':''}>Paused — SLA clock stops</option>
           <option value="done" ${s0.type==='done'?'selected':''}>Done — counts as resolved</option></select></div>
       </div>
+      ${sid?'':`
+      <div class="field" style="margin-top:8px"><label>Color</label>
+        <input type="hidden" id="stColor" value="">
+        <div id="stPal" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">${ST_PALETTE.map(p=>`<button class="chip ${p.tok}" data-tok="${p.tok}" title="${esc(p.label)}" onclick="stPalPick('${p.tok}')" style="cursor:pointer"><span class="cdot"></span>${esc(p.label)}</button>`).join('')}
+        </div><div class="mini muted" style="margin-top:4px">No pick = the default chip style. Recolor any time from the state's row.</div></div>
+      <div class="field" style="margin-top:8px"><label>Description</label><input type="text" id="stDescNew" placeholder="what this state means — shows in this editor"></div>`}
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveState('${sid||''}')">${sid?'Save state':'Add state'}</button></div>`;
   document.getElementById('scrim').classList.add('open');
@@ -271,14 +280,19 @@ function saveState(sid){
     return;
   }
   const kind = document.getElementById('stType').value;
+  const color = document.getElementById('stColor').value;
+  const desc = document.getElementById('stDescNew').value.trim();
   const s = { id:label.toLowerCase().replace(/\s+/g,'-'), sid:null, label, type:kind,
-              cls:'st-hold', desc:'', core:false, active:true, system:false };
+              cls:color||'st-hold', desc, core:false, active:true, system:false };
   STATES.push(s);
   log('State added', `${label} (${kind})`);
   toast(`State “${label}” saved — it's in every state picker now.`);
   closeModal(); render();
+  const body = { label, kind };                      /* omitted = default decor (0027) */
+  if(color) body.color = color;
+  if(desc) body.description = desc;
   $fetch('/api/settings/states',{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({label, kind})})
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(async r=>{ const d = await r.json().catch(()=>({}));
       if(!r.ok) return oops(d);
       s.sid = d.id;
@@ -314,6 +328,64 @@ function moveState(sid, dir){
       headers:{'Content-Type':'application/json'},body:JSON.stringify({position:ix+1})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
   });
+}
+
+/* ---- state decor (0027): color + description on any non-system state —
+   core states included, only their label is protected. The stored value
+   overlays ST_DECOR in mapIn; everything below edits the overlaid row. ---- */
+/* the row's swatch strip: one pill per ST_PALETTE token, current ringed;
+   clicking the ringed pill again un-picks — back to the shipped default */
+const stSwatches = s => ST_PALETTE.map(p=>
+  `<button class="chip ${p.tok}" title="${esc(p.label)}${s.cls===p.tok?' — click again for default':''}" onclick="stateColorSet('${jsq(s.id)}','${p.tok}')" style="cursor:pointer${s.cls===p.tok?';outline:2px solid var(--brand);outline-offset:1px':''}"><span class="cdot"></span></button>`).join('');
+/* the shipped default chip class for a state — what NULL color renders as */
+const stDefCls = s => { const dec = ST_DECOR[s.id];
+  return dec ? dec.cls : (s.id==='child-closed' ? 'st-closed' : 'st-hold'); };
+/* a swatch click is single-click state (row 34): mirror IMMEDIATELY — never
+   debounced — and only when the chip actually changes (row 21) */
+function stateColorSet(sid, tok){
+  const s = st8(sid); if(!s || s.system) return;
+  if(!ST_PALETTE.some(p=>p.tok===tok)) return;
+  const def = stDefCls(s);
+  const reset = s.cls===tok;             /* ringed pill clicked = un-pick */
+  if(reset && tok===def) return;         /* already the default — nothing to do */
+  const was = s.cls;
+  s.cls = reset ? def : tok;
+  log('State recolored', `${s.label}: ${was} → ${reset ? `default (${def})` : tok}`);
+  render();
+  if(isUuid(s.sid)) $fetch('/api/settings/states/'+encodeURIComponent(s.sid),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({color: reset ? null : tok})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+/* descriptions are typed — debounced like every typed config field; clearing
+   the input stores NULL (the server's reset-to-default) and the row falls
+   back to the shipped ST_DECOR text */
+const _stDescT = {};
+function stateDescSet(sid, v, srcEl){
+  const s = st8(sid); if(!s || s.system) return;
+  const typed = v.trim();
+  const next = typed || (ST_DECOR[s.id]||{}).desc || '';
+  if(next===s.desc){ commitRender(srcEl); return; }             /* diff-guard (row 21) */
+  log('State description changed', `${s.label}: ${s.desc||'—'} → ${next||'—'}`);
+  s.desc = next;
+  commitRender(srcEl);
+  if(!isUuid(s.sid)) return;
+  clearTimeout(_stDescT[sid]);
+  _stDescT[sid] = setTimeout(()=>{
+    $fetch('/api/settings/states/'+encodeURIComponent(s.sid),{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({description: typed||null})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  },600);
+}
+/* add-state modal pick — the modal isn't render()-rebuilt, so the ring is
+   painted by hand; clicking the ringed pill un-picks (= default decor) */
+function stPalPick(tok){
+  const h = document.getElementById('stColor'); if(!h) return;
+  h.value = h.value===tok? '' : tok;
+  document.querySelectorAll('#stPal .chip').forEach(el=>{
+    el.style.outline = el.dataset.tok===h.value? '2px solid var(--brand)' : 'none';
+    el.style.outlineOffset = '1px'; });
 }
 
 /* ---- priorities: rename / add / archive (desk.priorities — label/rank/
@@ -410,6 +482,8 @@ function ovSummary(o){
   if(o.stateKinds?.length) parts.push(o.stateKinds.join(' / '));
   if(o.states?.length) parts.push('states: '+o.states.join(', '));
   if(o.groups?.length) parts.push('boards: '+o.groups.map(g=>grp(g)?.name||g).join(', '));
+  if(o.clients?.length) parts.push(o.clients.length>3 ? o.clients.length+' clients'
+    : 'clients: '+o.clients.map(c=>client(c)?.name||c).join(', '));
   if(o.prios?.length) parts.push('priority: '+o.prios.map(p=>prio(Number(p))?.label||p).join(', '));
   if(o.tags?.length) parts.push('tags: '+o.tags.join(', '));
   if(o.recentDays) parts.push('updated in the last '+o.recentDays+'d');
@@ -460,6 +534,8 @@ function ovModal(id){
   (o0.states||[]).forEach(v=>{ if(!stOpts.some(x=>x.v===v)) stOpts.push({v,l:v+' (archived)'}); });
   const gOpts = aGROUPS().map(g=>({v:g.id,l:g.name}));
   (o0.groups||[]).forEach(v=>{ if(!gOpts.some(x=>x.v===v)) gOpts.push({v,l:(grp(v)?.name||v)+' (archived)'}); });
+  const cOpts = CLIENTS.filter(c=>c.status!=='archived').map(c=>({v:c.id,l:c.name}));
+  (o0.clients||[]).forEach(v=>{ if(!cOpts.some(x=>x.v===v)) cOpts.push({v,l:(client(v)?.name||v)+' (archived)'}); });
   const pOpts = aPRIOS().slice().sort((a,b)=>b.id-a.id).map(p=>({v:String(p.id),l:p.label}));
   (o0.prios||[]).forEach(v=>{ if(!pOpts.some(x=>x.v===String(v))) pOpts.push({v:String(v),l:(prio(Number(v))?.label||('tier '+v))+' (archived)'}); });
   const m = document.getElementById('modal');
@@ -476,6 +552,7 @@ function ovModal(id){
       <div class="field"><label>State kind</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${[['open','Open — SLA runs'],['paused','Paused'],['done','Resolved']].map(([v,l])=>ck('ovKind',v,has(o0.stateKinds,v),l)).join('')}</div></div>
       <div class="field"><label>Specific states</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${stOpts.map(x=>ck('ovState',x.v,has(o0.states,x.v),x.l)).join('')}</div></div>
       <div class="field"><label>Boards</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${gOpts.map(x=>ck('ovGroup',x.v,has(o0.groups,x.v),x.l)).join('')}</div></div>
+      <div class="field"><label>Clients</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;max-height:110px;overflow:auto">${cOpts.map(x=>ck('ovClient',x.v,has(o0.clients,x.v),x.l)).join('')||'<span class="mini muted">No clients.</span>'}</div></div>
       <div class="field"><label>Priorities</label><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">${pOpts.map(x=>ck('ovPrio',x.v,(o0.prios||[]).some(p=>String(p)===x.v),x.l)).join('')}</div></div>
       <div class="grid g-2" style="gap:12px">
         <div class="field"><label>Tags (comma-separated — any of them)</label><input type="text" id="ovTags" value="${esc((o0.tags||[]).join(', '))}"></div>
@@ -495,6 +572,7 @@ function saveOverview(id){
   if(kinds.length && kinds.length<3) def.stateKinds = kinds;   /* all three = any kind = omitted */
   const states = pick('ovState'); if(states.length) def.states = states;
   const groups = pick('ovGroup'); if(groups.length) def.groups = groups;
+  const clients = pick('ovClient'); if(clients.length) def.clients = clients;
   const prios = pick('ovPrio').map(Number); if(prios.length) def.prios = prios;
   const tags = document.getElementById('ovTags').value.split(',').map(s=>s.trim()).filter(Boolean);
   if(tags.length) def.tags = tags;
@@ -684,15 +762,18 @@ function viewSettings(){
     </div>
     <div class="card card-pad">
       <div class="card-head flush"><h3>Ticket states</h3><span class="hint">editable vocabulary — behavior comes from the type</span></div>
-      ${STATES.map((s,i)=>{ const arch=isArch(s); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b><span class="chip ${s.cls}"><span class="cdot"></span>${esc(s.label)}</span></b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}<p>${esc(s.desc||'')}</p></div>
+      ${STATES.map((s,i)=>{ const arch=isArch(s); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b><span class="chip ${s.cls}"><span class="cdot"></span>${esc(s.label)}</span></b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}${s.system
+        ? `<p>${esc(s.desc||'')}</p>`
+        : `<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin:7px 0 5px">${stSwatches(s)}</div>
+        <input type="text" id="stDesc-${s.id}" value="${esc(s.desc||'')}" placeholder="what this state means" style="width:100%;max-width:420px;font-size:12px" onchange="stateDescSet('${jsq(s.id)}',this.value,this)">`}</div>
         <span class="mini muted">${s.type==='open'?'SLA runs':s.type==='paused'?'SLA paused':'resolved'}</span>
         ${s.system?`<span class="mini muted">system — cascade-written</span>`:`
-        ${(i>0&&!STATES[i-1].system)?`<button class="rowbtn" onclick="moveState('${s.id}',-1)" title="list earlier">↑</button>`:''}
-        ${(i<STATES.length-1&&!STATES[i+1].system)?`<button class="rowbtn" onclick="moveState('${s.id}',1)" title="list later">↓</button>`:''}
-        ${s.core?'':`<button class="rowbtn" onclick="stateModal('${s.id}')">Edit</button>`}
-        <button class="rowbtn" onclick="archiveState('${s.id}')">${arch?'Restore':'Archive'}</button>`}</div>`;}).join('')}
+        ${(i>0&&!STATES[i-1].system)?`<button class="rowbtn" onclick="moveState('${jsq(s.id)}',-1)" title="list earlier">↑</button>`:''}
+        ${(i<STATES.length-1&&!STATES[i+1].system)?`<button class="rowbtn" onclick="moveState('${jsq(s.id)}',1)" title="list later">↓</button>`:''}
+        ${s.core?'':`<button class="rowbtn" onclick="stateModal('${jsq(s.id)}')">Edit</button>`}
+        <button class="rowbtn" onclick="archiveState('${jsq(s.id)}')">${arch?'Restore':'Archive'}</button>`}</div>`;}).join('')}
       <button class="btn sm" style="margin-top:12px" onclick="stateModal()">+ Add state</button>
-      <div class="mini muted" style="margin-top:8px">Any state can be archived — tickets already in it keep it until moved. At least one running-SLA state and one resolved state must stay active. Core states keep their names (the mail pipeline resolves them by label); the cascade-written system state isn't editable; behavior is fixed at creation.</div>
+      <div class="mini muted" style="margin-top:8px">Any state can be archived — tickets already in it keep it until moved. At least one running-SLA state and one resolved state must stay active. Core states keep their names (the mail pipeline resolves them by label) — their color and description are yours; the cascade-written system state isn't editable; behavior is fixed at creation. Clearing a description restores the shipped text.</div>
     </div>
     ${deskUiCard()}
     <div class="card card-pad">

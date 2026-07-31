@@ -6,7 +6,7 @@
    GROUP_SENDAS/GROUP_SENDAS_OVR/RULES/TRIGGERS/CANNED/TITLES/AGENT_SIGS/
    VCFG/AUTH_CFG/GRAPH_AUTH/MAILCFG/SECRETS (all start EMPTY — mapIn() in
    api.js is the ONE place bootstrap data enters them) · static catalogs
-   (ST_DECOR, DEFAULT_OVERVIEWS, TRIG_EVENTS, PERM_CATALOG/ALL_PERMS/PRESETS,
+   (ST_DECOR, ST_PALETTE, DEFAULT_OVERVIEWS, TRIG_EVENTS, PERM_CATALOG/ALL_PERMS/PRESETS,
    PROJ_TEMPLATES, ENTRA_COLMAP, NAV, PAGES) · can()/canView() ·
    ticketVisible/scoped/tk/isDone · effectiveOverviews/shownDashboardStates/
    savePrefs · isBizTime/addBizHours/slaInfo · log/notify/signOut ·
@@ -21,7 +21,7 @@ const state = {
   perms:new Set(), meId:null,
   prefs:{},            // per-user UI prefs — bootstrap me.prefs; savePrefs() mirrors
   user:{ name:'', initials:'', role:'' },
-  overview:'myopen', qf:{ group:[], prio:[], client:[], q:'' },   /* multi-selects: empty = all */
+  overview:'myopen', qf:{ group:[], prio:[], client:[], st:[], tag:[], scope:'', q:'' },   /* multi-selects: empty = all; scope ''=anyone */
   composer:{ kind:'reply', typeId:null, logTime:true },
   notifs:[], bulk:[], searchQ:'',
   timer:null,          // { ticketId, startedReal }  — the native note timer
@@ -87,10 +87,24 @@ const ST_DECOR = {
   solved:  { cls:'st-solved',  desc:'Fixed; closes itself after 48h without a reply.' },
   closed:  { cls:'st-closed',  desc:'Done. A customer reply re-opens it.' },
 };
+/* per-state color vocabulary (0027): a state's stored color is one of these
+   TOKENS — each token IS a chip class css/desk.css already ships (the st-*
+   state family; no new colors invented), labelled for the Settings swatches.
+   settings.py validates stored colors against this SAME literal token list
+   (bug #22 class: both sides pinned to one vocabulary — a comment there
+   points back here; change one, change both). */
+const ST_PALETTE = [
+  { tok:'st-new',     label:'Teal'  },
+  { tok:'st-open',    label:'Blue'  },
+  { tok:'st-pending', label:'Brass' },
+  { tok:'st-hold',    label:'Slate' },
+  { tok:'st-solved',  label:'Green' },
+  { tok:'st-closed',  label:'Gray'  },
+];
 /* the shipped queue tabs, expressed as OverviewDefs — the pinned filter
    vocabulary both sides speak (design §Storage): id/label/scope +
-   optional stateKinds/states/groups/prios/tags/recentDays; an omitted key
-   means no constraint. Out of the box the evaluator over these five is
+   optional stateKinds/states/groups/clients/prios/tags/recentDays; an
+   omitted key means no constraint. Out of the box the evaluator over these five is
    behavior-identical to the old fixed tab bar: 'done' deliberately ships
    with NO recentDays window ("Recently solved" always showed every done
    ticket), and the evaluator keeps the two permission quirks the vocabulary

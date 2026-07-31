@@ -173,6 +173,7 @@ Adapter conventions (each one paid for by a numbered bug):
 | 0024 | Ledger row 38: `desk.mailboxes.mailbox_type` ('shared'/'licensed', default 'shared') — the Edit dialog's Type select finally has a column; bootstrap had been hard-coding "shared" onto every row |
 | 0025 | Ticket links: `desk.ticket_links` (kind related/child, void-not-delete, one live parent per child, related pair-unique) + `ticket_states.is_system` + the seeded system state 'Closed: child ticket' (done-kind) that makes parent-close cascades automation-silent |
 | 0026 | Build 10: `desk.group_sendas` — per-board outbound sender override (mailbox_id NULL = follow fed-by; clearing is an UPDATE, no DELETE) + the explicit mail_worker SELECT grant (0005's desk defaults cover desk_api only) |
+| 0027 | Build 11: `desk.ticket_states.color` (palette token, NULL = shipped decor) + `.description` — per-state chip color and subtitle, editable in Settings on core and custom states alike |
 
 Migrations are append-only, applied exactly once (`public.schema_migrations`),
 run via the `migrate` compose service.
@@ -210,7 +211,9 @@ from the config listing), `PATCH /api/settings/groups/{group_id}/sendas`
 422), `POST /api/automations/notifications/read` accepts `{"all": true}`
 (visibility-scoped), config key `desk_ui` (admin queue tabs + dashboard
 defaults, emitted in bootstrap as `deskUi` alongside me.prefs and the
-override-aware `groupSendas`); automations: `POST/PATCH /api/automations/rules` (conditions accept
+override-aware `groupSendas`); build 11 extends states POST/PATCH with
+`color` (six-token palette, 422 on unknown, explicit null = reset) and
+`description`, and OverviewDef with `clients`; automations: `POST/PATCH /api/automations/rules` (conditions accept
 a flat list = all-must-match, or a list of lists = OR groups where each
 inner list ANDs — the builder saves one group flat, so legacy rules are the
 one-group case),

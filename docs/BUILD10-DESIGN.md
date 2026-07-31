@@ -30,6 +30,7 @@ loud failures, both sides of every wire speak the same vocabulary.
   tabs (My assigned / Unassigned / All open / Pending·hold / Recently
   solved) are expressed in this vocabulary as the shipped default, so
   out-of-the-box behavior is byte-for-byte unchanged.
+* OverviewDef additionally carries `clients: [uuid,...]` (any-of; build 11 — see BUILD11-DESIGN.md).
 
 ## 1. Bell — mark all read
 

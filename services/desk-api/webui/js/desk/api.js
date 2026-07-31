@@ -24,9 +24,12 @@ function mapIn(d){
   ATYPES.length=0; d.atypes.forEach(a=>ATYPES.push(a));
   STATES.length=0;
   d.states.forEach(s=>{ const dec=ST_DECOR[s.id];
+    /* decor overlay (0027): a stored palette token / description wins over
+       the shipped ST_DECOR default; NULL falls through to it unchanged */
+    const tok=ST_PALETTE.some(p=>p.tok===s.color)? s.color : null;
     STATES.push({ id:s.id, label:s.label, type:s.type, sid:s.sid,
-      cls:dec? dec.cls : (s.id==='child-closed'?'st-closed':'st-hold'),
-      desc:dec? dec.desc : '', core:!!dec,
+      cls:tok || (dec? dec.cls : (s.id==='child-closed'?'st-closed':'st-hold')),
+      desc:s.description!=null? s.description : (dec? dec.desc : ''), core:!!dec,
       active:s.active!==false, system:s.system===true }); });
   if(d.priorities){
     PRIOS.length=0;

@@ -76,15 +76,20 @@ def bootstrap(request: Request, limit: int = 500):
             out["atypes"] = [{"id": str(r["id"]), "name": r["name"], "billable": r["billable"],
                               "active": r["active"]}
                              for r in cur.fetchall()]
-            cur.execute("SELECT id, label, kind, active, is_system FROM desk.ticket_states ORDER BY position")
+            cur.execute("""SELECT id, label, kind, active, is_system, color, description
+                             FROM desk.ticket_states ORDER BY position""")
             # sid = the server uuid — the Settings states editor PATCHes by it;
             # without it every hydrated row's editor is a lying chip (bug #30 class)
+            # color/description are raw column values: NULL rides through as
+            # null and mapIn falls back to the shipped ST_DECOR defaults
             out["states"] = [{"id": ST_MAP.get(r["label"].lower(),
                                                r["label"].lower().replace(" ", "-")),
                               "sid": str(r["id"]),
                               "label": r["label"], "type": r["kind"],
                               "active": r["active"],
-                              "system": r["is_system"]} for r in cur.fetchall()]
+                              "system": r["is_system"],
+                              "color": r["color"],
+                              "description": r["description"]} for r in cur.fetchall()]
             cur.execute("SELECT id, label, rank, active FROM desk.priorities ORDER BY rank")
             # inactive rows ride along too (same rule as atypes) so old
             # tickets still resolve a label and the editor can restore them

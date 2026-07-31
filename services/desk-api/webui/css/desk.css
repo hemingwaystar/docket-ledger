@@ -5,7 +5,8 @@
    2. Shell layout               — rail, topbar, content grid
    3. Components                 — cards, tables (.tbl), chips, buttons,
                                    inputs, modals, combo dropdowns
-   4. View-specific bits         — SLA dots, composer, settings rows
+   4. View-specific bits         — SLA dots, composer, settings rows,
+                                   dashboard queue-by-state rows
    5. UTILITIES (end of sheet)   — named classes extracted from repeated
                                    inline patterns; prefer these over new
                                    inline styles when a pattern repeats
@@ -340,6 +341,19 @@ select:disabled{opacity:.55;cursor:not-allowed}
 .ok-sla .sdot{background:var(--billable)} .ok-sla{color:var(--ink-2)}
 .due-sla .sdot{background:var(--warn)} .due-sla{color:var(--warn)}
 .breach-sla .sdot{background:var(--void)} .breach-sla{color:var(--void);font-weight:600}
+
+/* ============================ Docket-specific: dashboard ============================ */
+/* Queue-by-state card rows — a two-column grid: fixed label track where the
+   chip TEXT WRAPS (long custom state names break at spaces, mid-word only as
+   a last resort — never an ellipsis) + a bar/count track, so every bar
+   starts at the same x and the pills share one width. Scoped under the
+   card's .dash-qbs hook; the global .chip nowrap is untouched elsewhere. */
+.dash-qbs .qbs-row{display:grid;grid-template-columns:118px minmax(0,1fr);gap:10px;align-items:center;margin-bottom:9px}
+.dash-qbs .qbs-row .chip{white-space:normal;overflow-wrap:break-word;text-align:left;line-height:1.35}
+.dash-qbs .qbs-row .chip .cdot{flex:0 0 auto}
+.dash-qbs .qbs-meter{display:flex;align-items:center;gap:10px;min-width:0}
+.dash-qbs .qbs-meter .bar{flex:1}
+.dash-qbs .qbs-meter .qbs-n{width:20px;text-align:right;flex:0 0 auto}
 
 /* ============================================================================
    5. UTILITIES — extracted repeated inline patterns (identical pixels)
