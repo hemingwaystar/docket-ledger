@@ -37,26 +37,43 @@ git (`docs/STATE.md`) so it travels with the code.
 > prompts to cascade, and cascaded children file as the system state
 > 'Closed: child ticket' so close-email triggers never fire per child.
 >
+> 🏗️ **BUILD 9 (2026-07-30, overnight): THE RESTRUCTURE.** The whole UI
+> layer was rebuilt at the user's direction — prototype halves and live
+> adapters are GONE. desk.html (5,597 lines) and ledger.html (3,092 lines)
+> are now markup shells + css/ + js/ modules (18 desk files, 16 ledger);
+> every control is ONE function that mutates local state and calls the API
+> in the same body. The silent-controls + hydration-completeness sweep is
+> thereby closed **as a category, by construction** — and performing the
+> rework surfaced + fixed FIVE live defects the wrapper architecture had
+> been hiding (ledger rows 39–43). Backend: tickets.py → app/tickets/
+> package, ledger main.py → one module per concern (route tables verified
+> identical); new wired-by-design endpoints for the states/priorities
+> editors + a read-only PAT metadata card; ledger bootstrap now emits
+> groups/roles/memberships (12 keys). deploy.sh EXISTS now. Full contract
+> + fix list: **docs/REWORK-DESIGN.md**. Verification: every script through
+> a real JS engine, every view rendered against empty state, all 44 .py
+> compiled (real CPython via wasm), route tables diffed, endpoint parity
+> 68/68, demo-grep zero hits across 50 files.
+>
 > **Still open, in order (details in §5):**
 > 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
-> 2. **USER: served-UI staleness check** — the live Directory rendered a
->    card ("Entra-synced") that exists in no current bundle: run the §5
->    disk-vs-served grep for "Add person" and fix the layer it names
->    (repo merge / image rebuild / hard refresh). Most of §5's walks are
->    only meaningful on the current desk.html.
-> 3. **USER: identity cleanup** — create the `hemingway@` agent
+> 2. **USER: the build-8 deploy incident console surgery FIRST** (§6 —
+>    apply the idempotent 0025 body via psql, record it, audit row, then
+>    `docker compose up -d`; six green containers = desk-api back).
+>    Build 9 deploys only AFTER that.
+> 3. **USER: deploy build 9** — full image rebuild required (webui is
+>    COPYed into images): `./deploy.sh` after pushing. Then run the §5
+>    build-9 verify walks (top of the list).
+> 4. **USER: served-UI staleness check** — markers moved in build 9: grep
+>    "Add person" in `services/desk-api/webui/js/desk/views/directory.js`
+>    (disk) and curl `/ui/js/desk/views/directory.js` (served). Most of
+>    §5's walks are only meaningful on the current build.
+> 5. **USER: identity cleanup** — create the `hemingway@` agent
 >    (POST /api/directory/agents, role name exactly `Admin`) so OIDC
 >    sign-in works; re-enroll MFA for `admin@` and flip `auth.mfa` back to
 >    `"required"` (it sits at `"optional"` from the console lockout
 >    recovery — see §6 runbook).
-> 4. **NEXT CLAUDE BUILD: the silent-controls + hydration-completeness
->    sweep** — SIX unmirrored controls have now been found by collision
->    (secrets Save, mailbox outbound, Graph card, verification channel +
->    thread-post toggles, group Delete) plus one hydration-starvation bug
->    (archived groups/states vanished because bootstrap emitted only
->    active rows). Sweep every control against its mirror AND every
->    rendered collection against its bootstrap emission, both apps.
-> 5. Then: **backups + restore drill**, then the post-launch tail
+> 6. Then: **backups + restore drill**, then the post-launch tail
 >    (Zammad import → portal → retainers; ticket links: DONE, build 8).
 >
 > Bug #33's full anatomy, the diagnostic transcript expectations, and the
@@ -313,6 +330,49 @@ resolves to (explicit override → ticket contact → last inbound sender).
     rule), related links render as bare #id when the other ticket is
     outside the hydrate window, and the mirror wraps
     doLink/unlink/doChild/unchild + the cascade from day one.
+    **8b (same night):** first deploy failed at the migrate service
+    (psql exit 3 — statement-level failure; exact ERROR line lives in
+    `docker compose logs migrate`). Both new migrations rewritten
+    transactional (BEGIN/COMMIT) and idempotent (IF NOT EXISTS +
+    WHERE NOT EXISTS seed), and the related-pair index expressions
+    got explicit parens — so a partial first apply can't strand state,
+    a half-recorded apply re-runs clean, and "already exists" can never
+    mask the original error again. NOTE HOUSE-WIDE: 0021/0023 are also
+    multi-statement without BEGIN — same latent risk, grandfathered
+    (applied clean everywhere); new multi-statement migrations wrap
+    from now on.
+
+17. **Build 9 (2026-07-30 overnight) — THE RESTRUCTURE.** At the user's
+    direction ("all prototyping ripped out once and for all"), the entire
+    UI layer was rebuilt: no prototype halves, no adapters, no demo data.
+    desk.html 5,597 lines → a 100-line shell + css/desk.css + 18 js/desk
+    files; ledger.html 3,092 lines → shell + css + 16 js/ledger files;
+    login/index/suite split the same way. Every one of the old adapter's
+    wrapped mutations (desk 78, ledger 21+2) became ONE function: local
+    mutation, diff-guard, API call, oops-on-error — same optimistic feel,
+    single code path. Backend: tickets.py (1,175 lines) → app/tickets/
+    package of 7 routers + common.py; ledger main.py (965 lines) → 8
+    modules with the static mount last; route tables machine-diffed
+    identical. Wired-by-design additions: states + priorities editors
+    (POST/PATCH /api/settings/states|priorities — the DDL always said
+    "user-editable in Settings"; core/system rows refuse renames because
+    the worker resolves them by label), read-only PAT card
+    (GET /api/settings/tokens — metadata only, minting stays
+    operator-side), agent hasPassword/mfa badges + pwReset/mfaReset via
+    /auth/admin/*, priorities + state sids in desk bootstrap, ledger
+    bootstrap grows groups/roles/tech-memberships (12 keys). Removed as
+    lies: states/prios Delete buttons, fake API-token card, note-edit
+    control (articles are immutable), signature/send-as editors (nothing
+    server-side consumes them), Cc composer field (never persisted),
+    client-side trigger/SLA execution (server-authoritative since 0019),
+    biweekly cycle (server never had it). Five live defects found + fixed
+    during the rework: ledger rows 39–43. deploy.sh finally exists
+    (bug #10's one-command chain). Verification: browser JS engine parse
+    (all 34 app files + 4 shells), every view rendered against empty
+    state, endpoint parity desk 56/56 + ledger 17/17, all 44 .py compiled
+    under real CPython (wasm), migrations byte-identical to 8b, zero
+    demo-grep hits across 50 webui files. Contract + full fix list:
+    docs/REWORK-DESIGN.md.
 
 ---
 
@@ -384,6 +444,12 @@ touched history: entries keep the period they were written into.
 | 37 | Archived groups (Security, Test) listed unlabeled in the queue's "All groups" filter — as if never archived | the build-7d archive sweep covered VALUE pickers (aGROUPS/aSTATES/aPRIOS/aATYPES + labeled current-value exceptions) but the FILTER bars were a third consumer category nobody enumerated: Docket queue + reports filters and every Ledger filter iterated the raw collections | build 7e: all 15 filter dropdowns across both apps filter archived/inactive entries, keeping only the entry the filter is CURRENTLY set to, labeled "(archived)" — so hiding never silently breaks an applied filter; trigger-builder client condition lists go active-only (stored values still display via the not-in-list fallback); bootstrap untouched | "Every picker" means every CONSUMER of the collection — enumerate render sites by grepping the collection name, not by remembering the picker kinds; the archived-visibility rule is: management surfaces show all, choosers offer active, current values never vanish |
 | 38 | Mailbox Type select wouldn’t hold — Shared → Licensed flipped locally, then snapped back to Shared | partial-mirror gap, the camouflage variant of the silent-control class: the Edit dialog’s mirror wrapper PATCHed every field EXCEPT type, so the card looked fully wired; beneath it no `mailbox_type` column existed, and bootstrap hard-coded `"type": "shared"` onto every emitted row — three independent layers each sufficient to cause the revert | migration 0024 (`mailbox_type` text NOT NULL DEFAULT ‘shared’ CHECK shared/licensed); settings.py create/patch/list carry a Literal-validated `type` (patch audits `type → …`); bootstrap emits the real column; the mirror reads mbType pre-close and sends it on PATCH and POST | A mostly-mirrored form hides its dropped fields better than a dead card hides dead buttons — diff the PAYLOAD against the modal’s field list, not the card against silence; and a bootstrap that fabricates a constant for a missing column plants the revert in advance: emit real columns or nothing |
 
+| 39 | (found by the build-9 rework, live since gap #4 "closed") Server-approved billing periods rendered **Open** in Ledger's Billing Periods page; their entries looked editable; the Odoo export list stayed empty | the period-lock registry was seeded from bootstrap under SERVER period keys (`2026-07`) but every reader looked up UI-prefixed keys (`M2026-07`) — the registry was populated and 100% unreachable; the gap-#4 fix had shipped a seeding nobody could read | build 9: the registry is canonicalized on UI keys — `uiPeriodKey()` translates server keys ONCE in mapIn; the two Periods-page server calls translate back via `srvPeriodKey()` at the fetch boundary (verified by browser round-trip tests incl. ISO week-1/week-53 edges) | A fix that writes data nobody reads is indistinguishable from no fix — verify the READ path, not the write; key-format boundaries get one translation point per direction |
+| 40 | (found by the build-9 rework, live in production) "Approve & lock" on the **Periods page** toasted success, then the lock evaporated on the next refresh; "Export to Odoo" was a dead button on the same path — while the Approvals page worked | same key-format split as row 39: the Periods page resolved the server period row with an untranslated UI key, so `PERIODS.find` never matched and the POST silently never fired (the Approvals page translated via srvPeriodKey — bug #22's fix — but Periods skipped it) | build 9: both call sites translate; a missing server row is now a LOUD toast ("approval was NOT saved") + rehydrate, never a silent skip | The second consumer of a translation is where it gets skipped — put the translation at the boundary helper, and make "couldn't mirror" audible: silent no-op + optimistic flip = fake success |
+| 41 | (found by the build-9 rework) Visiting Ledger's Audit page corrupted the Approvals filters — stale/incompatible keys, resets to the wrong shape | `setAF` was declared TWICE (Approvals flavor and Audit flavor); function hoisting meant the Audit version won everywhere, and both views shared `state.af` with different shapes | build 9: Approvals keeps `state.af`/`setAF`; Audit gets `state.auf`/`setAuf` — one name, one home, verified single-definition by the globals audit | Two declarations of one global is a collision even when both "work" locally — hoisting picks a winner silently; audit for duplicate definitions, not just undefined references |
+| 42 | (found by the build-9 rework) Project flat-fee pricing never saw server data — bootstrap's `projects` payload was discarded on every fresh load | the hydration branch guarded `if(state.projects!==undefined)` but the state literal never declared `projects` — only a suite-bridge event created it lazily, so direct Ledger loads dropped the key | build 9: `state.projects` is declared; the branch hydrates unconditionally (clear-then-fill) | An existence-guard on a key you own is a smell — declare the shape, hydrate unconditionally; guards belong on SERVER payloads, not on your own state |
+| 43 | (caught pre-ship by the build-9 verify battery, would have been row-#30's twin) The new ticket-states editor would have toasted rename/archive success then reverted on refresh — for EVERY pre-existing state | bootstrap emitted states without their server uuid while the editor's PATCH gated on that uuid (`sid`) — the exact lying-chip anatomy of rows 30/38, reproduced by the rework itself before the adversarial review caught it | bootstrap emits `sid`; mapIn carries it; also fixed in the same pass: vcfg hydration dropped `postToThread` (an unrelated Settings edit would have silently re-enabled thread-posting an admin turned off) | The bug classes you just abolished will try to reincarnate in the new code — run the same battery against the rework that the rework was born from; adversarial verify catches what authorship can't |
+
 Meta-lesson: every DB-layer failure was **least-privilege refusing an
 unprovisioned path** — never corruption, never a broken invariant. The
 segmentation model kept proving itself by saying "no" in exactly the right
@@ -395,18 +461,22 @@ places.
 
 **Ordering (refreshed 2026-07-30, session end):**
 1. **USER — close the session's tail:** ~~verify@ test-send~~ (DONE —
-   confirmed 2026-07-30 evening) → deploy build 8 (RUNS MIGRATIONS
-   0024 + 0025; supersedes 7e/7f — includes both) → served-UI staleness walk below →
+   confirmed 2026-07-30 evening) → deploy build 8b (RUNS MIGRATIONS
+   0024 + 0025; supersedes 7e/7f/8 — includes all; first build-8 deploy
+   hit migrate exit 3 → 8b makes both migrations transactional +
+   idempotent, so re-running `up -d` after a partial apply is safe;
+   root-cause via `sudo docker compose logs migrate`) → served-UI staleness walk below →
    hemingway@ agent create → MFA re-enroll for admin@ + `auth.mfa` back to
    `"required"` → then the accumulated verify walks below on the CURRENT
    desk.html.
 2. **USER — ops list (unchanged, now urgent with outbound live):**
    Lightsail snapshot, off-VM `secrets/` + `.env` + dumps, `deploy.sh`
    committed and used, test-ticket archiving.
-3. **CLAUDE — silent-controls + hydration-completeness sweep:** every
-   control vs its mirror (6 instances found by collision so far) AND every
-   rendered collection vs its bootstrap emission (1 instance), both apps —
-   kill both classes as categories.
+3. ~~CLAUDE — silent-controls + hydration-completeness sweep~~ **CLOSED BY
+   BUILD 9, as a category:** the prototype/adapter split is gone; every
+   control is one function containing both its local mutation and its API
+   call, and mapIn consumes every bootstrap key. The rework surfaced and
+   fixed five live members of the class on the way out (rows 39–43).
 4. **CLAUDE — backups + restore drill** (dumps off-VM, KEK custody,
    scripted + drilled restore).
 5. **Post-launch tail:** Zammad import → customer portal → retainers
@@ -414,6 +484,46 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **BUILD 9 smoke (FIRST — everything else assumes it):** both apps
+      load with real data (shells + css/ + js/ all served; webui is baked
+      into images, so a stale UI here means the rebuild step was skipped);
+      the browser console is CLEAN on load of /ui/desk.html and
+      /ledger/ui/ledger.html (a 404 on any js/ file = the merge dropped a
+      directory); sign-in → queue → open ticket → note → props edit →
+      refresh: everything sticks. Then spot-walk one mutation per view.
+- [ ] **Build 9 — ticket-states editor (NEW wiring):** Settings → rename a
+      custom state → survives refresh; archive/restore it; try renaming
+      'New'/'Open' → 409 "Core states keep their names"; the system state
+      'Closed: child ticket' offers no edit control; duplicate label → 409
+      not 500.
+- [ ] **Build 9 — priorities editor (NEW wiring):** add a tier (label +
+      rank) → survives refresh; archive it; rename 'Normal' → 409 (it is
+      the ingestion fallback); duplicate rank → clean 409.
+- [ ] **Build 9 — API access card:** lists real PATs (name, created, last
+      used) read-only; no mint/revoke controls exist.
+- [ ] **Build 9 — Directory agent badges:** password/MFA badges reflect
+      reality (hasPassword/mfa from bootstrap); Reset password / Reset MFA
+      round-trip through /auth/admin/* (temp password shown once).
+- [ ] **Build 9 — Ledger fresh-load access (row L7):** open Ledger
+      DIRECTLY (no Docket tab): Directory shows real groups/roles; a
+      client with group-based access resolves membership correctly;
+      Approvals group filter is populated.
+- [ ] **Build 9 — period locks tell the truth (rows 39/40):** a
+      server-approved period shows Approved/locked in Billing Periods on a
+      fresh load; its entries render locked; "Approve & lock" from the
+      PERIODS page survives refresh (this was silently broken before);
+      Export lists approved periods and mark-exported records the SERVER
+      ref; a period the server doesn't know answers a loud toast, not fake
+      success.
+- [ ] **Build 9 — Approvals↔Audit filters (row 41):** set Approvals
+      filters, visit Audit, set its filters, return — Approvals filters
+      intact.
+- [ ] **Build 9 — client billing card:** "Billable by default" toggle
+      persists (new control, previously an orphan function); billing cycle
+      offers monthly/weekly only (biweekly removed — the server never had
+      it).
+- [ ] **Build 9 — verification config:** disable thread-posting, refresh,
+      toggle SMS — thread-posting STAYS off (postToThread hydration fix).
 - [ ] **Archived entries out of filter dropdowns (build 7e, row 37):** with
       Security + Test groups archived, the queue's "All groups" dropdown
       lists only All groups + Service Desk (+ any other active groups) —
@@ -513,9 +623,11 @@ places.
       shared" — text that exists in NO current bundle. The served desk.html
       is old, which is why agent add/deactivate/membership appeared broken
       (the controls aren't in the old file). The bug-#10 habit, both sides:
-      `grep -c "Add person" services/desk-api/webui/desk.html` on the repo
-      (expect 3) and `curl -s http://$BIND_ADDR:8081/ui/desk.html | grep -c
-      "Add person"` (expect 3). disk=0 → the bundle→repo merge is dropping
+      **markers moved in build 9** (desk.html is a shell now):
+      `grep -c "Add person" services/desk-api/webui/js/desk/views/directory.js`
+      on the repo (expect 1) and `curl -s
+      http://$BIND_ADDR:8081/ui/js/desk/views/directory.js | grep -c
+      "Add person"` (expect 1). disk=0 → the bundle→repo merge is dropping
       webui/ — fix the merge, push, pull; disk>0 served=0 → `sudo docker
       compose build desk-api && sudo docker compose up -d desk-api`
       (--no-cache if stubborn); both>0 → hard-refresh the browser. Then:
@@ -804,10 +916,13 @@ places.
   application access policy; a 403 names which is missing. Admin-only, no
   ticket, deliberately not gated on the master switch.
 * **Served-UI staleness check:** when a UI feature "doesn't exist" that
-  the bundle says it does, grep the marker string on disk AND in
-  `curl -s http://$BIND_ADDR:8081/ui/desk.html` — disk=0 means the
+  the bundle says it does, grep the marker string on disk AND in the served
+  copy of the SAME file (build 9: features live in `webui/js/...`, so curl
+  the js file, e.g. `curl -s
+  http://$BIND_ADDR:8081/ui/js/desk/views/directory.js`) — disk=0 means the
   bundle→repo merge dropped `webui/`; disk>0 served=0 means rebuild
-  desk-api; both>0 means hard-refresh.
+  desk-api; both>0 means hard-refresh. A console 404 for any js/ file on
+  page load is the same class: the merge dropped a subdirectory.
 
 ---
 

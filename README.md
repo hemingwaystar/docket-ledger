@@ -161,19 +161,18 @@ prompts for the tech-visible reason), **Periods** (approve-and-lock, preview
 the Odoo draft-invoice payload, mark exported → ref recorded). ledger-api
 gains GET /me and serves the UI with no-cache.
 
-Prototype-parity UI, phase 1 (this drop): the full Docket prototype — every
-view, pixel and interaction — now runs LIVE at /ui/desk.html. It is the
-prototype file itself with a hydration adapter: GET /api/bootstrap serves the
-entire application state in the prototype's native shape (directory, states,
-priorities, activity types, tickets with threads/time/projects, audit tail),
-the demo seed is gated off, and identity/permissions come from your session.
-Wired to the API in phase 1: the composer (reply/note with time), tags, and
-new-ticket; refresh-on-focus keeps it current. Everything renders and
-navigates identically to the prototype; mutations not yet wired (props
-panel, projects, directory edits, settings) apply locally and revert on the
-next hydrate — they are the next drops, in that order. The simple
-/ui/index.html shell remains as a fallback.
+The UI (build 9 — the restructure): the prototype/adapter era is over. Both
+apps are markup shells + one stylesheet + plain classic scripts (webui/css/,
+webui/js/desk/ resp. js/ledger/), no build step, no framework. Every control
+is one function that updates local state and calls the API in the same body
+(optimistic, diff-guarded, loud on error), hydrated exclusively from GET
+/api/bootstrap with empty-until-hydrated state and ⚠-loud failure. The js/
+tree doubles as the control→endpoint map — each file's header lists what it
+owns and what it calls. Full architecture: docs/CODE-GUIDE.md §2; restructure
+contract and fix list: docs/REWORK-DESIGN.md. The simple /ui/index.html
+shells remain as self-contained fallbacks. NOTE: webui/ is COPYed into the
+service images — UI changes deploy via image rebuild (`scripts/deploy.sh`).
 
-Next: wire the props panel + pending + merge, then projects, then directory
-and settings views; Entra OIDC; SLA fan-out; automations; the Ledger
-prototype gets the same adapter treatment; backup process; TLS go-live.
+Current state, punch list and verify walks: docs/STATE.md. Roadmap:
+docs/DOCUMENTATION.md §8 (backups + restore drill next, then the post-launch
+tail — Zammad import → customer portal → retainers).

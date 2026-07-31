@@ -1,13 +1,13 @@
 # Hemingway Suite — Complete Project Documentation
 ### Docket (helpdesk) + Ledger (time & billing) · replacing Zammad
-**As of 2026-07-30 (build 8) · migrations 0001–0025 · bundle “hemingway-backend.zip”**
+**As of 2026-07-30 (build 8b) · migrations 0001–0025 · bundle “hemingway-backend.zip”**
 
 This is the full-picture document: what the system is, what has been built and
 verified, what is in this bundle awaiting deployment, what remains, what comes
 next, and how to operate all of it. Two companion documents stay authoritative
 for their niches: **`docs/STATE.md`** (the living state doc — mirrored at the
 bundle root as `HANDOFF-2-PRODUCTION.md`) carries the current punch list and
-the complete 28-entry bug ledger verbatim; **`HANDOFF.md`** describes the
+the complete bug ledger (rows 1–43) verbatim; **`HANDOFF.md`** describes the
 original frontend prototypes; **`docs/CODE-GUIDE.md`** is the code tour —
 UI architecture, CSS conventions, and the editing checklist. When this file and STATE.md disagree, STATE.md
 wins — it is updated every build round.
@@ -64,7 +64,8 @@ apps side by side.
   permissions, sessions), `app_config`, KEK-sealed `secrets`.
 * `desk` — tickets, articles (now with `body_html`), mailboxes, Graph
   cursors, tags, canned responses, projects + tasks, automation rules
-  (storage only — engine unbuilt), verification scaffolding.
+  (executed by the worker engine since 0019), verification (0021), ticket
+  links (0025).
 * `ledger` — time entries, activity types + effective-dated
   `activity_type_rates` (rate **and**, since 0018, billable), per-client
   `client_rates` (typed and client-wide lanes since 0017), billing periods,
@@ -193,7 +194,15 @@ POST/PATCH, `graph/test`, `graph/test-send` (outbound pre-flight: one real
 send via the reply path, admin-only, no ticket, NOT gated on
 outbound_enabled), `POST mail/outbound` (the go-live master switch —
 jsonb_set on `mail.outbound_enabled`, mirrored by the Automations page
-chip); automations: `POST/PATCH /api/automations/rules` (conditions accept
+chip), and since build 9: `POST/PATCH /api/settings/states` +
+`POST/PATCH /api/settings/priorities` (the Settings editors, wired at last —
+core/system rows refuse renames because the worker resolves 'New'/'Open'/
+'Normal' by label; archive-first, unique conflicts answer 409) and
+`GET /api/settings/tokens` (PAT metadata only — name/created/last-used;
+minting stays operator-side via scripts/create-token.sh); bootstrap
+additionally emits `priorities`, per-state `sid`, and per-agent
+`hasPassword`/`mfa`; ledger's bootstrap emits `groups`/`roles` and real
+tech group memberships (12 keys); automations: `POST/PATCH /api/automations/rules` (conditions accept
 a flat list = all-must-match, or a list of lists = OR groups where each
 inner list ANDs — the builder saves one group flat, so legacy rules are the
 one-group case),
@@ -381,7 +390,7 @@ route-table cross-check. NEW battery member (2026-07-30):
 placeholder-vs-params and INSERT column-vs-VALUES arity across all three
 services (born of STATE ledger row 33; run it on every bundle).
 
-**The 2026-07-30 arc (bugfix-33 → build 8) — all DONE (7e/7f/8 awaiting deploy):**
+**The 2026-07-30 arc (bugfix-33 → build 8b) — all DONE (8b awaiting deploy; first 8 deploy hit migrate exit 3, 8b hardens the migrations):**
 
 * **Mail-duplication bug #33 fixed and confirmed** — the mail_in INSERT's
   dropped `is_auto` placeholder made psycopg3 raise client-side, leaving
@@ -476,7 +485,7 @@ services (born of STATE ledger row 33; run it on every bundle).
 # VM:
 cd ~/docket-ledger
 git restore . && git pull
-sudo docker compose run --rm migrate            # applies through 0020
+sudo docker compose run --rm migrate            # applies through 0025
 sudo docker compose up -d --build desk-api ledger-api mail-worker
 sudo docker compose ps                          # all Up
 ```
@@ -612,14 +621,15 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
 
 0. **CLOSED 2026-07-30: mail-duplication (bug #33) fixed + outbound
    proven and flipped LIVE** — see STATE.md banner + ledger rows 33–36.
-   NOW FIRST IN LINE: the **silent-controls + hydration-completeness
-   sweep** — SIX unmirrored controls found by collision (secrets Save,
-   mailbox outbound checkbox, Graph card, verification channel toggles,
-   thread-post toggle, group Delete) plus one hydration-starvation bug
-   (archived groups/states) — audit every control against its mirror AND
-   every rendered collection against its bootstrap emission, both apps.
-1. **Your verify pass** on this bundle (STATE.md §5 — automations + OIDC
-   walks).
+   **ALSO CLOSED (build 9, same day): the silent-controls +
+   hydration-completeness sweep — superseded by the RESTRUCTURE.** The
+   prototype/adapter architecture that produced the class is gone: every
+   control is one function carrying its own API call, mapIn consumes every
+   bootstrap key, and the rework fixed five live class members on the way
+   out (STATE.md rows 39–43; contract in docs/REWORK-DESIGN.md).
+1. **Your deploy of build 9 + verify pass** (STATE.md §5 — the build-9
+   walks first, then the accumulated ones; console surgery from the
+   build-8 incident comes before everything).
 2. **Your ops list** (§7 above) — snapshot, access policy, off-instance
    secrets/dumps, deploy.sh.
 3. **nginx/TLS go-live (your steps — build 4 shipped everything code-side):**
@@ -649,9 +659,9 @@ dropped by decision** — RBAC lives in Docket’s Directory tab, full stop.
 * **Secrets:** write-only via the UIs/API; the KEK file + `secrets/` +
   `.env` are the only non-reproducible files besides pgdata — back them up
   separately from dumps (a dump without the KEK reveals nothing, by design).
-* **Bug archaeology:** STATE.md §4 holds all 29 production bugs with root
-  cause, fix, and lesson. The meta-lesson has held the whole way: every
-  DB-layer failure was least-privilege refusing an unprovisioned path —
+* **Bug archaeology:** STATE.md §4 holds every production bug (rows 1–43)
+  with root cause, fix, and lesson. The meta-lesson has held the whole way:
+  every DB-layer failure was least-privilege refusing an unprovisioned path —
   never corruption, never a broken invariant.
 
 ---
