@@ -175,9 +175,12 @@ def _ctx(cur, ticket_id):
 
 
 def _vars(tpl, ctx):
+    # first name = first word of the contact's name; same fallback as .name
+    first = ((ctx["contact_name"] or "customer").split() or ["customer"])[0]
     return (tpl
             .replace("#{ticket.number}", str(ctx["id"]))
             .replace("#{ticket.title}", ctx["title"] or "")
+            .replace("#{customer.first}", first)
             .replace("#{customer.name}", ctx["contact_name"] or "customer")
             .replace("#{client.name}", ctx["client_name"] or "")
             .replace("#{agent.name}", ctx["owner_name"] or "the team")

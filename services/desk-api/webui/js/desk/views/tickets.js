@@ -269,6 +269,7 @@ function trigVars(t, tpl){
   return tpl
     .replaceAll('#{ticket.number}', String(t.id))
     .replaceAll('#{ticket.title}', TITLES[t.id]||firstLine(t))
+    .replaceAll('#{customer.first}', ((p.name||'customer').trim().split(/\s+/)[0])||'customer')
     .replaceAll('#{customer.name}', p.name||'customer')
     .replaceAll('#{client.name}', c.name||'')
     .replaceAll('#{agent.name}', o? o.name : state.user.name)

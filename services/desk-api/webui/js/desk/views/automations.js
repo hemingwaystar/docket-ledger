@@ -109,7 +109,7 @@ function viewAutomations(){
           <button class="rowbtn" onclick="deleteTrig('${g.id}')">Delete</button></td>
       </tr>`).join('')}</tbody>
     </table>
-    <div class="mini muted" style="padding:10px 16px 12px">Templates take variables: <span class="tape">#{ticket.number}</span> <span class="tape">#{ticket.title}</span> <span class="tape">#{customer.name}</span> <span class="tape">#{client.name}</span> <span class="tape">#{agent.name}</span> <span class="tape">#{state.label}</span>. Auto-reply emails route through the same outbound resolution as agent replies.</div>
+    <div class="mini muted" style="padding:10px 16px 12px">Templates take variables: <span class="tape">#{ticket.number}</span> <span class="tape">#{ticket.title}</span> <span class="tape">#{customer.first}</span> <span class="tape">#{customer.name}</span> <span class="tape">#{client.name}</span> <span class="tape">#{agent.name}</span> <span class="tape">#{state.label}</span>. Auto-reply emails route through the same outbound resolution as agent replies.</div>
   </div>`;
 }
 function goBoard(gid){ state.qf.group = gid; state.overview='allopen'; go('tickets'); }
@@ -471,7 +471,7 @@ function cannedModal(cid){
   const c0 = cid? CANNED.find(x=>x.id===cid) : {};
   const m = document.getElementById('modal');
   m.innerHTML = `
-    <div class="modal-head"><h3>${cid?'Edit canned response':'Add canned response'}</h3><p>Template variables render per ticket: <span class="tape">#{customer.name}</span> <span class="tape">##{ticket.number}</span> <span class="tape">#{ticket.title}</span> <span class="tape">#{agent.name}</span> <span class="tape">#{client.name}</span></p></div>
+    <div class="modal-head"><h3>${cid?'Edit canned response':'Add canned response'}</h3><p>Template variables render per ticket: <span class="tape">#{customer.first}</span> <span class="tape">#{customer.name}</span> <span class="tape">##{ticket.number}</span> <span class="tape">#{ticket.title}</span> <span class="tape">#{agent.name}</span> <span class="tape">#{client.name}</span></p></div>
     <div class="modal-body">
       <div class="field"><label>Name</label><input type="text" id="cnName" value="${esc(c0.name||'')}"></div>
       <div class="field"><label>Body</label><textarea id="cnBody" rows="6" style="width:100%;font:inherit;font-size:13px">${esc(c0.body||'')}</textarea></div>
