@@ -1,0 +1,8 @@
+# never commit
+secrets/*
+!secrets/README.md
+!secrets/.gitignore
+backups/
+__pycache__/
+*.pyc
+.env
