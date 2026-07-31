@@ -20,6 +20,8 @@ function mapIn(d){
   /* agent rows ride whole — including hasPassword/mfa, which the Directory's
      credential badges render */
   AGENTS.length=0; d.agents.forEach(a=>AGENTS.push(a));
+  /* client rows ride whole — including each nested contact's vip flag
+     (0028), which the ★ VIP chips and the trigger builder read */
   CLIENTS.length=0; d.clients.forEach(c=>CLIENTS.push(c));
   ATYPES.length=0; d.atypes.forEach(a=>ATYPES.push(a));
   STATES.length=0;
@@ -39,9 +41,17 @@ function mapIn(d){
     PRIOS.length=0;
     /* the UI keys priorities by rank (tickets carry the rank); the server
        uuid rides along as pid for the Settings editor's PATCH */
-    d.priorities.forEach(p=>PRIOS.push({ id:p.rank, pid:p.id, label:p.label,
-      rank:p.rank, cls:'p'+Math.min(4,Math.max(1,Number(p.rank)||1)),
-      active:p.active!==false }));
+    d.priorities.forEach(p=>{
+      /* color overlay (0028), same shape as states: a stored palette token
+         OR #rrggbb hex wins; NULL falls through to the shipped rank-derived
+         flag class unchanged. Tags render via prioTagAttrs — one seam. */
+      const hex=stHexOk(p.color)? p.color.toLowerCase() : null;
+      const tok=!hex && PRIO_PALETTE.some(x=>x.tok===p.color)? p.color : null;
+      const row={ id:p.rank, pid:p.id, label:p.label,
+        rank:p.rank, cls:tok || 'p'+Math.min(4,Math.max(1,Number(p.rank)||1)),
+        active:p.active!==false };
+      if(hex) row.hex=hex;
+      PRIOS.push(row); });
   }
   state.tickets.length=0;
   d.tickets.forEach(t=>{

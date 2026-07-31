@@ -92,6 +92,23 @@ git (`docs/STATE.md`) so it travels with the code.
 > palette), 44/44 .py compile, palette three-way equality.
 > Design: docs/BUILD11-DESIGN.md.
 >
+> ⭐ **BUILD 12 (2026-07-31): priority colors, VIP contacts, periods page
+> redesign.** (1) The state-decor swatches (pills + RGB square + ↺) land
+> on the Priorities & SLA rows — **MIGRATION 0028** `priorities.color`
+> (p1..p4 tokens or #rrggbb; one prioTagAttrs seam recolors the flag
+> everywhere). (2) `contacts.vip` (0028 too): checkbox in the contact
+> add/edit modals (an EXPLICIT boolean — unchecking clears it, row-38
+> lesson), ★ VIP chips on the props-panel contact line + client contact
+> rows + the contact picker, and a `vip` trigger condition ("yes"/"no",
+> is / is not) wired through the builder AND the worker engine with one
+> vocabulary. (3) Ledger's Billing Periods is now a searchable client
+> list — current-period status + billable at a glance, rows expand to
+> the full panel with the UNCHANGED approve/export/preview actions and a
+> searchable period history; the sentinel intake bucket rides dimmed at
+> the bottom only when it holds time. Battery green (browser probes:
+> prio hex/token/reset flow, vip payload true/false, sentinel row,
+> timezone-proof key round-trip; 44/44 .py). Design: BUILD12-DESIGN.md.
+>
 > **Still open, in order (details in §5):**
 > 1. ~~USER: verify@ pre-flight~~ **DONE — confirmed 2026-07-30 evening.**
 > 2. ~~USER: build-8 console surgery~~ **DONE 2026-07-31** — see the
@@ -450,6 +467,26 @@ resolves to (explicit override → ticket contact → last inbound sender).
     Verified with in-engine probes (prune, clients predicate, color
     reset, palette) + the standing battery. Design: BUILD11-DESIGN.md.
 
+20. **Build 12 (2026-07-31) — priority colors, VIP, periods redesign.**
+    Migration 0028 (`priorities.color` + `contacts.vip`). The decor
+    pattern generalized: PRIO_PALETTE (p1..p4) + hex through one
+    prioTagAttrs seam, swatches on the Priorities & SLA rows. VIP:
+    explicit-boolean checkbox in the contact modals (unchecking clears —
+    the row-38 seam done right), ★ chips at every contact render site,
+    and a `vip` trigger condition with the vocabulary pinned in the
+    builder AND the worker docstring. Ledger's Billing Periods became a
+    searchable expandable client list; approve/export/preview relocated
+    byte-equivalent (verified by diff); the sentinel intake bucket stays
+    reachable (dimmed, only-when-holding-time) — a reachability
+    regression the adversarial pass caught before ship. Process note:
+    one workflow agent died mid-write (connection drop); the two
+    verifiers precisely inventoried the missing half (priority swatch UI,
+    entire VIP frontend) against the completed read-path, and the fixes
+    were applied by hand from their findings — the
+    cross-verification design carried a partial failure to a clean ship.
+    Battery: browser probes + 44/44 .py + timezone-proof key round-trip.
+    Design: BUILD12-DESIGN.md.
+
 ---
 
 ## 4. Live-debug ledger — every production bug, cause → fix → lesson
@@ -561,6 +598,23 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **BUILD 12 — migrate applies 0028** (`apply
+      0028_prio_color_contact_vip.sql`, no ERROR lines).
+- [ ] **Build 12 — priority colors:** recolor High via a pill and Urgent
+      via the RGB square → flags change in the queue, ticket view, props
+      and mailbox default tags, and SURVIVE refresh; ↺ returns the
+      tier-order default.
+- [ ] **Build 12 — VIP:** check VIP on a contact → ★ chips appear on the
+      client row, the props contact line and the picker; UNCHECK and
+      refresh — it stays off (explicit-boolean seam); build a trigger
+      "on create, only if VIP is yes → set priority Urgent", send a test
+      mail from that contact → priority flips and Runs increments; a
+      non-VIP sender does not fire it.
+- [ ] **Build 12 — periods page:** the client list renders with search;
+      a row expands to current-period actions (approve/export/preview
+      behave exactly as before — same confirms, same toasts) + history
+      with its own search; the intake bucket appears dimmed at the
+      bottom ONLY when it holds unassigned time.
 - [ ] **BUILD 11 — migrate applies 0027** (`apply 0027_state_decor.sql`,
       no ERROR lines).
 - [ ] **Build 11 — advanced filters:** queue bar shows state + tag +

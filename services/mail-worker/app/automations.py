@@ -10,13 +10,15 @@ vocabulary at this boundary, translating to database ids internally):
 
   trigger    event: create|followup|state|priority|owner (+event_value =
              prototype state id for state triggers)
-             conditions: [{field: state|priority|group|client|tags|from|mailbox,
+             conditions: [{field: state|priority|group|client|tags|from|
+                                  mailbox|vip,
                            op: is|is not|contains|not contains,
                            value: "a, b, c" (any-of)}]
              — values compare against LABELS/NAMES (state label, priority
              label, group name, client name), just like trigCondMatch:
              is/contains hit on ANY comma-separated value, is not/not
              contains only when NONE do; a lone value is a one-element any-of.
+             vip compares the ticket contact's VIP flag as "yes"/"no".
              actions:    [{type: email|note|tag|state|prio|group|autoassign,
                            value}] — state action value is a prototype state
              id; prio is a rank number; group is a group uuid.
@@ -146,6 +148,7 @@ def _ctx(cur, ticket_id):
                s.label AS state_label, p.rank AS prio_rank, p.label AS prio_label,
                g.name AS group_name, c.name AS client_name,
                co.name AS contact_name, co.email AS contact_email,
+               co.vip AS contact_vip,
                ag.name AS owner_name,
                COALESCE((SELECT array_agg(tag ORDER BY tag)
                           FROM desk.ticket_tags tt WHERE tt.ticket_id = t.id), '{}') AS tags,
@@ -168,12 +171,13 @@ def _ctx(cur, ticket_id):
         return None
     cols = ("id", "title", "client_id", "group_id", "owner_id", "contact_id",
             "state_label", "prio_rank", "prio_label", "group_name", "client_name",
-            "contact_name", "contact_email", "owner_name", "tags", "inbound_to",
-            "last_sender")
+            "contact_name", "contact_email", "contact_vip", "owner_name", "tags",
+            "inbound_to", "last_sender")
     c = dict(zip(cols, row))
     c["proto_state"] = PROTO_STATE.get((c["state_label"] or "").lower(),
                                        (c["state_label"] or "").lower().replace(" ", "-"))
     c["tags"] = list(c["tags"] or [])
+    c["contact_vip"] = bool(c["contact_vip"])   # no contact → False
     return c
 
 
@@ -279,6 +283,7 @@ def _trig_cond(cond, ctx, meta):
         "tags": ", ".join(ctx["tags"]),
         "from": meta.get("from", "") or "",
         "mailbox": meta.get("to") or ctx["inbound_to"] or "",
+        "vip": "yes" if ctx["contact_vip"] else "no",
     }.get(cond.get("field"), "") or ""
     vals = _anyof(cond.get("value"))
     h = str(hay).lower()

@@ -367,3 +367,6 @@ select:disabled{opacity:.55;cursor:not-allowed}
 /* hex-colored state chips (11b): stChipAttrs sets the tint + text color
    inline; the dot simply follows the text color */
 .chip.hexed .cdot{background:currentColor}
+/* hex-colored priority flags (0028): prioTagAttrs sets the text color
+   inline; the flag simply follows the text color */
+.prio.hexed .pflag{background:currentColor}

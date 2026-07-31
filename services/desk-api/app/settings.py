@@ -403,13 +403,17 @@ def _uuid_or_404(value: str, what: str) -> str:
 # Since 11b a free "#rrggbb" hex is also accepted (the UI's RGB square);
 # the client renders it as an inline tint via the same one chip seam.
 ST_PALETTE = ("st-new", "st-open", "st-pending", "st-hold", "st-solved", "st-closed")
+# The priority-flag palette — desk.css's .prio tier family (p1..p4), same
+# rules: pinned against webui/js/desk/state.js PRIO_PALETTE (change one,
+# change the other); the same #rrggbb escape hatch, same regex, one check.
+PRIO_PALETTE = ("p1", "p2", "p3", "p4")
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
-def _check_color(color: str | None):
-    if color is not None and color not in ST_PALETTE and not _HEX_COLOR.match(color):
+def _check_color(color: str | None, palette=ST_PALETTE):
+    if color is not None and color not in palette and not _HEX_COLOR.match(color):
         raise HTTPException(422, "Unknown color — a palette token "
-                                 f"({', '.join(ST_PALETTE)}) or #rrggbb")
+                                 f"({', '.join(palette)}) or #rrggbb")
 
 
 class NewState(BaseModel):
@@ -499,16 +503,19 @@ def patch_state(state_id: str, body: PatchState, request: Request):
 class NewPriority(BaseModel):
     label: str
     rank: int
+    color: str | None = None           # PRIO_PALETTE token or #rrggbb; None = rank-derived flag
 
 
 class PatchPriority(BaseModel):
     label: str | None = None
     rank: int | None = None
     active: bool | None = None         # false = archived, never deleted
+    color: str | None = None           # omitted = unchanged, explicit null = reset
 
 
 @router.post("/priorities", status_code=201)
 def create_priority(body: NewPriority, request: Request):
+    _check_color(body.color, PRIO_PALETTE)
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "manage_settings")
@@ -517,18 +524,19 @@ def create_priority(body: NewPriority, request: Request):
             # but NOT NULL — filled with the seed's 'Normal' values, never surfaced
             try:
                 cur.execute("""INSERT INTO desk.priorities
-                                 (label, rank, sla_first_response_hours, sla_resolution_hours)
-                               VALUES (%s, %s, 8, 48) RETURNING id, active""",
-                            (body.label, body.rank))
+                                 (label, rank, color, sla_first_response_hours, sla_resolution_hours)
+                               VALUES (%s, %s, %s, 8, 48) RETURNING id, active""",
+                            (body.label, body.rank, body.color))
             except pg_errors.UniqueViolation as e:
                 if (e.diag.constraint_name or "").endswith("rank_key"):
                     raise HTTPException(409, f"Rank {body.rank} is taken — ranks are unique")
                 raise HTTPException(409, f"A priority named “{body.label}” already exists")
             (pid, active) = cur.fetchone()
         auth.audit(conn, "desk", "Priority added", f"priority:{pid}",
-                   f"{body.label} · rank {body.rank}")
+                   f"{body.label} · rank {body.rank}"
+                   + (" · color" if body.color is not None else ""))
         return {"id": str(pid), "label": body.label, "rank": body.rank,
-                "active": active}
+                "active": active, "color": body.color}
 
 
 @router.patch("/priorities/{priority_id}")
@@ -538,12 +546,16 @@ def patch_priority(priority_id: str, body: PatchPriority, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "manage_settings")
         with conn.cursor() as cur:
-            cur.execute("""SELECT label, rank, active FROM desk.priorities
+            cur.execute("""SELECT label, rank, active, color FROM desk.priorities
                             WHERE id = %s""", (priority_id,))
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(404, "No such priority")
-            cols = {k: v for k, v in body.model_dump().items() if v is not None}
+            # label/rank/active: null and omitted both mean "unchanged";
+            # color: omitted = unchanged, explicit null = reset to default
+            sent = body.model_dump(exclude_unset=True)
+            cols = {k: v for k, v in sent.items() if v is not None or k == "color"}
+            _check_color(cols.get("color"), PRIO_PALETTE)
             # 'Normal' is the ingestion fallback: the worker files unrouted mail
             # under it by label (worker.py) — it keeps its name
             if row[0] == "Normal" and cols.get("label") not in (None, "Normal"):
@@ -552,7 +564,7 @@ def patch_priority(priority_id: str, body: PatchPriority, request: Request):
                 sets = ", ".join(f"{k} = %s" for k in cols)
                 try:
                     cur.execute(f"""UPDATE desk.priorities SET {sets} WHERE id = %s
-                                    RETURNING label, rank, active""",
+                                    RETURNING label, rank, active, color""",
                                 (*cols.values(), priority_id))
                 except pg_errors.UniqueViolation as e:
                     if (e.diag.constraint_name or "").endswith("rank_key"):
@@ -561,8 +573,10 @@ def patch_priority(priority_id: str, body: PatchPriority, request: Request):
                 row = cur.fetchone()
         if cols:
             auth.audit(conn, "desk", "Priority updated", f"priority:{priority_id}",
-                       f"{row[0]} · " + ", ".join(cols))
-        return {"id": priority_id, "label": row[0], "rank": row[1], "active": row[2]}
+                       f"{row[0]} · " + ", ".join(k if v is not None else f"{k} reset"
+                                                  for k, v in cols.items()))
+        return {"id": priority_id, "label": row[0], "rank": row[1], "active": row[2],
+                "color": row[3]}
 
 
 class SendAs(BaseModel):

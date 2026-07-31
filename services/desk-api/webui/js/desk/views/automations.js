@@ -366,6 +366,7 @@ function trigDrawConds(){
       group:    aGROUPS().map(g=>g.name),
       client:   CLIENTS.filter(cl=>cl.status!=='archived').map(cl=>cl.name),
       mailbox:  MAILBOXES.map(m=>m.addr),
+      vip:      ['yes','no'],          /* the contact's VIP flag (0028) — worker compares "yes"/"no" */
     }[c.field]);
   /* picker fields seed one value BEFORE drawing, so what saves is what shows
      (a lone value is a one-element any-of) */
@@ -392,7 +393,7 @@ function trigDrawConds(){
   const rowHtml = (c,gi,i)=>`
     <div class="grid g-2" style="gap:12px;margin-bottom:8px">
       <div class="grid g-2" style="gap:12px">
-        <select onchange="_trigDraft.condGroups[${gi}][${i}].field=this.value;_trigDraft.condGroups[${gi}][${i}].value='';trigDrawConds()">${[['state','State'],['priority','Priority'],['group','Board / group'],['client','Client'],['tags','Tags'],['from','From address'],['mailbox','Arrival mailbox']].map(([v,l])=>`<option value="${v}" ${c.field===v?'selected':''}>${l}</option>`).join('')}</select>
+        <select onchange="_trigDraft.condGroups[${gi}][${i}].field=this.value;_trigDraft.condGroups[${gi}][${i}].value='';trigDrawConds()">${[['state','State'],['priority','Priority'],['group','Board / group'],['client','Client'],['tags','Tags'],['from','From address'],['mailbox','Arrival mailbox'],['vip','VIP contact']].map(([v,l])=>`<option value="${v}" ${c.field===v?'selected':''}>${l}</option>`).join('')}</select>
         <select onchange="_trigDraft.condGroups[${gi}][${i}].op=this.value">${['is','is not','contains','not contains'].map(o=>`<option ${c.op===o?'selected':''}>${o}</option>`).join('')}</select>
       </div>
       <div style="display:flex;gap:8px">${valCtl(c,gi,i)}

@@ -55,6 +55,7 @@ function viewClient(){
       ${avatarOf({name:p.name,initials:p.name.split(' ').map(w=>w[0]).slice(0,2).join('')})}
       <div style="min-width:0;flex:1">
         <div style="font-size:13px;font-weight:500">${esc(p.name)} <span class="mini muted">· ${esc(p.title)}${p.dept?` · ${esc(p.dept)}`:''}</span>
+          ${p.vip?`<span class="chip st-pending" style="margin-left:6px" title="VIP — automations can key on this"><span class="cdot"></span>★ VIP</span>`:''}
           ${off?`<span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Inactive</span>`:''}
           ${p.pref?`<span class="mini muted" style="margin-left:6px">prefers ${p.pref==='sms'?'SMS':p.pref}</span>`:''}</div>
         <div class="mini muted" style="margin-top:2px">${esc(p.email)}</div>
@@ -126,7 +127,8 @@ function contactFields(p){ p=p||{};
       <div class="field"><label>Fax</label><input type="text" id="acFax" value="${esc(p.fax||'')}" placeholder="if they still have one"></div>
       <div class="field"><label>Email</label><input type="text" id="acEmail" value="${esc(p.email||'')}"></div>
     </div>
-    <div class="field"><label>Notes</label><textarea id="acNotes" rows="2" placeholder="Anything the next tech should know — hours, how to reach them, quirks">${esc(p.notes||'')}</textarea></div>`;
+    <div class="field"><label>Notes</label><textarea id="acNotes" rows="2" placeholder="Anything the next tech should know — hours, how to reach them, quirks">${esc(p.notes||'')}</textarea></div>
+    <label class="mini" style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" id="acVip" ${p.vip?'checked':''} style="width:auto"> ★ VIP — surfaces on tickets and can drive automations ("if VIP is yes…")</label>`;
 }
 function readContactFields(c, p){ p=p||{};
   const name = document.getElementById('acName').value.trim();
@@ -139,14 +141,18 @@ function readContactFields(c, p){ p=p||{};
     fax:document.getElementById('acFax').value.trim(),
     email:document.getElementById('acEmail').value.trim() || (name?name.toLowerCase().split(/\s+/)[0]+'@'+c.domain:''),
     notes:document.getElementById('acNotes').value.trim(),
+    vip:(document.getElementById('acVip')||{}).checked===true,
   });
 }
 /* the server's contact payload — raw field values, read before the modal
    closes (defaults like title 'Contact' are a local display convenience) */
 function contactPayload(){
   const g = id => { const el=document.getElementById(id); return el?el.value.trim():''; };
+  /* vip is an EXPLICIT boolean — unchecking must clear it server-side, so
+     the key is always present, never omitted (row 38's field-list lesson) */
   return { name:g('acName'), email:g('acEmail'), title:g('acTitle'),
-           department:g('acDept'), phone:g('acPhone'), mobile:g('acMobile') };
+           department:g('acDept'), phone:g('acPhone'), mobile:g('acMobile'),
+           vip:(document.getElementById('acVip')||{}).checked===true };
 }
 function saveContact(clientId, fromTicket){
   const c = client(clientId);

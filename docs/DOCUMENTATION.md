@@ -174,6 +174,7 @@ Adapter conventions (each one paid for by a numbered bug):
 | 0025 | Ticket links: `desk.ticket_links` (kind related/child, void-not-delete, one live parent per child, related pair-unique) + `ticket_states.is_system` + the seeded system state 'Closed: child ticket' (done-kind) that makes parent-close cascades automation-silent |
 | 0026 | Build 10: `desk.group_sendas` — per-board outbound sender override (mailbox_id NULL = follow fed-by; clearing is an UPDATE, no DELETE) + the explicit mail_worker SELECT grant (0005's desk defaults cover desk_api only) |
 | 0027 | Build 11: `desk.ticket_states.color` (palette token, NULL = shipped decor) + `.description` — per-state chip color and subtitle, editable in Settings on core and custom states alike |
+| 0028 | Build 12: `desk.priorities.color` (p1..p4 token or #rrggbb, NULL = tier-order default) + `shared.contacts.vip` (drives ★ chips and the trigger engine's `vip` condition) |
 
 Migrations are append-only, applied exactly once (`public.schema_migrations`),
 run via the `migrate` compose service.
@@ -213,7 +214,10 @@ from the config listing), `PATCH /api/settings/groups/{group_id}/sendas`
 defaults, emitted in bootstrap as `deskUi` alongside me.prefs and the
 override-aware `groupSendas`); build 11 extends states POST/PATCH with
 `color` (six-token palette, 422 on unknown, explicit null = reset) and
-`description`, and OverviewDef with `clients`; automations: `POST/PATCH /api/automations/rules` (conditions accept
+`description`, and OverviewDef with `clients`; build 12 extends priorities
+POST/PATCH with `color` (p1..p4 or #rrggbb) and contacts POST/PATCH with
+`vip` (explicit boolean), and the trigger engine's condition vocabulary
+with field `vip` ("yes"/"no"); automations: `POST/PATCH /api/automations/rules` (conditions accept
 a flat list = all-must-match, or a list of lists = OR groups where each
 inner list ANDs — the builder saves one group flat, so legacy rules are the
 one-group case),

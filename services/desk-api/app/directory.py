@@ -258,6 +258,7 @@ class NewContact(BaseModel):
     department: str = ""
     phone: str = ""
     mobile: str = ""
+    vip: bool = False                  # ★ chip + trigger condition (0028)
 
 
 @router.post("/contacts", status_code=201)
@@ -268,13 +269,14 @@ def create_contact(body: NewContact, request: Request):
         with conn.cursor() as cur:
             cid = helpers.client_id(cur, body.client)
             cur.execute("""INSERT INTO shared.contacts
-                             (client_id, name, email, title, department, phone, mobile)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                             (client_id, name, email, title, department, phone, mobile, vip)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                         (cid, body.name, body.email, body.title, body.department,
-                         body.phone, body.mobile))
+                         body.phone, body.mobile, body.vip))
             (pid,) = cur.fetchone()
         auth.audit(conn, "desk", "Contact added", f"contact:{pid}",
-                   f"{body.name} <{body.email}> → {body.client}")
+                   f"{body.name} <{body.email}> → {body.client}"
+                   + (" · VIP" if body.vip else ""))
         return {"id": str(pid)}
 
 
@@ -286,6 +288,7 @@ class PatchContact(BaseModel):
     phone: str | None = None
     mobile: str | None = None
     active: bool | None = None         # people leave — they stay on old tickets
+    vip: bool | None = None            # omitted = unchanged; triggers key on it (0028)
 
 
 @router.patch("/contacts/{contact_id}")
@@ -304,7 +307,9 @@ def patch_contact(contact_id: str, body: PatchContact, request: Request):
             if row is None:
                 raise HTTPException(404, "No such contact")
         auth.audit(conn, "desk", "Contact updated", f"contact:{contact_id}",
-                   f"{row[0]} · " + ", ".join(cols))
+                   f"{row[0]} · " + ", ".join(
+                       ("now VIP" if v else "no longer VIP") if k == "vip" else k
+                       for k, v in cols.items()))
         return {"ok": True}
 
 

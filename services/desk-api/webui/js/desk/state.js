@@ -6,7 +6,7 @@
    GROUP_SENDAS/GROUP_SENDAS_OVR/RULES/TRIGGERS/CANNED/TITLES/AGENT_SIGS/
    VCFG/AUTH_CFG/GRAPH_AUTH/MAILCFG/SECRETS (all start EMPTY — mapIn() in
    api.js is the ONE place bootstrap data enters them) · static catalogs
-   (ST_DECOR, ST_PALETTE, DEFAULT_OVERVIEWS, TRIG_EVENTS, PERM_CATALOG/ALL_PERMS/PRESETS,
+   (ST_DECOR, ST_PALETTE, PRIO_PALETTE, DEFAULT_OVERVIEWS, TRIG_EVENTS, PERM_CATALOG/ALL_PERMS/PRESETS,
    PROJ_TEMPLATES, ENTRA_COLMAP, NAV, PAGES) · can()/canView() ·
    ticketVisible/scoped/tk/isDone · effectiveOverviews/shownDashboardStates/
    savePrefs · isBizTime/addBizHours/slaInfo · log/notify/signOut ·
@@ -101,6 +101,18 @@ const ST_PALETTE = [
   { tok:'st-solved',  label:'Green' },
   { tok:'st-closed',  label:'Gray'  },
 ];
+/* per-priority color vocabulary (0028): same contract as ST_PALETTE — each
+   token IS a tier flag style css/desk.css already ships (the .prio p1..p4
+   family; no new colors invented), labelled for the Settings swatches.
+   settings.py validates stored colors against this SAME literal token list
+   (bug #22 class: both sides pinned to one vocabulary — a comment there
+   points back here; change one, change both). */
+const PRIO_PALETTE = [
+  { tok:'p1', label:'Low gray'     },
+  { tok:'p2', label:'Normal slate' },
+  { tok:'p3', label:'High brass'   },
+  { tok:'p4', label:'Urgent red'   },
+];
 /* the shipped queue tabs, expressed as OverviewDefs — the pinned filter
    vocabulary both sides speak (design §Storage): id/label/scope +
    optional stateKinds/states/groups/clients/prios/tags/recentDays; an
@@ -189,6 +201,14 @@ function stDarken(hex, f){
 function stChipAttrs(s){
   if(s && s.hex) return `class="chip hexed" style="background:${s.hex}1f;color:${stDarken(s.hex,.68)}"`;
   return `class="chip ${(s&&s.cls)||'st-hold'}"`;
+}
+/* priority-tag presentation, ONE seam (0028), mirroring stChipAttrs: a stored
+   #rrggbb hex renders an inline text color (flag via currentColor —
+   .prio.hexed in desk.css; darkened like state chips); a palette token /
+   default renders its tier class. Every priority tag goes through this. */
+function prioTagAttrs(p){
+  if(p && p.hex) return `class="prio hexed" style="color:${stDarken(p.hex,.68)}"`;
+  return `class="prio ${(p&&p.cls)||'p2'}"`;
 }
 const grp = id => GROUPS.find(g=>g.id===id);
 const agent = id => AGENTS.find(a=>a.id===id);

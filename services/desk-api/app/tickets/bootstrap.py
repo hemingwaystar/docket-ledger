@@ -60,7 +60,7 @@ def bootstrap(request: Request, limit: int = 500):
                         "city", "st", "zip", "tz", "since", "notes")},
                     "contacts": []}
             cur.execute("""SELECT id, client_id, name, email, title, department, phone,
-                             mobile, active
+                             mobile, active, vip
                              FROM shared.contacts ORDER BY name""")
             for r in cur.fetchall():
                 c = clients.get(str(r["client_id"]))
@@ -68,7 +68,8 @@ def bootstrap(request: Request, limit: int = 500):
                     c["contacts"].append({"id": str(r["id"]), "name": r["name"],
                                           "email": r["email"], "title": r["title"],
                                           "dept": r["department"], "phone": r["phone"],
-                                          "mobile": r["mobile"], "active": r["active"]})
+                                          "mobile": r["mobile"], "active": r["active"],
+                                          "vip": r["vip"]})
             out["clients"] = list(clients.values())
             cur.execute("SELECT id, name, billable, active FROM ledger.activity_types ORDER BY is_sentinel DESC, name")
             # archived types ride along (active:false) so existing time chips
@@ -90,11 +91,14 @@ def bootstrap(request: Request, limit: int = 500):
                               "system": r["is_system"],
                               "color": r["color"],
                               "description": r["description"]} for r in cur.fetchall()]
-            cur.execute("SELECT id, label, rank, active FROM desk.priorities ORDER BY rank")
+            cur.execute("SELECT id, label, rank, active, color FROM desk.priorities ORDER BY rank")
             # inactive rows ride along too (same rule as atypes) so old
-            # tickets still resolve a label and the editor can restore them
+            # tickets still resolve a label and the editor can restore them;
+            # color is the raw column — NULL rides through as null and mapIn
+            # falls back to the shipped rank-derived flag
             out["priorities"] = [{"id": str(r["id"]), "label": r["label"],
-                                  "rank": r["rank"], "active": r["active"]}
+                                  "rank": r["rank"], "active": r["active"],
+                                  "color": r["color"]}
                                  for r in cur.fetchall()]
             cur.execute("""SELECT id, name, body FROM desk.canned_responses
                             WHERE active ORDER BY name""")

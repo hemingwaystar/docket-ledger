@@ -2,6 +2,12 @@
    Ledger — views/periods.js
    Billing Periods (viewPeriods) + Odoo Export (viewExport) and their
    actions: approve & lock a period, export a period, payload preview.
+   viewPeriods is a searchable client list (state.pf={q,open,hq}): one row
+   per non-sentinel client — archived clients only when they have period
+   history, dimmed — showing the CURRENT period's status and billable
+   total; a row expands to the current period's detail + actions and that
+   client's historical periods (server PERIODS rows ∪ entry-derived spans,
+   newest first, searched by state.pf.hq against label/status).
    Endpoints called here:
      POST /api/periods/{id}/approve        — approvePeriod (fires in the
                                              modal-confirm callback)
@@ -10,60 +16,164 @@
                                              state flips from the response)
    previewPayload builds its preview locally from state — no server call.
    Invariants: period server ids come from PERIODS (api.js); no API call
-   fires unless the local action actually changed state.
+   fires unless the local action actually changed state. Period keys stay
+   UI-shaped (M/W prefixes) everywhere in this file — srvPeriodKey
+   translates only at the fetch boundary inside the actions (rows 39/40).
    ========================================================================== */
 
 /* ===================== BILLING PERIODS ===================== */
+function pfState(){ return state.pf || (state.pf={q:'',open:{},hq:''}); }
+function pfSetQ(v){ pfState().q=v; render(); }
+function pfSetHq(v){ pfState().hq=v; render(); }
+function pfToggle(cid){ const pf=pfState(); pf.open[cid]=!pf.open[cid]; render(); }
+
+/* a period key carries its own cycle (M/W/B prefix) and date, so a history
+   row can exist without entries — and a client's cycle change never
+   relabels the periods that were cut under the old cycle */
+const PF_CYCLE={M:'monthly',W:'weekly',B:'biweekly'};
+function periodFromKey(pk){
+  /* noon, not midnight: key dates come from toISOString() on local starts,
+     so a midnight parse can drift a day east of UTC — noon can't */
+  return periodFor(PF_CYCLE[pk[0]]||'monthly', (pk[0]==='M'?pk.slice(1)+'-01':pk.slice(1))+'T12:00:00');
+}
+/* every past period this client has had: the server's PERIODS rows arrive
+   UI-keyed in state.periods (mapIn translates once, rows 39/40), and
+   entry-derived spans cover periods the server never materialized. The
+   ORIGINAL key rides along — lookups and actions use it; the derived
+   period object is display-only (label/span). */
+function pfHistory(c, curKey){
+  const keys={};
+  Object.keys(state.periods).forEach(k=>{ const [cid,pk]=k.split('|'); if(cid===c.id) keys[pk]=1; });
+  state.entries.forEach(e=>{ if(e.clientId===c.id) keys[entryPeriod(e).key]=1; });
+  delete keys[curKey];
+  return Object.keys(keys).map(pk=>({pk,per:periodFromKey(pk)})).sort((a,b)=>b.per.start-a.per.start);
+}
+function perChip(ps){
+  return ps.status==='exported'
+    ? `<span class="chip exported"><span class="cdot"></span>Approved · exported</span>`
+    : ps.status==='approved'
+    ? `<span class="chip approved"><span class="cdot"></span>Approved · locked</span>`
+    : `<span class="chip pending"><span class="cdot"></span>Open</span>`;
+}
+/* one period's entry math — the same tallies the per-period cards ran */
+function pfTally(clientId, pk){
+  const es=state.entries.filter(e=>e.clientId===clientId && entryPeriod(e).key===pk);
+  let h=0,a=0,unclass=0,voided=0,submitted=0,approved=0;
+  es.forEach(e=>{const p=priced(e); if(e.status==='void'){voided++;return;} h+=p.h; a+=p.amount; if(p.unclassified)unclass++; if(e.submitted||isLocked(e))submitted++; if(e.tsApproved||isLocked(e))approved++;});
+  const flat=projFlatTotal(clientId,pk); a+=flat;
+  return {h,a,unclass,voided,submitted,approved,flat,live:es.length-voided};
+}
+/* compact per-period actions for history rows — the SAME wired functions
+   (approvePeriod / runExport / previewPayload); their guards decide */
+function pfActions(clientId, pk, ps, t){
+  const a = `'${jsq(clientId)}','${jsq(pk)}'`;
+  if(ps.status==='open'){
+    if(t.live===0) return '<span class="muted">—</span>';
+    return t.unclass>0
+      ? `<button class="btn sm" disabled title="Classify all entries first">${icon(IC.lock)}Approve &amp; lock</button> <span class="mini" style="color:var(--warn)">${t.unclass} unclassified</span>`
+      : `<button class="btn sm seal" onclick="approvePeriod(${a})">${icon(IC.seal)}Approve &amp; lock</button>`;
+  }
+  if(ps.status==='approved')
+    return `<button class="btn sm primary" onclick="runExport(${a})">${icon(IC.export)}Export to Odoo</button> <button class="btn sm" onclick="previewPayload(${a})">Preview payload</button>`;
+  return `<button class="btn sm" onclick="previewPayload(${a})">View payload</button>`;
+}
+
 function viewPeriods(){
-  // build the set of (client, period) buckets that have entries
-  const buckets={};
-  state.entries.forEach(e=>{
-    const per=entryPeriod(e); const k=e.clientId+'|'+per.key;
-    if(!buckets[k]) buckets[k]={clientId:e.clientId,per,es:[]};
-    buckets[k].es.push(e);
+  const pf=pfState();
+  const q=pf.q.trim().toLowerCase(), hq=pf.hq.trim().toLowerCase();
+  let archHidden=0;
+  const rows=[];
+  state.clients.filter(c=>!c.sentinel).forEach(c=>{
+    const cur=periodFor(c.cycle,NOW);
+    const hist=pfHistory(c,cur.key);
+    const archived=!!(c.archived||c.archivedInDocket);
+    if(archived && hist.length===0){ archHidden++; return; }   /* archived clients earn a row only through history */
+    if(q && !c.name.toLowerCase().includes(q)) return;
+    rows.push({c,cur,hist,archived});
   });
-  const list=Object.values(buckets).sort((a,b)=> b.per.start-a.per.start || client(a.clientId).name.localeCompare(client(b.clientId).name));
-  const cards=list.map(b=>{
-    const c=client(b.clientId), ps=periodState(b.clientId,b.per.key);
-    let h=0,a=0,unclass=0,voided=0,submitted=0,approved=0;
-    b.es.forEach(e=>{const p=priced(e); if(e.status==='void'){voided++;return;} h+=p.h; a+=p.amount; if(p.unclassified)unclass++; if(e.submitted||isLocked(e))submitted++; if(e.tsApproved||isLocked(e))approved++;});
-    const flatFees = projFlatTotal(b.clientId, b.per.key); a += flatFees;
-    const live=b.es.length-voided;
-    const open=ps.status==='open';
-    const status = ps.status==='exported'
-      ? `<span class="chip exported"><span class="cdot"></span>Approved · exported</span>`
-      : ps.status==='approved'
-      ? `<span class="chip approved"><span class="cdot"></span>Approved · locked</span>`
-      : `<span class="chip pending"><span class="cdot"></span>Open</span>`;
+  /* the sentinel intake bucket rides at the BOTTOM, dimmed, only when it
+     actually holds time — its periods must stay approvable (they were
+     reachable on the old per-card page), but the row reads as a to-do:
+     reassign that time to a real client, don't bill the bucket */
+  state.clients.filter(c=>c.sentinel).forEach(c=>{
+    if(!state.entries.some(e=>e.clientId===c.id && e.status!=='void')) return;
+    if(q && !c.name.toLowerCase().includes(q)) return;
+    const cur=periodFor(c.cycle||'monthly',NOW);
+    rows.push({c,cur,hist:pfHistory(c,cur.key),archived:false,sentinel:true});
+  });
+  const body=rows.map(({c,cur,hist,archived,sentinel})=>{
+    const ps=periodState(c.id,cur.key), t=pfTally(c.id,cur.key);
+    const open=ps.status==='open', expanded=!!pf.open[c.id];
+    const main=`<tr class="${archived||sentinel?'pf-dim':''}">
+      <td><div class="cell-title">${esc(c.name)}${archived?' <span class="chip void slim"><span class="cdot"></span>archived in Docket</span>':''}${sentinel?' <span class="chip void slim" title="unassigned intake — reassign this time to a real client rather than billing the bucket"><span class="cdot"></span>intake bucket</span>':''}</div>
+        <div class="cell-meta" style="text-transform:capitalize">${c.cycle} · ${cur.label}</div></td>
+      <td>${perChip(ps)}</td>
+      <td class="num">${t.live} · ${fmtHours(t.h)} h</td>
+      <td class="num" style="font-weight:600">${fmtMoney(t.a)}</td>
+      <td class="right"><button class="rowbtn" onclick="pfToggle('${jsq(c.id)}')">${expanded?'Hide':'Open'}</button></td>
+    </tr>`;
+    if(!expanded) return main;
+
+    /* current-period actions — same guards and copy as always */
     let action;
+    const ca = `'${jsq(c.id)}','${jsq(cur.key)}'`;
     if(open){
-      action = unclass>0
-        ? `<button class="btn" disabled title="Classify all entries first">${icon(IC.lock)}Approve &amp; lock</button><div class="mini" style="color:var(--warn);margin-top:6px">${unclass} unclassified — classify first</div>`
-        : `<button class="btn seal" onclick="approvePeriod('${b.clientId}','${b.per.key}')">${icon(IC.seal)}Approve &amp; lock</button>`;
+      action = t.unclass>0
+        ? `<button class="btn" disabled title="Classify all entries first">${icon(IC.lock)}Approve &amp; lock</button><div class="mini" style="color:var(--warn);margin-top:6px">${t.unclass} unclassified — classify first</div>`
+        : t.live>0
+        ? `<button class="btn seal" onclick="approvePeriod(${ca})">${icon(IC.seal)}Approve &amp; lock</button>`
+        : `<div class="mini muted">No entries this period yet.</div>`;
     } else {
       action = `<div class="seal-stamp">${icon(IC.seal)}Approved ${ps.approvedAt?fmtDate(ps.approvedAt):''}</div>
-        ${ps.status==='approved'?`<button class="btn primary sm" style="margin-top:8px" onclick="go('export')">${icon(IC.export)}Export to Odoo</button>`:`<div class="mini" style="margin-top:8px">Exported → <span class="tape">${ps.exportRef}</span></div>`}`;
+        ${ps.status==='approved'
+          ? `<button class="btn primary sm" style="margin-left:10px" onclick="runExport(${ca})">${icon(IC.export)}Export to Odoo</button><button class="btn sm" style="margin-left:6px" onclick="previewPayload(${ca})">Preview payload</button>`
+          : `<span class="mini" style="margin-left:10px">Exported → <span class="tape">${ps.exportRef}</span></span><button class="btn sm" style="margin-left:6px" onclick="previewPayload(${ca})">View payload</button>`}`;
     }
-    return `<div class="card card-pad" style="${open?'':'background:linear-gradient(180deg,rgba(176,134,47,.04),transparent)'}">
-      <div style="display:flex;align-items:flex-start;gap:12px">
-        <div style="flex:1">
-          <div style="display:flex;align-items:center;gap:10px"><div class="cell-title" style="font-size:15px">${esc(c.name)}</div>${status}</div>
-          <div class="cell-meta" style="margin-top:3px;text-transform:capitalize">${c.cycle} · ${b.per.label}</div>
-        </div>
+    const shown=hist.map(({pk,per})=>({pk,per,ps:periodState(c.id,pk),t:pfTally(c.id,pk)}))
+      .filter(x=>!hq || (x.per.label+' '+x.ps.status).toLowerCase().includes(hq));
+    const histTable = hist.length===0
+      ? `<div class="mini muted">No historical periods yet.</div>`
+      : shown.length===0
+      ? `<div class="mini muted">No historical periods match.</div>`
+      : `<div class="pf-hist-tbl"><table class="tbl">
+          <thead><tr><th>Period</th><th>Status</th><th class="num">Entries</th><th class="num">Hours</th><th class="num">Amount</th><th></th></tr></thead>
+          <tbody>${shown.map(x=>`<tr>
+            <td><div class="cell-title">${x.per.label}</div><div class="cell-meta">${fmtDateShort(x.per.start)} – ${fmtDateShort(new Date(x.per.end-86400000))}</div></td>
+            <td>${perChip(x.ps)}${x.ps.status==='exported'&&x.ps.exportRef?`<div class="cell-meta">ref <span class="tape">${x.ps.exportRef}</span></div>`:''}</td>
+            <td class="num">${x.t.live}${x.t.voided?` <span class="mini" style="color:var(--void)">+${x.t.voided} void</span>`:''}</td>
+            <td class="num">${fmtHours(x.t.h)}</td>
+            <td class="num" style="font-weight:600">${fmtMoney(x.t.a)}${x.t.flat>0?`<div class="mini" style="color:var(--seal)">incl. ${fmtMoney(x.t.flat)} flat fees</div>`:''}</td>
+            <td class="right" style="white-space:nowrap">${pfActions(c.id,x.pk,x.ps,x.t)}</td>
+          </tr>`).join('')}</tbody></table></div>`;
+    const panel=`<tr class="expand"><td colspan="5"><div class="expand-inner">
+      <div style="display:flex;align-items:center;gap:10px"><div class="cell-title">Current period — ${cur.label}</div>${perChip(ps)}</div>
+      <div class="pf-stats tape">
+        <div><div class="mini muted">Entries</div><div class="n">${t.live}${t.voided?` <span class="mini" style="color:var(--void)">+${t.voided} void</span>`:''}</div></div>
+        <div><div class="mini muted">Hours</div><div class="n">${fmtHours(t.h)}</div></div>
+        <div><div class="mini muted">Amount</div><div class="n">${fmtMoney(t.a)}</div>${t.flat>0?`<div class="mini" style="color:var(--seal)">incl. ${fmtMoney(t.flat)} project flat fees</div>`:''}</div>
+        ${open?`<div><div class="mini muted">Approved by manager</div><div class="n" style="color:${(t.live>0&&t.approved===t.live)?'var(--brand)':'var(--ink)'}">${t.approved}/${t.live}</div></div>`:''}
       </div>
-      <div style="display:flex;gap:26px;margin:14px 0 4px" class="tape">
-        <div><div class="mini muted">Entries</div><div style="font-size:17px;font-weight:600">${live}${voided?` <span class="mini" style="color:var(--void)">+${voided} void</span>`:''}</div></div>
-        <div><div class="mini muted">Hours</div><div style="font-size:17px;font-weight:600">${fmtHours(h)}</div></div>
-        <div><div class="mini muted">Amount</div><div style="font-size:17px;font-weight:600">${fmtMoney(a)}</div>${flatFees>0?`<div class="mini" style="color:var(--seal)">incl. ${fmtMoney(flatFees)} project flat fees</div>`:''}</div>
-        ${open?`<div><div class="mini muted">Approved by manager</div><div style="font-size:17px;font-weight:600;color:${(live>0&&approved===live)?'var(--brand)':'var(--ink)'}">${approved}/${live}</div></div>`:''}
+      ${open&&t.live>0&&t.submitted<t.live&&t.unclass===0?`<div class="mini" style="color:var(--ink-3);margin-top:2px">${t.live-t.submitted} entr${t.live-t.submitted===1?'y':'ies'} not yet submitted by the technician — you can still approve &amp; lock, or wait for them.</div>`
+      :open&&t.live>0&&t.approved<t.live&&t.submitted===t.live?`<div class="mini" style="color:var(--ink-3);margin-top:2px">${t.live-t.approved} submitted entr${t.live-t.approved===1?'y':'ies'} awaiting timesheet approval — review on the <a href="#" onclick="go('approvals');return false" style="color:inherit;text-decoration:underline">Approvals</a> page.</div>`:''}
+      <div style="margin-top:12px;display:flex;align-items:center;flex-wrap:wrap">${action}</div>
+      <div class="pf-hist-head">
+        <h4>Historical periods</h4>
+        <div class="search">${icon(IC.search)}<input type="text" placeholder="Search period, status…" value="${esc(pf.hq)}" data-fkey="pf-hq-${c.id}" oninput="pfSetHq(this.value)"></div>
+        <span class="mini muted">${shown.length} of ${hist.length}</span>
       </div>
-      ${open&&live>0&&submitted<live&&unclass===0?`<div class="mini" style="color:var(--ink-3);margin-top:2px">${live-submitted} entr${live-submitted===1?'y':'ies'} not yet submitted by the technician — you can still approve &amp; lock, or wait for them.</div>`
-      :open&&live>0&&approved<live&&submitted===live?`<div class="mini" style="color:var(--ink-3);margin-top:2px">${live-approved} submitted entr${live-approved===1?'y':'ies'} awaiting timesheet approval — review on the <a href="#" onclick="go('approvals');return false" style="color:inherit;text-decoration:underline">Approvals</a> page.</div>`:''}
-      <div style="margin-top:12px">${action}</div>
-    </div>`;
+      ${histTable}
+    </div></td></tr>`;
+    return main+panel;
   }).join('');
+  const toolbar=`<div class="toolbar">
+    <div class="search">${icon(IC.search)}<input type="text" placeholder="Search clients…" value="${esc(pf.q)}" data-fkey="pf-q" oninput="pfSetQ(this.value)"></div>
+    <div class="mini muted">${rows.length} client${rows.length===1?'':'s'}${archHidden?` · ${archHidden} archived without period history hidden`:''}</div>
+  </div>`;
   return `<div class="notice info" style="margin-bottom:16px">${icon(IC.period)}<div>Approving a period <b>locks every entry in it permanently</b> — they become immutable and can’t be edited or deleted, and the period is cleared for Odoo export. A period can’t be approved while any entry is Unclassified.</div></div>
-  <div class="grid g-2">${cards}</div>`;
+  ${toolbar}
+  <div class="card"><table class="tbl">
+    <thead><tr><th>Client</th><th>Current period</th><th class="num">Entries</th><th class="num">Amount</th><th></th></tr></thead>
+    <tbody>${body||`<tr><td colspan="5"><div class="empty">${icon(IC.period)}<div>${q?'No clients match.':'No clients yet.'}</div></div></td></tr>`}</tbody></table></div>`;
 }
 
 function approvePeriod(clientId,pk){

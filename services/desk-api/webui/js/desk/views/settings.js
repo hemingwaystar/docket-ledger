@@ -8,7 +8,8 @@
    saveAgent/deactivateAgent/toggleMembership/setAgentRole · typeModal/
    saveType/archiveType · stateModal/saveState/archiveState/moveState ·
    stSwatches/stateColorSet/stateDescSet/stPalPick (state decor, 0027) ·
-   prioModal/savePrio/archivePrio · deskUiCard/ovModal/saveOverview/
+   prioModal/savePrio/archivePrio · prioSwatches/prioColorSet (priority
+   decor, 0028) · deskUiCard/ovModal/saveOverview/
    moveOverview/hideOverview/dashDefToggle/deskUiPush (+ deskOvs/
    ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
    vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows.
@@ -411,12 +412,44 @@ function stPalHex(v){
 
 /* ---- priorities: rename / add / archive (desk.priorities — label/rank/
    active only; SLA hours live in app_config and mirror via slaSet) -------- */
+/* priority decor (0028) — the state-decor pattern verbatim: pills from
+   PRIO_PALETTE + the RGB square + ↺ when custom; immediate diff-guarded
+   PATCH {color}; pid-gated. Default flag = the rank-derived class. */
+const prioDefCls = p => 'p'+Math.min(4,Math.max(1,Number(p.rank||p.id)||1));
+const prioSwatches = p => PRIO_PALETTE.map(x=>
+  `<button class="prio ${x.tok}" title="${esc(x.label)}${!p.hex&&p.cls===x.tok?' — click again for default':''}" onclick="prioColorSet(${p.id},'${x.tok}')" style="cursor:pointer;border:none;background:none;padding:2px${!p.hex&&p.cls===x.tok?';outline:2px solid var(--brand);outline-offset:1px;border-radius:4px':''}"><span class="pflag"></span></button>`).join('')
+  + `<input type="color" value="${p.hex||'#7a8a99'}" title="any color — the RGB square" onchange="prioColorSet(${p.id},this.value)" style="width:24px;height:22px;padding:0;border:none;background:none;cursor:pointer;vertical-align:middle${p.hex?';outline:2px solid var(--brand);outline-offset:1px;border-radius:4px':''}">`
+  + (p.hex||p.cls!==prioDefCls(p)? `<button class="rowbtn" title="back to the tier-order default" onclick="prioColorSet(${p.id},'')">↺</button>`:'');
+function prioColorSet(pid, val){
+  const p = prio(pid); if(!p) return;
+  const def = prioDefCls(p);
+  const was = p.hex || p.cls;
+  let body;
+  if(val===''){                              /* ↺ default */
+    if(!p.hex && p.cls===def) return;
+    delete p.hex; p.cls = def; body = {color:null};
+  } else if(stHexOk(val)){                   /* the RGB square */
+    const hx = val.toLowerCase();
+    if(p.hex===hx) return;
+    p.hex = hx; p.cls = def; body = {color:hx};
+  } else {                                   /* a palette pill */
+    if(!PRIO_PALETTE.some(x=>x.tok===val)) return;
+    const reset = !p.hex && p.cls===val;     /* ringed pill clicked = un-pick */
+    if(reset && val===def) return;
+    delete p.hex; p.cls = reset ? def : val; body = {color: reset ? null : val};
+  }
+  log('Priority recolored', `${p.label}: ${was} → ${body.color || `default (${def})`}`);
+  render();
+  if(isUuid(p.pid)) $fetch('/api/settings/priorities/'+encodeURIComponent(p.pid),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
 function prioModal(pid){
   if(!can('manage_settings')) return;
   const p0 = pid? prio(pid) : {};
   const m = document.getElementById('modal');
   m.innerHTML = `
-    <div class="modal-head"><h3>${pid?'Rename priority — '+esc(p0.label):'Add priority tier'}</h3><p>${pid?'The flag color follows the tier order.':'New tiers slot in as the most urgent — they sort first everywhere and get their own SLA targets.'}</p></div>
+    <div class="modal-head"><h3>${pid?'Rename priority — '+esc(p0.label):'Add priority tier'}</h3><p>${pid?'Recolor from the tier’s row — pills or the RGB square.':'New tiers slot in as the most urgent — they sort first everywhere and get their own SLA targets.'}</p></div>
     <div class="modal-body">
       <div class="grid g-2" style="gap:12px">
         <div class="field"><label>Label</label><input type="text" id="prLabel" value="${esc(p0.label||'')}" placeholder="e.g. Critical"></div>
@@ -799,7 +832,8 @@ function viewSettings(){
     ${deskUiCard()}
     <div class="card card-pad">
       <div class="card-head flush"><h3>Priorities &amp; SLA</h3><span class="hint">tiers are editable — targets in hours drive the SLA column</span></div>
-      ${PRIOS.slice().sort((a,b)=>b.id-a.id).map(p=>{ const arch=isArch(p); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${prioTag(p.id)}</b>${arch?` <span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Archived</span>`:''}</div>
+      ${PRIOS.slice().sort((a,b)=>b.id-a.id).map(p=>{ const arch=isArch(p); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${prioTag(p.id)}</b>${arch?` <span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Archived</span>`:''}
+        <div style="display:flex;gap:3px;align-items:center;margin-top:5px">${prioSwatches(p)}</div></div>
         <label class="mini muted">first response <input type="number" value="${SLA[p.id]?.fr??''}" min="1" style="width:64px;margin-left:6px" onchange="slaSet(${p.id},'fr',this.value,'${jsq(p.label)}')"></label>
         <label class="mini muted">resolution <input type="number" value="${SLA[p.id]?.res??''}" min="1" style="width:64px;margin-left:6px" onchange="slaSet(${p.id},'res',this.value,'${jsq(p.label)}')"></label>
         <button class="rowbtn" onclick="prioModal(${p.id})">Rename</button>
