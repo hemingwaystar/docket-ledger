@@ -17,6 +17,12 @@
 function viewSettings(){
   const s=state.settings, o=s.odoo;
   const row=(t,d,ctrl)=>`<div class="setting-row"><div class="sl"><b>${t}</b><p>${d}</p></div><div>${ctrl}</div></div>`;
+  /* build 14: label-above is the settings standard (same policy as Docket).
+     Every labeled text/number/select field renders via field() — label +
+     optional caption above, full-width control below (.field, shared with
+     desk.css). Toggles/buttons/chips stay inline via row(); the default
+     billing rates table keeps its table layout — a table IS a labeled grid. */
+  const field=(t,d,ctrl)=>`<div class="field"><label>${t}</label>${d?`<p class="cap">${d}</p>`:''}${ctrl}</div>`;
   return `
   <div class="grid g-2" style="align-items:start">
     <div class="card">
@@ -24,15 +30,15 @@ function viewSettings(){
       <div class="card-pad" style="border-bottom:1px solid var(--line)">
         ${row('Retainers / block-hour agreements','Turn off if agreements are managed in Odoo — per-client configuration and burn-down disappear everywhere, but nothing is deleted.',
           `<button class="toggle ${state.settings.retainers.enabled?'on':''}" onclick="s_toggleRetainers()"></button>`)}
-      </div>
-      <div class="card-pad">
-        ${row('Default billing cycle','New clients inherit this. Override per client on the Clients page.',
-          `<select onchange="state.settings.defaultCycle=this.value;persistLedgerCfg()" style="text-transform:capitalize"><option ${s.defaultCycle==='weekly'?'selected':''}>weekly</option><option ${s.defaultCycle==='monthly'?'selected':''}>monthly</option></select>`)}
         ${row('New types billable by default','When a new activity type appears, treat it as billable until reviewed.',
           `<button class="toggle ${s.defaultBillable?'on':''}" onclick="s_toggle('defaultBillable')"></button>`)}
-        ${row('Hour display','Hours always show to two decimals (e.g. 1.00 h). Rounding policy applies at pricing.',
+      </div>
+      <div class="card-pad">
+        ${field('Default billing cycle','New clients inherit this. Override per client on the Clients page.',
+          `<select onchange="state.settings.defaultCycle=this.value;persistLedgerCfg()" style="text-transform:capitalize"><option ${s.defaultCycle==='weekly'?'selected':''}>weekly</option><option ${s.defaultCycle==='monthly'?'selected':''}>monthly</option></select>`)}
+        ${field('Hour display','Hours always show to two decimals (e.g. 1.00 h). Rounding policy applies at pricing.',
           `<select onchange="state.settings.rounding=this.value;persistLedgerCfg()"><option value="none" ${s.rounding==='none'?'selected':''}>Exact (2 dp)</option><option value="6" ${s.rounding==='6'?'selected':''}>Nearest 6 min</option><option value="15" ${s.rounding==='15'?'selected':''}>Nearest 15 min</option></select>`)}
-        ${row('Currency','Used across the ledger and Odoo export.',
+        ${field('Currency','Used across the ledger and Odoo export.',
           `<select onchange="state.settings.currency=this.value;persistLedgerCfg()"><option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option></select>`)}
       </div>
     </div>
@@ -40,8 +46,8 @@ function viewSettings(){
     <div class="card">
       <div class="card-head"><h3>Docket connection</h3></div>
       <div class="card-pad">
-        ${row('Docket','The helpdesk this app pairs with.',
-          `<input type="text" class="ro in-mono" readonly value="${esc(s.host||location.host)}" title="Derived from this deployment — the suite shares one origin behind nginx" style="width:260px">`)}
+        ${field('Docket','The helpdesk this app pairs with.',
+          `<input type="text" class="ro in-mono" readonly value="${esc(s.host||location.host)}" title="Derived from this deployment — the suite shares one origin behind nginx">`)}
       </div>
     </div>
   </div>
@@ -79,13 +85,13 @@ function viewSettings(){
     <div class="card-head"><h3>Odoo export connector</h3><span class="hint">open stub — safe to leave blank; export previews without posting</span></div>
     <div class="card-pad">
       <div class="grid g-2">
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Instance URL</b></div><input type="text" class="in-mono" placeholder="https://mycompany.odoo.com" value="${esc(o.url)}" onchange="state.settings.odoo.url=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Database</b></div><input type="text" class="in-mono" placeholder="mycompany-prod" value="${esc(o.db)}" onchange="state.settings.odoo.db=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API user</b></div><input type="text" class="in-mono" placeholder="billing@mycompany.com" value="${esc(o.user)}" onchange="state.settings.odoo.user=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API key</b> ${state.odooSecret?`<span class="mini muted">rotated ${fmtStamp(state.odooSecret.at)}${state.odooSecret.by?' by '+esc(state.odooSecret.by):''}</span>`:`<span class="mini muted">not set</span>`}</div>
-          <div style="display:flex;gap:8px;margin-top:6px"><input type="password" id="odooKeyIn" class="in-mono" placeholder="write-only — sealed under the KEK, never shown again" style="flex:1" autocomplete="new-password"><button class="btn sm" onclick="saveOdooKey()">Save key</button></div></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Journal</b></div><input type="text" value="${esc(o.journal)}" onchange="state.settings.odoo.journal=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Post invoices as</b></div><select onchange="state.settings.odoo.mode=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"><option value="draft" ${o.mode==='draft'?'selected':''}>Draft (review in Odoo)</option><option value="posted" ${o.mode==='posted'?'selected':''}>Posted</option></select></label>
+        ${field('Instance URL','',`<input type="text" class="in-mono" placeholder="https://mycompany.odoo.com" value="${esc(o.url)}" onchange="state.settings.odoo.url=this.value;persistLedgerCfg()">`)}
+        ${field('Database','',`<input type="text" class="in-mono" placeholder="mycompany-prod" value="${esc(o.db)}" onchange="state.settings.odoo.db=this.value;persistLedgerCfg()">`)}
+        ${field('API user','',`<input type="text" class="in-mono" placeholder="billing@mycompany.com" value="${esc(o.user)}" onchange="state.settings.odoo.user=this.value;persistLedgerCfg()">`)}
+        ${field(`API key ${state.odooSecret?`<span class="mini muted" style="text-transform:none;letter-spacing:0;font-weight:500">rotated ${fmtStamp(state.odooSecret.at)}${state.odooSecret.by?' by '+esc(state.odooSecret.by):''}</span>`:`<span class="mini muted" style="text-transform:none;letter-spacing:0;font-weight:500">not set</span>`}`,'',
+          `<div style="display:flex;gap:8px"><input type="password" id="odooKeyIn" class="in-mono" placeholder="write-only — sealed under the KEK, never shown again" style="flex:1" autocomplete="new-password"><button class="btn sm" onclick="saveOdooKey()">Save key</button></div>`)}
+        ${field('Journal','',`<input type="text" value="${esc(o.journal)}" onchange="state.settings.odoo.journal=this.value;persistLedgerCfg()">`)}
+        ${field('Post invoices as','',`<select onchange="state.settings.odoo.mode=this.value;persistLedgerCfg()"><option value="draft" ${o.mode==='draft'?'selected':''}>Draft (review in Odoo)</option><option value="posted" ${o.mode==='posted'?'selected':''}>Posted</option></select>`)}
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:16px">
         <button class="toggle ${o.enabled?'on':''}" onclick="s_toggleOdoo()"></button>

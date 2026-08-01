@@ -76,7 +76,9 @@ function viewDashboard(){
         </div>
         ${state.dashGear?`<div style="position:absolute;right:14px;top:44px;z-index:60;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);padding:10px 12px;min-width:240px">
           <div class="mini muted" style="margin-bottom:6px;text-transform:uppercase;letter-spacing:.07em;font-weight:600">Hidden states</div>
-          ${multiCombo('dashHide', aSTATES().map(s=>({v:s.label,label:s.label})), aSTATES().map(s=>s.label).filter(l=>!shownStates.some(x=>x.label===l)), 'setDashHiddenUser', 'None hidden')}
+          ${/* noAll: in a hide-list an "All" row reads as "hide everything"
+               while actually clearing — suppress it (render.js multiCombo) */''}
+          ${multiCombo('dashHide', aSTATES().map(s=>({v:s.label,label:s.label})), aSTATES().map(s=>s.label).filter(l=>!shownStates.some(x=>x.label===l)), 'setDashHiddenUser', 'None hidden', true)}
           <div class="mini muted" style="margin-top:7px;padding-top:7px;border-top:1px solid var(--line)">${personalStates?`<a href="#" onclick="resetDashStates();return false">Use admin default</a>`:'(admin default)'}</div>
         </div>`:''}
         ${byState.map(({s,n})=>`

@@ -602,6 +602,11 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **BUILD 14 — no migration; frontend-only rebuild.** RELOAD THE APP TAB after deploying — the SPA keeps running pre-deploy scripts until refreshed (this is what made build 13 look missing).
+- [ ] **Build 14 — date range:** queue filter bar shows "created" From/To date inputs → set a window → rows, the pager count, AND the CSV export all honor it; same on a client page's ticket list; clearing either input widens the window; boundary day is inclusive both ends.
+- [ ] **Build 14 — no "All" row:** the queue-by-state pickers (Settings card AND the dashboard ⚙) list only states — no bold "All" first row; every other filter dropdown keeps its All row.
+- [ ] **Build 14 — subtitles:** page headers show no explainer prose ("Every ticket, every group…", "Shared directory…", "Global defaults ·…" all gone, both apps); ticket pages keep "client · opened Xh ago"; client pages keep just the name; dashboards keep just the date/clock.
+- [ ] **Build 14 — label-above settings:** every labeled text/number/select field on BOTH Settings pages renders its label above the input (Priorities & SLA first-response/resolution now stacked and uniform — the accidental VIP wrap is now the deliberate standard everywhere); toggles/buttons stay inline; every field still saves (spot-check an SLA hour + the Ledger billing cycle).
 - [ ] **BUILD 13 — migrate applies 0029+0030+0031 in order** (`apply 0029_default_billing_rates.sql` / `0030_roles_lifecycle.sql` / `0031_era_guard_1930_cleanup.sql`, no ERROR lines; 0031's audit rows say "Entry span corrected" + "Ghost period removed"). Both containers rebuild after (desk-api ships articles.py/sessions.py changes, ledger-api ships bootstrap/admin).
 - [ ] **Build 13 — time logging still works POST-0031 (row 48's near-miss):** log time on any ticket from Docket the moment the deploy lands → the entry appears in Ledger. If this fails with a permission error, ensure_period lost SECURITY DEFINER — restore per 0031's header before anything else.
 - [ ] **Build 13 — org label (row 45):** Ledger → Clients → any client → the old "Org #undefined" cell now reads "client #<8 chars>"; dashboard + directory cards match; Odoo payload preview shows `client_id`, no `zammad_org_id`.

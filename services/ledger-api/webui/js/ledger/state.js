@@ -70,19 +70,22 @@ const NAV=[
   {id:'directory', label:'Directory',  ic:IC.client},
   {id:'settings',  label:'Settings',   ic:IC.settings},
 ];
+/* build 14 (same policy as Docket): static explainer subtitles are retired —
+   s() returns '' and render() drops the node entirely. Only data-bearing
+   subtitles remain: the dashboard's date, a client page's name. */
 const PAGES={
-  dashboard:{t:'Dashboard', s:()=> isAdmin()?`Current cycle overview · ${fmtDate(NOW)}`:`Your time this cycle · ${fmtDate(NOW)}`},
-  timesheets:{t:'Timesheets', s:()=> isAdmin()?'The billing ledger — every logged entry, priced per client':'Your logged time — classify each entry and submit it for review'},
-  approvals:{t:'Approvals', s:()=>'Submitted timesheets, one per technician · client · billing period — review, approve or return'},
-  clients:{t:'Clients', s:()=>'Client directory · click a client to configure billing, see its tickets, and set who can access it'},
-  client:{t:'Client', s:()=>{ const c=client(state.clientId); return c?`${esc(c.name)} · configuration &amp; ticket breakdown`:'Client'; }},
-  types:{t:'Activity Types', s:()=>'Shared with Docket · set billable status and rate for each'},
-  periods:{t:'Billing Periods', s:()=>'Review, approve and lock a period per client'},
-  reports:{t:'Reports', s:()=> isAdmin()?'Build and export billing &amp; productivity reports · any grouping, range or metric':'Your hours — build and export a report of your own logged time'},
-  export:{t:'Odoo Export', s:()=>'Push approved periods to Odoo'},
-  audit:{t:'Audit Log', s:()=>'Immutable record of every change, including entries removed in Docket'},
-  directory:{t:'Directory', s:()=>'The shared control plane — mirrored live from Docket; edits happen there'},
-  settings:{t:'Settings', s:()=>'Global defaults · per-client billing lives on each client page'},
+  dashboard:{t:'Dashboard', s:()=>fmtDate(NOW)},
+  timesheets:{t:'Timesheets', s:()=>''},
+  approvals:{t:'Approvals', s:()=>''},
+  clients:{t:'Clients', s:()=>''},
+  client:{t:'Client', s:()=>{ const c=client(state.clientId); return c?esc(c.name):''; }},
+  types:{t:'Activity Types', s:()=>''},
+  periods:{t:'Billing Periods', s:()=>''},
+  reports:{t:'Reports', s:()=>''},
+  export:{t:'Odoo Export', s:()=>''},
+  audit:{t:'Audit Log', s:()=>''},
+  directory:{t:'Directory', s:()=>''},
+  settings:{t:'Settings', s:()=>''},
 };
 function openClient(id){ if(!canView('client')) return; state.clientId=id; state.cf={tech:'all',type:'all',status:'all',q:'',from:'',to:''}; state.view='client'; closeMenus(); render(); }
 

@@ -2,8 +2,10 @@
    js/desk/views/clients.js — the shared client directory (billing lives in
    Ledger; both apps read the same shared.clients / shared.contacts tables).
    Owns: viewClients · viewClient · clfNorm/setCLFSt/setCLFTag/setCLFOwner/
-   setCLFQ/clientTicketRows (the client-page ticket filter bar over state.clf;
-   openClient in render.js resets clf on every client switch) ·
+   setCLFQ/setCLFFrom/setCLFTo/clientTicketRows (the client-page ticket filter
+   bar over state.clf; openClient in render.js resets clf on every client
+   switch; clf.from/clf.to are 'YYYY-MM-DD' creation-date bounds — inclusive
+   local days, '' = no bound, the queue's qf.from/to twin) ·
    exportClientTicketsCSV/copyClientTicketsCSV · clientModal/saveClient ·
    setClientStatus (archive/restore) · contactFields/readContactFields ·
    editContactModal/saveContactEdit · saveContact (the add-contact save;
@@ -115,6 +117,12 @@ function viewClient(){
       <span style="display:inline-block;min-width:150px;vertical-align:middle" title="System states are listed too — filtering by them is legitimate">${multiCombo('clfSt', STATES.map(s=>({v:String(s.id),label:s.label,archived:isArch(s)})), clfNorm().st, 'setCLFSt', 'Any state')}</span>
       <span style="display:inline-block;min-width:130px;vertical-align:middle">${multiCombo('clfTag', [...new Set(ts.flatMap(t=>t.tags))].sort().map(tg=>({v:tg,label:tg})), clfNorm().tag, 'setCLFTag', 'Any tag')}</span>
       <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('clfOwner', [{v:'(unassigned)',label:'Unassigned'},...AGENTS.map(a=>({v:a.id,label:a.name}))], clfNorm().owner, 'setCLFOwner', 'Any owner')}</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle" title="Filter by creation date — inclusive; leave either blank for no bound">
+        <span class="mini muted">created</span>
+        <input type="date" value="${esc(clfNorm().from)}" data-fkey="clf-from" style="width:auto" onchange="setCLFFrom(this.value,this)" title="Created on or after — from that day's local midnight">
+        <span class="mini muted">–</span>
+        <input type="date" value="${esc(clfNorm().to)}" data-fkey="clf-to" style="width:auto" onchange="setCLFTo(this.value,this)" title="Created on or before — through that day's local end">
+      </span>
     </div>
     ${fts.length? `<table class="tbl"><tbody>${pgT.slice.map(t=>`
       <tr class="clickable" onclick="openTicket(${t.id})">
@@ -132,9 +140,13 @@ function viewClient(){
    '(unassigned)' sentinel (the reports '(untagged)' pattern). openClient()
    (render.js) resets clf on every client switch. ---- */
 function clfNorm(){
-  const f = state.clf || (state.clf = { st:[], tag:[], owner:[], q:'' });
+  const f = state.clf || (state.clf = { st:[], tag:[], owner:[], q:'', from:'', to:'' });
   ['st','tag','owner'].forEach(k=>{ if(!Array.isArray(f[k])) f[k]=[]; });
   if(typeof f.q!=='string') f.q='';
+  /* creation-date bounds: plain 'YYYY-MM-DD' from <input type=date>; anything
+     else (missing key on old resets, stale garbage) resets to '' — qfNorm's twin */
+  ['from','to'].forEach(k=>{ const v=f[k];
+    if(typeof v!=='string' || (v && !/^\d{4}-\d{2}-\d{2}$/.test(v))) f[k]=''; });
   /* prune ghost selections — the qfNorm reasoning (row 37 / build 11) */
   const stKnown = new Set(STATES.map(s=>String(s.id)));
   const agKnown = new Set(AGENTS.map(a=>a.id)); agKnown.add('(unassigned)');
@@ -149,6 +161,11 @@ function setCLFSt(vals){ clfNorm().st = vals; render(); }
 function setCLFTag(vals){ clfNorm().tag = vals; render(); }
 function setCLFOwner(vals){ clfNorm().owner = vals; render(); }
 function setCLFQ(v){ clfNorm().q = v; render(); }
+/* date-range setters — date inputs are segmented (the commitRender family):
+   change fires while still focused, so the re-render defers to blur. The
+   native clear (×) fires change with '' = bound removed. */
+function setCLFFrom(v, el){ const f=clfNorm(); if(f.from===v) return; f.from=v; commitRender(el); }
+function setCLFTo(v, el){ const f=clfNorm(); if(f.to===v) return; f.to=v; commitRender(el); }
 /* the ONE filtered slice — table and CSV both read this, so export = exactly
    what's filtered (the build-11 qfApply lesson) */
 function clientTicketRows(c){
@@ -157,6 +174,10 @@ function clientTicketRows(c){
   if(f.st.length) rows = rows.filter(t=>f.st.some(v=>String(v)===String(t.st)));
   if(f.tag.length) rows = rows.filter(t=>f.tag.some(v=>t.tags.includes(v)));
   if(f.owner.length) rows = rows.filter(t=>f.owner.some(v=> v==='(unassigned)' ? !t.ownerId : t.ownerId===v));
+  /* creation-date window, inclusive local days: from = that day's midnight,
+     to = 23:59:59.999 (spanMs parses local; MIN-1 walks 23:59 to .999) */
+  if(f.from){ const a=spanMs(f.from,'00:00'); rows = rows.filter(t=>t.createdAt>=a); }
+  if(f.to){ const b=spanMs(f.to,'23:59')+MIN-1; rows = rows.filter(t=>t.createdAt<=b); }
   if(f.q){ const q=f.q.toLowerCase(); rows = rows.filter(t=>(TITLES[t.id]||firstLine(t)).toLowerCase().includes(q) || String(t.id).includes(q)); }
   return rows.sort((a,b)=>b.updatedAt-a.updatedAt);
 }

@@ -406,18 +406,21 @@ const NAV = [
   { id:'directory', label:'Directory',      ic:IC.client,  show:()=>can('manage_settings')||can('manage_roles') },  /* person icon — matches Ledger's rail */
   { id:'settings',  label:'Settings',       ic:IC.settings,show:()=>can('manage_settings') },
 ];
+/* subtitles carry DATA only (build 14) — static explainer prose is gone; ''
+   means no subtitle and the render skips the line. ticket/clientv keep their
+   live context; the dashboard keeps its clock. */
 const PAGES = {
-  dashboard:{ t:'Dashboard', s:()=> can('view_all') ? `Queue health across every group · ${fmtDT(nowMs())}` : `Your queue · ${fmtDT(nowMs())}` },
-  tickets:{ t:'Tickets', s:()=> can('view_all') ? 'Every ticket, every group — the working queue' : 'Tickets assigned to you and your groups' },
-  projects:{ t:'Projects', s:()=>'Checklist-driven project tickets — time lands under each task; approval bills the project to Ledger' },
+  dashboard:{ t:'Dashboard', s:()=>fmtDT(nowMs()) },
+  tickets:{ t:'Tickets', s:()=>'' },
+  projects:{ t:'Projects', s:()=>'' },
   ticket:{ t:'Ticket', s:()=>{ const t=tk(state.ticketId); return t? `${esc(client(t.clientId).name)} · opened ${fmtAgo(t.createdAt)}` : ''; } },
-  clients:{ t:'Clients', s:()=>'Shared directory — the same organisations Ledger bills' },
-  clientv:{ t:'Client', s:()=>{ const c=client(state.clientId); return c? `${esc(c.name)} · contacts & ticket history` : ''; } },
-  reports:{ t:'Reports', s:()=>'Ticket volume, response times and workload' },
-  automations:{ t:'Automations', s:()=>'Graph mail ingestion — mailboxes, boards and rules' },
-  settings:{ t:'Settings', s:()=>'Groups, states, SLA targets and mail channels' },
-  directory:{ t:'Directory', s:()=>'The shared control plane — one set of clients, groups, agents and activity types for every app' },
-  audit:{ t:'Audit Log', s:()=>'Immutable record of every change' },
+  clients:{ t:'Clients', s:()=>'' },
+  clientv:{ t:'Client', s:()=>{ const c=client(state.clientId); return c? esc(c.name) : ''; } },
+  reports:{ t:'Reports', s:()=>'' },
+  automations:{ t:'Automations', s:()=>'' },
+  settings:{ t:'Settings', s:()=>'' },
+  directory:{ t:'Directory', s:()=>'' },
+  audit:{ t:'Audit Log', s:()=>'' },
 };
 function canView(v){
   if(v==='ticket') return true;

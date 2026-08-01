@@ -375,3 +375,13 @@ input.ro:focus{border-color:var(--line);box-shadow:none}
 .pager{display:flex;align-items:center;gap:10px;justify-content:flex-end;padding:9px 14px;border-top:1px solid var(--line-2);font-size:12px}
 .pager select{width:auto;padding:4px 8px;font-size:12px}
 .pager button:disabled{opacity:.4;cursor:default}
+/* compact stacked field (build 14) — the settings standard is label ABOVE its
+   input everywhere; these make the modal .field pattern light enough for
+   table-ish rows (SLA targets, business hours, verification, auth) where the
+   full-width .field is too heavy. .fgrid lays several compact fields on one
+   wrapping row; .field.inline-sm hugs its (usually fixed-width) control
+   instead of spanning the card. */
+.fgrid{display:flex;gap:10px 16px;flex-wrap:wrap;align-items:flex-start}
+.field.inline-sm{margin-bottom:0}
+.field.inline-sm label{margin-bottom:4px;white-space:nowrap}
+.field.inline-sm input,.field.inline-sm select{width:auto}

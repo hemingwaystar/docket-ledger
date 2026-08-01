@@ -44,7 +44,10 @@ function render(){
   if(!canView(state.view)) state.view='dashboard';
   renderNav();
   document.getElementById('pgTitle').textContent=pgTitle();
-  document.getElementById('pgSub').innerHTML=PAGES[state.view].s();
+  { /* build 14: '' from a PAGES s() means NO subtitle — hide the node so an
+       empty .page-sub leaves no stray margin under the title */
+    const sub=PAGES[state.view].s(), se=document.getElementById('pgSub');
+    se.innerHTML=sub; se.style.display=sub?'':'none'; }
   const c=document.getElementById('content');
   if(!state.hydrated){   /* first paint runs before the bootstrap answer lands */
     c.innerHTML=`<div class="card card-pad">Loading…</div>`;
@@ -122,10 +125,13 @@ document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.combo')) do
    as removable chips inside the control. Archived options are the caller's
    job (row 37: keep them out of opts unless currently selected).
    opts: [{v, label, sub?}] · vals: array · ontoggle(v) mutates the array in
-   view state and render()s — ontoggle(null) means "clear the selection". */
-function multiCombo(id, opts, vals, ontoggle, placeholder){
+   view state and render()s — ontoggle(null) means "clear the selection".
+   noAll (optional 6th arg, contract parity with desk's multiCombo(fkey,
+   opts, sel, onchg, placeholder, noAll)): true suppresses the built-in
+   All/clear first row. No ledger call site passes it today. */
+function multiCombo(id, opts, vals, ontoggle, placeholder, noAll){
   vals = Array.isArray(vals) ? vals : [];
-  _combos[id] = { opts, vals: vals.slice(), multi: true,
+  _combos[id] = { opts, vals: vals.slice(), multi: true, noAll: !!noAll,
     ontoggle: typeof ontoggle==='function' ? ontoggle : null };
   /* a rebuild mid-typing must not eat the filter text: the OLD input is
      still in the document while this markup is being built — carry it */
@@ -155,7 +161,7 @@ function multiFilter(id){
      render() the toggle triggers restores focus (bug #26) and the list
      re-opens via its onfocus — the dropdown survives multi-picking */
   box.innerHTML =
-    `<div style="padding:6px 11px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line);color:${reg.vals.length?'var(--brand)':'var(--ink-3,#66757e)'}" onmousedown="event.preventDefault();multiToggle('${id}',null)">${reg.vals.length?'✕ Clear — show all':'All (nothing selected = no filter)'}</div>`
+    (reg.noAll?'':`<div style="padding:6px 11px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line);color:${reg.vals.length?'var(--brand)':'var(--ink-3,#66757e)'}" onmousedown="event.preventDefault();multiToggle('${id}',null)">${reg.vals.length?'✕ Clear — show all':'All (nothing selected = no filter)'}</div>`)
     + (opts.slice(0,50).map(o=>{
         const on=reg.vals.some(v=>String(v)===String(o.v));
         return `<div style="display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;font-size:13px" onmousedown="event.preventDefault();multiToggle('${id}','${jsq(String(o.v))}')">

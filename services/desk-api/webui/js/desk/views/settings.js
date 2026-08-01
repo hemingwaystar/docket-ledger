@@ -684,7 +684,7 @@ function deskUiCard(){
       <button class="btn sm" style="margin-top:12px" onclick="ovModal()">+ Add tab</button>
       <div class="mini muted" style="margin-top:8px">${custom?'Customized — saved as the shared default for every agent.':'Showing the shipped defaults — the first change saves the whole list as the shared default.'} Hiding is archive-style: the definition stays and can be restored. Personal tabs and per-user order live on each person's queue (⚙), not here.</div>
       <div class="card-head flush" style="margin-top:16px"><h3>Dashboard — queue by state</h3><span class="hint">shown by default · each person can override on the card</span></div>
-      <div style="margin-top:6px;max-width:360px">${multiCombo('duiDashHide', aSTATES().map(s=>({v:s.label,label:s.label})), dashHiddenDefault(), 'setDashHiddenDefault', 'No states hidden')}</div>
+      <div style="margin-top:6px;max-width:360px">${multiCombo('duiDashHide', aSTATES().map(s=>({v:s.label,label:s.label})), dashHiddenDefault(), 'setDashHiddenDefault', 'No states hidden', true)}</div>
       <div class="mini muted" style="margin-top:8px">Pick the states to <b>hide</b> from the dashboard’s Queue-by-state card by default; anyone who has set their own view on the card (⚙) is untouched. No selection = every active state shows, and new states show automatically.</div>
     </div>`;
 }
@@ -747,8 +747,8 @@ const SECRET_LABELS = { graphSecret:'Graph app client secret',
                         twilioToken:'Twilio auth token' };
 function secretRow(key){
   const sx = SECRETS[key] || { set:false, at:null, by:'', label:SECRET_LABELS[key]||key };
-  return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0">
-    <span class="mini muted" style="width:170px">${esc(sx.label)}</span>
+  return `<div class="field inline-sm" style="margin:8px 0"><label>${esc(sx.label)}</label>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     ${state._rotating===key
       ? `<input type="password" id="sec-${key}" placeholder="paste new secret" style="width:220px;font-family:'IBM Plex Mono',monospace;font-size:12px">
          <button class="btn sm primary" onclick="secretSave('${key}')">Save</button>
@@ -756,7 +756,7 @@ function secretRow(key){
       : `<span class="tape">${sx.set?'••••••••••••':'— not set —'}</span>
          ${sx.set&&sx.at?`<span class="mini muted">rotated ${fmtDT(sx.at)}${sx.by?' by '+esc(sx.by):''}</span>`:''}
          <button class="rowbtn" onclick="state._rotating='${key}';render()">${sx.set?'Rotate':'Set'}</button>`}
-  </div>`;
+    </div></div>`;
 }
 function secretSave(key){
   const el = document.getElementById('sec-'+key);
@@ -826,10 +826,10 @@ function viewSettings(){
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
         ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i)=>`<label class="mini" style="display:inline-flex;gap:4px;align-items:center;text-transform:none;cursor:pointer"><input type="checkbox" ${BIZ.days.includes(i)?'checked':''} onchange="bizDay(${i},this.checked)" style="width:auto;accent-color:var(--brand)">${d}</label>`).join('')}
       </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span class="mini muted">from</span><input type="number" min="0" max="23" value="${BIZ.start}" style="width:64px" onchange="bizHours('start',this.value,this)">
-        <span class="mini muted">to</span><input type="number" min="1" max="24" value="${BIZ.end}" style="width:64px" onchange="bizHours('end',this.value,this)">
-        <span class="mini muted">· holidays:</span><input type="text" value="${BIZ.holidays.join(', ')}" style="flex:1;min-width:200px;font-size:12px" onchange="bizHolidays(this.value,this)" placeholder="YYYY-MM-DD, comma-separated">
+      <div class="fgrid">
+        <div class="field inline-sm"><label>from</label><input type="number" min="0" max="23" value="${BIZ.start}" style="width:64px" onchange="bizHours('start',this.value,this)"></div>
+        <div class="field inline-sm"><label>to</label><input type="number" min="1" max="24" value="${BIZ.end}" style="width:64px" onchange="bizHours('end',this.value,this)"></div>
+        <div class="field inline-sm" style="flex:1;min-width:200px"><label>holidays</label><input type="text" value="${BIZ.holidays.join(', ')}" style="width:100%;font-size:12px" onchange="bizHolidays(this.value,this)" placeholder="YYYY-MM-DD, comma-separated"></div>
       </div>
       <div class="mini muted" style="margin-top:8px">A ticket opened Friday 5 PM won't breach on Saturday — due dates walk only working minutes.</div>
     </div>
@@ -853,8 +853,10 @@ function viewSettings(){
       <div class="card-head flush"><h3>Priorities &amp; SLA</h3><span class="hint">tiers are editable — targets in hours drive the SLA column</span></div>
       ${PRIOS.slice().sort((a,b)=>b.id-a.id).map(p=>{ const arch=isArch(p); return `<div class="setting-row" ${arch?'style="opacity:.55"':''}><div class="sl"><b>${prioTag(p.id)}</b>${arch?` <span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Archived</span>`:''}
         <div style="display:flex;gap:3px;align-items:center;margin-top:5px">${prioSwatches(p)}</div></div>
-        <label class="mini muted">first response <input type="number" value="${SLA[p.id]?.fr??''}" min="1" style="width:64px;margin-left:6px" onchange="slaSet(${p.id},'fr',this.value,'${jsq(p.label)}')"></label>
-        <label class="mini muted">resolution <input type="number" value="${SLA[p.id]?.res??''}" min="1" style="width:64px;margin-left:6px" onchange="slaSet(${p.id},'res',this.value,'${jsq(p.label)}')"></label>
+        <div class="fgrid">
+          <div class="field inline-sm"><label>first response</label><input type="number" value="${SLA[p.id]?.fr??''}" min="1" style="width:64px" onchange="slaSet(${p.id},'fr',this.value,'${jsq(p.label)}')"></div>
+          <div class="field inline-sm"><label>resolution</label><input type="number" value="${SLA[p.id]?.res??''}" min="1" style="width:64px" onchange="slaSet(${p.id},'res',this.value,'${jsq(p.label)}')"></div>
+        </div>
         <button class="rowbtn" onclick="prioModal(${p.id})">Rename</button>
         <button class="rowbtn" onclick="archivePrio(${p.id})">${arch?'Restore':'Archive'}</button>
       </div>`;}).join('')}
@@ -864,26 +866,27 @@ function viewSettings(){
     <div class="card card-pad">
       <div class="card-head flush"><h3>Caller verification</h3><span class="hint">one-time codes for sensitive requests</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>SMS</b>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
-            <select style="width:auto" onchange="vcfgSet('sms.provider',this.value,this)"><option ${smsProv==='voip.ms'?'selected':''}>voip.ms</option><option ${smsProv==='Twilio'?'selected':''}>Twilio</option></select>
-            <span class="mini muted">sending DID</span><input type="text" value="${esc(VCFG.sms.did)}" class="in-mono" style="width:140px" onchange="vcfgSet('sms.did',this.value,this)">
+          <div class="fgrid" style="margin-top:6px">
+            <div class="field inline-sm"><label>provider</label><select style="width:auto" onchange="vcfgSet('sms.provider',this.value,this)"><option ${smsProv==='voip.ms'?'selected':''}>voip.ms</option><option ${smsProv==='Twilio'?'selected':''}>Twilio</option></select></div>
+            <div class="field inline-sm"><label>sending DID</label><input type="text" value="${esc(VCFG.sms.did)}" class="in-mono" style="width:140px" onchange="vcfgSet('sms.did',this.value,this)"></div>
           </div>
           ${smsProv==='voip.ms'
-            ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">voip.ms API username</span><input type="text" value="${esc(VCFG.sms.apiUser)}" class="in-mono" style="width:220px" onchange="vcfgSet('sms.apiUser',this.value,this)"></div>${secretRow('voipKey')}`
-            : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0"><span class="mini muted" style="width:170px">Twilio account SID</span><input type="text" value="${esc(VCFG.sms.twilioSid)}" placeholder="AC…" class="in-mono" style="width:220px" onchange="vcfgSet('sms.twilioSid',this.value,this)"></div>${secretRow('twilioToken')}`}
+            ? `<div class="field inline-sm" style="margin-top:8px"><label>voip.ms API username</label><input type="text" value="${esc(VCFG.sms.apiUser)}" class="in-mono" style="width:220px" onchange="vcfgSet('sms.apiUser',this.value,this)"></div>${secretRow('voipKey')}`
+            : `<div class="field inline-sm" style="margin-top:8px"><label>Twilio account SID</label><input type="text" value="${esc(VCFG.sms.twilioSid)}" placeholder="AC…" class="in-mono" style="width:220px" onchange="vcfgSet('sms.twilioSid',this.value,this)"></div>${secretRow('twilioToken')}`}
         </div>
         <button class="rowbtn" onclick="vcfgToggle('sms')">${VCFG.sms.enabled?'Disable':'Enable'}</button>
         <span class="chip ${VCFG.sms.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.sms.enabled?'Connected':'Off'}</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Email</b>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
-            <span class="mini muted">Microsoft Graph · sends from</span><input type="text" value="${esc(VCFG.email.from)}" class="in-mono" style="width:280px" onchange="vcfgSet('email.from',this.value,this)">
-            <span class="mini muted">(app-scoped Mail.Send)</span>
+          <div class="field inline-sm" style="margin-top:6px"><label>Microsoft Graph · sends from</label>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="text" value="${esc(VCFG.email.from)}" class="in-mono" style="width:280px" onchange="vcfgSet('email.from',this.value,this)"><span class="mini muted">(app-scoped Mail.Send)</span></div>
           </div></div>
         <button class="rowbtn" onclick="vcfgToggle('email')">${VCFG.email.enabled?'Disable':'Enable'}</button>
         <span class="chip ${VCFG.email.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.email.enabled?'Connected':'Off'}</span></div>
       <div class="setting-row"><div class="sl"><b>Policy</b><p>6-digit code · stored as a salted hash, never plaintext · destination always the contact record, shown masked</p></div>
-        <label class="mini muted">expires <input type="number" value="${VCFG.ttlMin}" min="1" max="60" style="width:56px;margin-left:6px" onchange="vcfgSet('ttlMin',this.value,this)"> min</label>
-        <label class="mini muted">attempts <input type="number" value="${VCFG.attempts}" min="1" max="5" style="width:56px;margin-left:6px" onchange="vcfgSet('attempts',this.value,this)"></label></div>
+        <div class="fgrid">
+          <div class="field inline-sm"><label>expires</label><div style="display:flex;gap:6px;align-items:center"><input type="number" value="${VCFG.ttlMin}" min="1" max="60" style="width:56px" onchange="vcfgSet('ttlMin',this.value,this)"><span class="mini muted">min</span></div></div>
+          <div class="field inline-sm"><label>attempts</label><input type="number" value="${VCFG.attempts}" min="1" max="5" style="width:56px" onchange="vcfgSet('attempts',this.value,this)"></div>
+        </div></div>
       <div class="setting-row"><div class="sl"><b>Audit</b><p>Pass or fail, the outcome lands in the Audit Log always; this controls whether it's also posted to the ticket thread and tagged</p></div>
         <button class="rowbtn" onclick="vcfgTogglePost()">${VCFG.postToThread?'Disable thread posts':'Enable thread posts'}</button>
         <span class="chip ${VCFG.postToThread?'st-solved':'st-closed'}"><span class="cdot"></span>${VCFG.postToThread?'Posting to thread':'Audit Log only'}</span></div>
@@ -895,10 +898,10 @@ function viewSettings(){
     <div class="card card-pad">
       <div class="card-head flush"><h3>Authentication</h3><span class="hint">who gets in, and as what</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Microsoft Entra ID SSO</b>
-          <div style="display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 10px;align-items:center;margin:8px 0 2px;max-width:560px">
-            <span class="mini muted">OIDC · tenant</span><input type="text" value="${esc(AUTH_CFG.tenant)}" class="in-mono" style="width:100%" onchange="authSet('tenant',this.value,this)">
-            <span class="mini muted">client ID</span><input type="text" value="${esc(AUTH_CFG.clientId)}" placeholder="Graph app's ID by default" class="in-mono" style="width:100%" onchange="authSet('clientId',this.value,this)">
-            <span class="mini muted">redirect URI</span><input type="text" value="${esc(AUTH_CFG.redirectUri)}" placeholder="https://…/auth/oidc/callback (blank = derive from request)" class="in-mono" style="width:100%" onchange="authSet('redirectUri',this.value,this)">
+          <div style="margin:8px 0 2px;max-width:560px">
+            <div class="field inline-sm" style="margin-bottom:8px"><label>OIDC · tenant</label><input type="text" value="${esc(AUTH_CFG.tenant)}" class="in-mono" style="width:100%" onchange="authSet('tenant',this.value,this)"></div>
+            <div class="field inline-sm" style="margin-bottom:8px"><label>client ID</label><input type="text" value="${esc(AUTH_CFG.clientId)}" placeholder="Graph app's ID by default" class="in-mono" style="width:100%" onchange="authSet('clientId',this.value,this)"></div>
+            <div class="field inline-sm"><label>redirect URI</label><input type="text" value="${esc(AUTH_CFG.redirectUri)}" placeholder="https://…/auth/oidc/callback (blank = derive from request)" class="in-mono" style="width:100%" onchange="authSet('redirectUri',this.value,this)"></div>
           </div>
           <div class="mini muted" style="margin-bottom:4px">Sessions are shared with Ledger — one sign-in, both apps.</div>
           ${secretRow('entraSecret')}
@@ -911,9 +914,9 @@ function viewSettings(){
             ? 'Security groups → roles, applied at each sign-in. Manual role edits in the Directory are overwritten at the user’s next sign-in.'
             : 'Disabled — every user’s role is assigned manually in the <b>Directory → Agents</b> card; Entra only authenticates.'}</p>
           <div style="${AUTH_CFG.roleMapping?'':'opacity:.45;pointer-events:none'}">
-          ${state.roleDefs.filter(r=>r.active!==false).map(r=>`<div style="display:flex;gap:8px;align-items:center;margin:4px 0">
-            <input type="text" value="${esc(r.entra)}" placeholder="SG-…" class="in-mono" style="width:200px" onchange="entraSet('${jsq(r.name)}',this.value,this)">
-            <span class="mini muted">→ ${esc(r.name)}</span></div>`).join('')}
+          ${state.roleDefs.filter(r=>r.active!==false).map(r=>`<div class="field inline-sm" style="margin:8px 0">
+            <label>→ ${esc(r.name)}</label>
+            <input type="text" value="${esc(r.entra)}" placeholder="SG-…" class="in-mono" style="width:200px" onchange="entraSet('${jsq(r.name)}',this.value,this)"></div>`).join('')}
           </div>
         </div>
         <button class="rowbtn" onclick="authToggleMapping()">${AUTH_CFG.roleMapping?'Disable':'Enable'}</button>
@@ -921,10 +924,10 @@ function viewSettings(){
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Local passwords &amp; MFA</b>
           <p>${AUTH_CFG.localPasswords?'Enabled — fallback credentials active alongside SSO. Passwords are argon2id-hashed; MFA is TOTP (authenticator app).':'Disabled — no separate credentials to phish or rotate.'} Break-glass admin lives in the vault.</p>
           ${AUTH_CFG.localPasswords?`
-          <div style="display:flex;gap:10px;align-items:center;margin:8px 0">
-            <span class="mini muted">MFA policy</span>
-            <select style="width:auto" onchange="authSet('mfa',this.value,this)"><option value="required" ${AUTH_CFG.mfa==='required'?'selected':''}>Required (TOTP)</option><option value="optional" ${AUTH_CFG.mfa==='optional'?'selected':''}>Optional</option></select>
-            <span class="mini muted">· per-person passwords and MFA are reset in <a href="#" onclick="go('directory');return false" style="color:var(--brand)">Directory → Agents</a> — no email links, resets are admin-direct</span>
+          <div style="margin:8px 0">
+            <div class="field inline-sm"><label>MFA policy</label>
+              <select style="width:auto" onchange="authSet('mfa',this.value,this)"><option value="required" ${AUTH_CFG.mfa==='required'?'selected':''}>Required (TOTP)</option><option value="optional" ${AUTH_CFG.mfa==='optional'?'selected':''}>Optional</option></select></div>
+            <div class="mini muted" style="margin-top:4px">per-person passwords and MFA are reset in <a href="#" onclick="go('directory');return false" style="color:var(--brand)">Directory → Agents</a> — no email links, resets are admin-direct</div>
           </div>`:''}
         </div>
         <button class="rowbtn" onclick="authToggleLocal()">${AUTH_CFG.localPasswords?'Disable':'Enable'}</button>

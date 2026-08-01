@@ -3,7 +3,7 @@
    Owns: render()/renderNav() (focus/caret/scroll carry — bug #26) · router
    go()/openTicket()/openClient() · shared chip renderers · commitRender +
    input ergonomics listeners · modal/scrim · combo (searchable dropdown) ·
-   multiCombo (checkbox dropdown + chips, empty = All) · toast ·
+   multiCombo (checkbox dropdown + chips, empty = All; noAll opt-out) · toast ·
    notification bell · global search · list pagination paginate()/pagerBar()
    (per-list page state + per-user page-size persistence).
    Endpoints: POST /api/automations/notifications/read
@@ -14,7 +14,7 @@
 
 function go(v){ if(!canView(v)) v='dashboard'; state.view=v; render(); }
 function openTicket(id){ const t=tk(id); if(!ticketVisible(t)) { toast('That ticket is outside your access.'); return; } state.ticketId=id; state.view='ticket'; state.composer={kind:'reply', typeId:null, logTime:true}; render(); }
-function openClient(id){ if(!can('view_clients')) return; state.clientId=id; state.clf={st:[],tag:[],owner:[],q:''}; state.view='clientv'; render(); }
+function openClient(id){ if(!can('view_clients')) return; state.clientId=id; state.clf={st:[],tag:[],owner:[],q:'',from:'',to:''}; state.view='clientv'; render(); }
 
 function renderNav(){
   const sc = scoped();
@@ -54,7 +54,10 @@ function render(){
     state.view==='ticket' ? ('Ticket #'+state.ticketId) :
     state.view==='clientv' ? (client(state.clientId)?.name || 'Client') :
     (state.view==='tickets' && !can('view_all')) ? 'My Tickets' : pg.t;
-  document.getElementById('pgSub').innerHTML = pg.s();
+  /* subtitle strings may legitimately be '' (state.js) — hide the node so an
+     empty .page-sub never leaves its stray margin under the title */
+  { const sub = pg.s(), se = document.getElementById('pgSub');
+    se.innerHTML = sub; se.style.display = sub ? '' : 'none'; }
   document.getElementById('content').innerHTML = ({
     dashboard:viewDashboard, tickets:viewTickets, projects:viewProjects, ticket:viewTicket, clients:viewClients,
     clientv:viewClient, reports:viewReports, automations:viewAutomations, directory:viewDirectory, settings:viewSettings, audit:viewAudit
@@ -230,15 +233,18 @@ document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.combo')) do
    "(archived)" (row 37). onchg is a GLOBAL function NAME (inline-handler
    architecture): window[onchg](selectedArr, fkey) fires after every toggle;
    that handler owns state + render(). open + the typed query survive the
-   rebuild so the list stays up while several boxes are ticked. */
-const _mcombos = {};  /* fkey → {opts, sel, onchg, open, q} — options live here, not in the DOM */
-function multiCombo(fkey, opts, sel, onchg, placeholder){
+   rebuild so the list stays up while several boxes are ticked. noAll (6th
+   arg, optional) suppresses the leading "All" row — for pickers where empty
+   already reads as "none" (a hide-list), not "everything"; ticking boxes off
+   one by one is the only clear there. Default (omitted) keeps the All row. */
+const _mcombos = {};  /* fkey → {opts, sel, onchg, open, q, noAll} — options live here, not in the DOM */
+function multiCombo(fkey, opts, sel, onchg, placeholder, noAll){
   sel = (sel||[]).slice();
   const has = v => sel.some(s=>String(s)===String(v));
   opts = opts.filter(o=>!o.archived || has(o.v))
              .map(o=>o.archived ? Object.assign({},o,{label:o.label+' (archived)'}) : o);
   const prev = _mcombos[fkey]||{};
-  const m = _mcombos[fkey] = { opts, sel, onchg, open: !!prev.open, q: prev.q||'' };
+  const m = _mcombos[fkey] = { opts, sel, onchg, open: !!prev.open, q: prev.q||'', noAll: !!noAll };
   const chips = sel.map(v=>{ const o=opts.find(x=>String(x.v)===String(v));
     return o?`<span class="chip tagchip" style="margin-top:3px">${esc(o.label)}<button onclick="mcToggle('${fkey}','${jsq(String(o.v))}')" title="remove">×</button></span>`:''; }).join('');
   return `<div class="combo mcombo" style="position:relative">
@@ -254,7 +260,7 @@ function mcRows(fkey, q){
   q = (q||'').trim().toLowerCase();
   const has = v => m.sel.some(s=>String(s)===String(v));
   const row = (h, on, click) => `<div style="display:flex;align-items:center;gap:7px;padding:7px 11px;cursor:pointer;font-size:13px" onmousedown="event.preventDefault();${click}"><input type="checkbox" tabindex="-1" style="pointer-events:none" ${on?'checked':''}>${h}</div>`;
-  return row(`<b>All</b>`, !m.sel.length, `mcClear('${fkey}')`) +
+  return (m.noAll ? '' : row(`<b>All</b>`, !m.sel.length, `mcClear('${fkey}')`)) +
     (m.opts.filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q))
       .slice(0,50)
       .map(o=>row(`<b>${esc(o.label)}</b>${o.sub?` <span class="mini muted">${esc(o.sub)}</span>`:''}`, has(o.v), `mcToggle('${fkey}','${jsq(String(o.v))}')`)).join('')

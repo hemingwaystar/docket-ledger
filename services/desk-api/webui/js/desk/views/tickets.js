@@ -30,7 +30,8 @@
    Queue tabs come ONLY from effectiveOverviews() (state.js: admin
    desk_ui.overviews shaped by me.prefs.overviews) — no tab list is hardcoded
    here. Queue filter values (qf group/prio/client/st/tag) are ARRAYS:
-   empty = all; qf.scope is ''(anyone)/'mine'/'unassigned'.
+   empty = all; qf.scope is ''(anyone)/'mine'/'unassigned'; qf.from/qf.to are
+   'YYYY-MM-DD' creation-date bounds (inclusive, local days; '' = no bound).
    ========================================================================== */
 
 /* ==========================================================================
@@ -74,12 +75,21 @@ function setQFPrio(vals){ setQF('prio', vals); }
 function setQFClient(vals){ setQF('client', vals); }
 function setQFSt(vals){ setQF('st', vals); }
 function setQFTag(vals){ setQF('tag', vals); }
+/* date-range setters — date inputs are segmented (the commitRender family):
+   change fires while still focused, so the re-render defers to blur. The
+   native clear (×) fires change with '' = bound removed. */
+function setQFFrom(v, el){ if(state.qf.from===v) return; state.qf.from=v; commitRender(el); }
+function setQFTo(v, el){ if(state.qf.to===v) return; state.qf.to=v; commitRender(el); }
 /* stale-shape armor: anything that isn't an array (an old 'all', a bare id
    from a deep link) coerces in place — the ledger _mfNorm pattern */
 function qfNorm(){
   ['group','prio','client','st','tag'].forEach(k=>{ const v=state.qf[k];
     if(!Array.isArray(v)) state.qf[k] = (v && v!=='all') ? [v] : []; });
   if(!['','mine','unassigned'].includes(state.qf.scope)) state.qf.scope = '';
+  /* creation-date bounds: plain 'YYYY-MM-DD' from <input type=date>; anything
+     else (missing key on old state shapes, stale garbage) resets to '' */
+  ['from','to'].forEach(k=>{ const v=state.qf[k];
+    if(typeof v!=='string' || (v && !/^\d{4}-\d{2}-\d{2}$/.test(v))) state.qf[k]=''; });
   /* prune selections that no longer resolve (a renamed custom state re-slugs
      its id; a tag's last ticket closes) — a ghost value would filter the
      queue to zero rows with no visible chip to remove */
@@ -112,6 +122,10 @@ function qfApply(rows){
   if(f.client.length) rows = rows.filter(t=>f.client.includes(t.clientId));
   if(f.st.length) rows = rows.filter(t=>f.st.some(v=>String(v)===String(t.st)));
   if(f.tag.length) rows = rows.filter(t=>f.tag.some(v=>t.tags.includes(v)));
+  /* creation-date window, inclusive local days: from = that day's midnight,
+     to = 23:59:59.999 (spanMs parses local; MIN-1 walks 23:59 to .999) */
+  if(f.from){ const a=spanMs(f.from,'00:00'); rows = rows.filter(t=>t.createdAt>=a); }
+  if(f.to){ const b=spanMs(f.to,'23:59')+MIN-1; rows = rows.filter(t=>t.createdAt<=b); }
   if(f.q){ const q=f.q.toLowerCase(); rows = rows.filter(t=> (TITLES[t.id]||'').toLowerCase().includes(q) || String(t.id).includes(q) || client(t.clientId).name.toLowerCase().includes(q)); }
   return qfScopeF(rows, f.scope);
 }
@@ -155,6 +169,12 @@ function viewTickets(){
     <span style="display:inline-block;min-width:180px;vertical-align:middle">${multiCombo('qfClient', CLIENTS.filter(c=>c.status!=='archived'||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.status==='archived'?' (archived)':''),sub:c.domain||''})), f.client, 'setQFClient', 'All clients')}</span>
     <span style="display:inline-block;min-width:150px;vertical-align:middle" title="System states are listed too — filtering by them is legitimate">${multiCombo('qfSt', STATES.filter(s=>!isArch(s)||f.st.some(v=>String(v)===String(s.id))).map(s=>({v:s.id,label:s.label+(isArch(s)?' (archived)':'')})), f.st, 'setQFSt', 'Any state')}</span>
     <span style="display:inline-block;min-width:130px;vertical-align:middle">${multiCombo('qfTag', [...new Set(scoped().flatMap(t=>t.tags))].sort().map(tg=>({v:tg,label:tg})), f.tag, 'setQFTag', 'Any tag')}</span>
+    <span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle" title="Filter by creation date — inclusive; leave either blank for no bound">
+      <span class="mini muted">created</span>
+      <input type="date" value="${esc(f.from)}" data-fkey="qf-from" style="width:auto" onchange="setQFFrom(this.value,this)" title="Created on or after — from that day's local midnight">
+      <span class="mini muted">–</span>
+      <input type="date" value="${esc(f.to)}" data-fkey="qf-to" style="width:auto" onchange="setQFTo(this.value,this)" title="Created on or before — through that day's local end">
+    </span>
     <select style="width:auto" onchange="setQF('scope',this.value)" title="Whose tickets — same tests the queue tabs use">
       <option value="">Anyone</option>
       <option value="mine" ${f.scope==='mine'?'selected':''}>Mine</option>

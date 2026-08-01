@@ -270,6 +270,16 @@ select:disabled{opacity:.55;cursor:not-allowed}
 .setting-row .sl{flex:1}
 .setting-row .sl b{font-weight:600;font-size:13.5px}
 .setting-row .sl p{margin:3px 0 0;color:var(--ink-3);font-size:12.5px}
+/* stacked labeled field — the first three rules are the SHARED BLOCK with
+   desk.css (keep the two sheets aligned; house pattern since build 13).
+   Build 14 makes label-above the settings standard: every labeled text/
+   number/select field is a .field (label + optional .cap caption above,
+   full-width control below); toggles/buttons/chips stay inline in a
+   .setting-row. */
+.field{margin-bottom:13px}
+.field label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:5px}
+.field select,.field input,.field textarea{width:100%}
+.field .cap{margin:-1px 0 7px;color:var(--ink-3);font-size:12.5px}
 
 /* ---- modal / toast ---- */
 .scrim{position:fixed;inset:0;background:rgba(21,32,41,.42);display:none;place-items:center;z-index:100;padding:20px}
