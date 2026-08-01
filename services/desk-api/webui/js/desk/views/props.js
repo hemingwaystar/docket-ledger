@@ -147,6 +147,12 @@ function unchild(pid, cid){
 }
 
 /* ---------------- wake timer / title / properties ---------------- */
+/* datetime-local wants LOCAL wall-clock; toISOString() is UTC and shifted
+   the displayed wake time by the timezone offset */
+function dtLocalVal(ms){
+  const d=new Date(ms), p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 function setPendingUntil(tid, v, srcEl){
   const t = tk(tid); if(!t || !can('edit_props')) return;
   const was = t.pendingUntil;
@@ -166,7 +172,8 @@ function setPendingUntil(tid, v, srcEl){
   $fetch('/api/tickets/'+tid,{method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({pending_until:t.pendingUntil?new Date(t.pendingUntil).toISOString():'',version:t.version})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      if(d&&d.version) t.version=d.version; });   /* keep the lock fresh — a second edit before the next hydrate must not 409 */
 }
 
 function saveTitle(tid){
@@ -184,7 +191,8 @@ function saveTitle(tid){
     $fetch('/api/tickets/'+tid,{method:'PATCH',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({title:TITLES[tid],version:t.version})})
-      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+        if(d&&d.version) t.version=d.version;
         setTimeout(()=>hydrate(),400); });
   }
   state.editTitle = null; render();
@@ -228,7 +236,8 @@ function setProp(tid,k,v,noCascade){
   payload.version=t.version;
   $fetch('/api/tickets/'+tid,{method:'PATCH',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      if(d&&d.version) t.version=d.version;       /* pause → set wake within one hydrate window must not 409 */
       setTimeout(()=>hydrate(),400); });
 }
 function cascadeModal(tid,v,openKids){
@@ -257,7 +266,8 @@ function cascadeAll(tid,v){
   $fetch('/api/tickets/'+tid+'/close-cascade',{method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({state:(st8(v)||{label:'Closed'}).label, version:ver})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      if(d&&d.version) t.version=d.version;
       setTimeout(()=>hydrate(),400); });
 }
 
@@ -287,7 +297,8 @@ function reclientTicket(tid, targetId){
   $fetch('/api/tickets/'+tid+'/client',{method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({client:targetId,version:t.version})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      if(d&&d.version) t.version=d.version;
       setTimeout(()=>hydrate(),400); });
 }
 /* the person verification targets and replies address — the ticket's contact */
@@ -306,7 +317,8 @@ function setPrimaryContact(tid, pid){
   $fetch('/api/tickets/'+tid,{method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({contact:pid||'',version:t.version})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      if(d&&d.version) t.version=d.version;
       setTimeout(()=>hydrate(),400); });
 }
 
@@ -438,8 +450,13 @@ function renderProps(t){
         ${(contact(t.contactId)||{}).vip?`<span class="chip st-pending" style="margin-top:4px" title="VIP contact"><span class="cdot"></span>★ VIP</span>`:''}
         <div class="mini muted" style="margin-top:4px">Caller verification and outgoing replies address this person</div></div>
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
-        <input type="datetime-local" value="${t.pendingUntil? new Date(t.pendingUntil).toISOString().slice(0,16):''}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
-        <div class="mini muted" style="margin-top:4px">${t.pendingUntil? 'reopens '+fmtDT(t.pendingUntil) : 'no timer — stays paused until touched'}</div></div>`:''}
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="datetime-local" id="wake-${t.id}" value="${dtLocalVal(t.pendingUntil||nowMs())}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
+          ${t.pendingUntil
+            ?`<button class="rowbtn" onclick="setPendingUntil(${t.id},'',null)" ${dis('edit_props')}>Clear</button>`
+            :`<button class="rowbtn" onclick="setPendingUntil(${t.id},document.getElementById('wake-${t.id}').value,null)" ${dis('edit_props')}>Set</button>`}
+        </div>
+        <div class="mini muted" style="margin-top:4px">${t.pendingUntil? 'reopens '+fmtDT(t.pendingUntil) : 'no timer — prefilled with now; adjust or press Set'}</div></div>`:''}
       ${t.parentId?`<div class="prop"><div class="pk">Parent ticket</div>
         <div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${t.parentId});return false" style="color:var(--brand)">#${t.parentId}</a>${(pp=>pp?`<span ${stChipAttrs(st8(pp.st))}><span class="cdot"></span>${esc((st8(pp.st)||{}).label||pp.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[pp.id]||firstLine(pp)).slice(0,36))}</span>`:'<span class="muted">not in view</span>')(tk(t.parentId))}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.parentId},${t.id})" title="Detach from the parent">×</button>`:''}</div></div>`:''}
       ${(t.children&&t.children.length)?`<div class="prop"><div class="pk">Child tickets · ${t.children.filter(id=>{const c=tk(id);return c&&(st8(c.st)||{}).type!=='done';}).length} open of ${t.children.length}</div>
