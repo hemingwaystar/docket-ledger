@@ -1,5 +1,6 @@
 """Directory writes — the control plane the prototypes edited in Docket.
-Archive-first everywhere; the DB refuses deletes and sentinel abuse."""
+Archive-first everywhere; the DB refuses deletes and sentinel abuse — with
+one user-approved exception: guarded role hard-delete (0030)."""
 import json
 from fastapi import APIRouter, HTTPException, Request
 from psycopg import errors as pg_errors
@@ -35,11 +36,11 @@ def directory(request: Request):
                                             WHERE d.client_id = c.id), '{}') AS domains
                              FROM shared.clients c ORDER BY c.is_sentinel DESC, c.name""")
             out["clients"] = cur.fetchall()
-            cur.execute("""SELECT r.id, r.name, r.note, r.is_core, r.entra_group,
+            cur.execute("""SELECT r.id, r.name, r.note, r.is_core, r.entra_group, r.active,
                                   COALESCE((SELECT array_agg(permission_id ORDER BY permission_id)
                                              FROM shared.role_permissions rp
                                             WHERE rp.role_id = r.id), '{}') AS permissions
-                             FROM shared.roles r WHERE r.active ORDER BY r.name""")
+                             FROM shared.roles r ORDER BY r.name""")
             out["roles"] = cur.fetchall()
             return out
 
@@ -345,23 +346,26 @@ class PatchRole(BaseModel):
     entra_group: str | None = None     # "" clears
     add: list[str] = []                # permission ids to grant
     remove: list[str] = []             # permission ids to revoke
+    active: bool | None = None         # archive/restore — custom roles only; archived = hidden from pickers, holders keep it
 
 
 @router.patch("/roles/{name}")
 def patch_role(name: str, body: PatchRole, request: Request):
-    """Role edits — permissions replace-style (0017 grants the DELETE), note
-    and Entra group mapping. Sessions snapshot perms at sign-in, so changes
-    take effect on each agent's next login — stated in the audit line."""
+    """Role edits — permissions replace-style (0017 grants the DELETE), note,
+    Entra group mapping, and archive/restore via `active` (custom roles only).
+    Sessions snapshot perms at sign-in, so changes take effect on each agent's
+    next login — stated in the audit line."""
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, 'manage_roles')
         with conn.cursor() as cur:
-            cur.execute("SELECT id, is_core FROM shared.roles WHERE name = %s AND active",
+            # no active filter — restore has to be able to find an archived role
+            cur.execute("SELECT id, is_core, active FROM shared.roles WHERE name = %s",
                         (name,))
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(404, "Unknown role")
-            rid, is_core = row
+            rid, is_core, is_active = row
             changes = []
             if body.rename is not None and body.rename.strip() and body.rename != name:
                 # agents reference role_id, so a rename never breaks membership;
@@ -382,6 +386,16 @@ def patch_role(name: str, body: PatchRole, request: Request):
                 cur.execute("UPDATE shared.roles SET entra_group = NULLIF(%s, '') WHERE id = %s",
                             (body.entra_group, rid))
                 changes.append(f"entra map → {body.entra_group or '—'}")
+            if body.active is not None and body.active != is_active:
+                if is_core:
+                    raise HTTPException(409, "Core roles stay active — archive is for custom roles")
+                cur.execute("UPDATE shared.roles SET active = %s WHERE id = %s",
+                            (body.active, rid))
+                cur.execute("SELECT count(*) FROM shared.agents WHERE role_id = %s", (rid,))
+                (holders,) = cur.fetchone()
+                changes.append("restored — back in the pickers" if body.active else
+                               "archived — hidden from pickers"
+                               + (f"; {holders} holder(s) keep it until reassigned" if holders else ""))
             for pid in body.add:
                 cur.execute("""INSERT INTO shared.role_permissions (role_id, permission_id)
                                VALUES (%s, %s) ON CONFLICT DO NOTHING""", (rid, pid))
@@ -396,6 +410,38 @@ def patch_role(name: str, body: PatchRole, request: Request):
             auth.audit(conn, "desk", "Role updated", f"role:{rid}",
                        f"{name} · " + " · ".join(changes)
                        + " — applies at each agent's next sign-in")
+        return {"ok": True}
+
+
+@router.delete("/roles/{name}")
+def delete_role(name: str, request: Request):
+    """HARD delete — the one user-approved exception to no-DELETE (0030):
+    roles hold no immutable business data; audit.events keeps their story.
+    Blocked while ANY agent (active OR deactivated) still holds the role —
+    the 0030 guard trigger enforces it even if this pre-check is bypassed."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_roles")
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, is_core FROM shared.roles WHERE name = %s", (name,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "Unknown role")
+            rid, is_core = row
+            if is_core:
+                raise HTTPException(409, "Core roles cannot be deleted")
+            cur.execute("SELECT count(*) FROM shared.agents WHERE role_id = %s", (rid,))
+            (holders,) = cur.fetchone()
+            if holders:
+                raise HTTPException(409,
+                    f"{holders} agent(s) still hold “{name}” — deactivated agents count; "
+                    "reassign them (PATCH /api/directory/agents/{email} with a new role) first")
+            try:
+                cur.execute("DELETE FROM shared.roles WHERE id = %s", (rid,))
+            except pg_errors.RaiseException as e:   # 0030 guard backstop
+                raise HTTPException(409, e.diag.message_primary or "Role is guarded")
+        auth.audit(conn, "desk", "Role deleted", f"role:{rid}",
+                   f"{name} · permanently removed with its permission grants · by {who['label']}")
         return {"ok": True}
 
 

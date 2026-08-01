@@ -3,7 +3,9 @@
   PUT /api/secrets/odoo               write-only, KEK-sealed
   PATCH /api/clients/{id}             the two billing columns Ledger owns
   POST /api/types · PATCH /api/types/{id} · PUT /api/types/{id}/rate
+  PUT /api/default-rates/{type_id}    global default rates, opt-in per client
   PUT /api/clients/{id}/rates         per-client overrides, effective today
+  PUT /api/clients/{id}/default-rates the 'use defaults' switch + per-type toggles
   PUT /api/clients/{id}/access        all | restricted | group"""
 import json
 from fastapi import APIRouter, HTTPException, Request
@@ -216,6 +218,45 @@ def put_type_rate(type_id: str, body: TypeRate, request: Request):
         return {"ok": True}
 
 
+class DefaultRate(BaseModel):
+    rate_cents: int | None = None      # None = unset from today (dated row; falls through the ladder)
+
+
+@router.put("/api/default-rates/{type_id}")
+def put_default_rate(type_id: str, body: DefaultRate, request: Request):
+    """Global default rate per activity type — effective-dated; a client
+    prices from it only while its 'use global default rates' switch is on
+    and the type isn't toggled off. First-ever row anchors at epoch (same
+    reason as put_type_rate: never price pre-existing time at $0)."""
+    if body.rate_cents is not None and body.rate_cents < 0:
+        raise HTTPException(422, "rate_cents must be >= 0")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_sentinel FROM ledger.activity_types WHERE id::text = %s",
+                        (type_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "No such activity type")
+            if row[0]:
+                raise HTTPException(422, "The Unclassified sentinel never prices")
+            cur.execute("SELECT EXISTS (SELECT 1 FROM ledger.default_rates "
+                        "WHERE activity_type_id = %s)", (type_id,))
+            (has_rows,) = cur.fetchone()
+            cur.execute("""INSERT INTO ledger.default_rates
+                             (activity_type_id, valid_from, rate_cents)
+                           VALUES (%s, CASE WHEN %s THEN current_date
+                                            ELSE '1970-01-01'::date END, %s)
+                           ON CONFLICT (activity_type_id, valid_from)
+                             DO UPDATE SET rate_cents = EXCLUDED.rate_cents""",
+                        (type_id, has_rows, body.rate_cents))
+        auth.audit(conn, "ledger", "Default rate set", f"type:{type_id}",
+                   f"global default {body.rate_cents if body.rate_cents is not None else 'unset'}c/h "
+                   f"from today ({who['label']})")
+        return {"ok": True}
+
+
 class ClientRate(BaseModel):
     activity_type: str | None = None   # uuid; None = client-wide override
     rate_cents: int | None = None      # None = inherit (clears the override)
@@ -251,6 +292,42 @@ def put_client_rate(client_id: str, body: ClientRate, request: Request):
                    (f"type {body.activity_type}" if body.activity_type else "client-wide")
                    + f" · rate {body.rate_cents if body.rate_cents is not None else 'inherit'}"
                    + f" · billable {body.billable if body.billable is not None else 'inherit'}")
+        return {"ok": True}
+
+
+class ClientDefaultOptin(BaseModel):
+    activity_type: str | None = None   # uuid; None = the client-wide switch
+    enabled: bool
+
+
+@router.put("/api/clients/{client_id}/default-rates")
+def put_client_default_optin(client_id: str, body: ClientDefaultOptin, request: Request):
+    """Effective-dated opt-in flags: the wide row is the 'use global default
+    rates' switch (off until a row says on); a typed row toggles ONE work
+    type out of / back into inheriting (absent = inherits while the switch
+    is on). Dated rows mean a flip today never re-prices yesterday."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_approve", "l_export")
+        with conn.cursor() as cur:
+            if body.activity_type is None:
+                cur.execute("""INSERT INTO ledger.client_default_rate_optin
+                                 (client_id, activity_type_id, valid_from, enabled)
+                               VALUES (%s, NULL, current_date, %s)
+                               ON CONFLICT (client_id, valid_from) WHERE activity_type_id IS NULL
+                                 DO UPDATE SET enabled = EXCLUDED.enabled""",
+                            (client_id, body.enabled))
+            else:
+                cur.execute("""INSERT INTO ledger.client_default_rate_optin
+                                 (client_id, activity_type_id, valid_from, enabled)
+                               VALUES (%s, %s, current_date, %s)
+                               ON CONFLICT (client_id, valid_from, activity_type_id)
+                                 WHERE activity_type_id IS NOT NULL
+                                 DO UPDATE SET enabled = EXCLUDED.enabled""",
+                            (client_id, body.activity_type, body.enabled))
+        auth.audit(conn, "ledger", "Client default-rates flag", f"client:{client_id}",
+                   (f"type {body.activity_type}" if body.activity_type else "use-defaults switch")
+                   + f" → {'on' if body.enabled else 'off'} ({who['label']})")
         return {"ok": True}
 
 

@@ -130,8 +130,9 @@ function viewReports(){
   const allTags = [...new Set(scoped().flatMap(t=>t.tags))].sort();
   const custom = f.from||f.to;
   const bd = reportBreakdown(sc);
+  const pgB = paginate('reportBd', bd);
   const dimLabel = (RF_BREAKDOWNS.find(([v])=>v===f.breakdown)||['','Group'])[1].replace('By ','');
-  const bdRows = bd.map(r=>`<tr>
+  const bdRows = pgB.slice.map(r=>`<tr>
       <td><div class="cell-title" style="font-weight:500">${esc(r.label)}</div></td>
       <td class="num">${r.n}</td><td class="num">${r.open}</td><td class="num">${r.resolved}</td>
       <td class="num"><span class="tape">${fmtHours(r.hours)}</span> h</td>
@@ -173,7 +174,7 @@ function viewReports(){
     <div class="card"><div class="card-head"><h3>Open tickets by group</h3></div><table class="tbl"><tbody>${rows(openT,t=>t.groupId,k=>esc(grp(k).name))}</tbody></table></div>
     <div class="card"><div class="card-head"><h3>Open tickets by priority</h3></div><table class="tbl"><tbody>${rows(openT,t=>t.prio,k=>prioTag(k))}</tbody></table></div>
     <div class="card"><div class="card-head"><h3>Tickets by client</h3></div><table class="tbl"><tbody>${rows(sc,t=>t.clientId,k=>esc(client(k).name))}</tbody></table></div>
-    <div class="card"><div class="card-head"><h3>Hours logged by technician</h3><span class="hint">detail & value in Ledger</span></div>
+    <div class="card"><div class="card-head"><h3>Hours logged by technician</h3></div>
       <table class="tbl"><tbody>${[...hrsByTech.entries()].sort((a,b)=>b[1]-a[1]).map(([tid,h])=>
         `<tr><td>${esc(agent(tid).name)}</td><td class="num"><span class="tape">${fmtHours(h)}</span> h</td></tr>`).join('') || `<tr><td class="mini muted" style="padding:14px 16px">No time in this slice.</td></tr>`}</tbody></table></div>
   </div>
@@ -184,5 +185,6 @@ function viewReports(){
       <thead><tr><th>${esc(dimLabel)}</th><th class="num">Tickets</th><th class="num">Open</th><th class="num">Resolved</th><th class="num">Hours</th><th class="num">Median FR</th></tr></thead>
       <tbody>${bdRows}</tbody>
     </table>
+    ${pagerBar(pgB)}
   </div>`;
 }

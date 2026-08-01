@@ -17,6 +17,11 @@
   <input id="pw" type="password" autocomplete="current-password" required>
   <div id="mfaRow"><label for="totp">Authenticator code</label>
   <input id="totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123 456"></div>
+  <div id="enrollBox" style="display:none">
+    <div class="err" style="display:block;background:none;color:var(--mut)">MFA is required on this account. Add it to your authenticator app, then enter the 6-digit code above and sign in again.</div>
+    <button type="button" id="enrollGo">Show enrollment secret</button>
+    <div id="enrollOut" style="display:none;word-break:break-all;font-family:monospace;font-size:12px;margin-top:8px"></div>
+  </div>
   <button>Sign in</button>
   </div>
   <div class="err" id="err"></div>

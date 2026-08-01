@@ -44,9 +44,14 @@ function periodFromKey(pk){
 function pfHistory(c, curKey){
   const keys={};
   Object.keys(state.periods).forEach(k=>{ const [cid,pk]=k.split('|'); if(cid===c.id) keys[pk]=1; });
-  state.entries.forEach(e=>{ if(e.clientId===c.id) keys[entryPeriod(e).key]=1; });
+  /* void entries never resurrect a period (approvals.js skips them the same
+     way, and the server hides void-only open periods from bootstrap) —
+     anything legitimate still arrives via state.periods above */
+  state.entries.forEach(e=>{ if(e.clientId===c.id && e.status!=='void') keys[entryPeriod(e).key]=1; });
   delete keys[curKey];
-  return Object.keys(keys).map(pk=>({pk,per:periodFromKey(pk)})).sort((a,b)=>b.per.start-a.per.start);
+  /* era clamp: key shapes are M2026-07 / W2026-07-20 / B2026-01-05, so
+     slice(1,5) is always the 4-digit year — string compare is correct */
+  return Object.keys(keys).filter(pk=>pk.slice(1,5)>='2000').map(pk=>({pk,per:periodFromKey(pk)})).sort((a,b)=>b.per.start-a.per.start);
 }
 function perChip(ps){
   return ps.status==='exported'
@@ -101,7 +106,8 @@ function viewPeriods(){
     const cur=periodFor(c.cycle||'monthly',NOW);
     rows.push({c,cur,hist:pfHistory(c,cur.key),archived:false,sentinel:true});
   });
-  const body=rows.map(({c,cur,hist,archived,sentinel})=>{
+  const pg=paginate('periods',rows);
+  const body=pg.slice.map(({c,cur,hist,archived,sentinel})=>{
     const ps=periodState(c.id,cur.key), t=pfTally(c.id,cur.key);
     const open=ps.status==='open', expanded=!!pf.open[c.id];
     const main=`<tr class="${archived||sentinel?'pf-dim':''}">
@@ -131,20 +137,21 @@ function viewPeriods(){
     }
     const shown=hist.map(({pk,per})=>({pk,per,ps:periodState(c.id,pk),t:pfTally(c.id,pk)}))
       .filter(x=>!hq || (x.per.label+' '+x.ps.status).toLowerCase().includes(hq));
+    const pgH=paginate('periodHist:'+c.id, shown);
     const histTable = hist.length===0
       ? `<div class="mini muted">No historical periods yet.</div>`
       : shown.length===0
       ? `<div class="mini muted">No historical periods match.</div>`
       : `<div class="pf-hist-tbl"><table class="tbl">
           <thead><tr><th>Period</th><th>Status</th><th class="num">Entries</th><th class="num">Hours</th><th class="num">Amount</th><th></th></tr></thead>
-          <tbody>${shown.map(x=>`<tr>
+          <tbody>${pgH.slice.map(x=>`<tr>
             <td><div class="cell-title">${x.per.label}</div><div class="cell-meta">${fmtDateShort(x.per.start)} – ${fmtDateShort(new Date(x.per.end-86400000))}</div></td>
             <td>${perChip(x.ps)}${x.ps.status==='exported'&&x.ps.exportRef?`<div class="cell-meta">ref <span class="tape">${x.ps.exportRef}</span></div>`:''}</td>
             <td class="num">${x.t.live}${x.t.voided?` <span class="mini" style="color:var(--void)">+${x.t.voided} void</span>`:''}</td>
             <td class="num">${fmtHours(x.t.h)}</td>
             <td class="num" style="font-weight:600">${fmtMoney(x.t.a)}${x.t.flat>0?`<div class="mini" style="color:var(--seal)">incl. ${fmtMoney(x.t.flat)} flat fees</div>`:''}</td>
             <td class="right" style="white-space:nowrap">${pfActions(c.id,x.pk,x.ps,x.t)}</td>
-          </tr>`).join('')}</tbody></table></div>`;
+          </tr>`).join('')}</tbody></table></div>${pagerBar(pgH)}`;
     const panel=`<tr class="expand"><td colspan="5"><div class="expand-inner">
       <div style="display:flex;align-items:center;gap:10px"><div class="cell-title">Current period — ${cur.label}</div>${perChip(ps)}</div>
       <div class="pf-stats tape">
@@ -173,7 +180,7 @@ function viewPeriods(){
   ${toolbar}
   <div class="card"><table class="tbl">
     <thead><tr><th>Client</th><th>Current period</th><th class="num">Entries</th><th class="num">Amount</th><th></th></tr></thead>
-    <tbody>${body||`<tr><td colspan="5"><div class="empty">${icon(IC.period)}<div>${q?'No clients match.':'No clients yet.'}</div></div></td></tr>`}</tbody></table></div>`;
+    <tbody>${body||`<tr><td colspan="5"><div class="empty">${icon(IC.period)}<div>${q?'No clients match.':'No clients yet.'}</div></div></td></tr>`}</tbody></table>${pagerBar(pg)}</div>`;
 }
 
 function approvePeriod(clientId,pk){
@@ -278,7 +285,7 @@ function previewPayload(clientId,pk){
   const es=state.entries.filter(e=>e.clientId===clientId && entryPeriod(e).key===pk && e.status!=='void');
   const lines={}; es.forEach(e=>{const p=priced(e); if(!p.billable)return; const t=atype(e.typeId); const k=t.id; (lines[k]=lines[k]||{name:t.name,qty:0,price:p.rate}); lines[k].qty+=p.h;});
   const flatLines = projFlatLines(clientId, pk).map(fl=>({name:`${fl.project} — ${fl.label}`, quantity:1, price_unit:fl.amount, uom:'Fee'}));
-  const payload={ partner:c.name, zammad_org_id:c.zorg, journal:state.settings.odoo.journal, move_type:'out_invoice', state:state.settings.odoo.mode,
+  const payload={ partner:c.name, client_id:c.id, journal:state.settings.odoo.journal, move_type:'out_invoice', state:state.settings.odoo.mode,
     invoice_line_ids:Object.values(lines).map(l=>({name:l.name,quantity:Number(l.qty.toFixed(2)),price_unit:l.price,uom:'Hours'})).concat(flatLines) };
   openModal(`<div class="modal-head"><h3>Odoo export payload</h3><p>${esc(c.name)} — what the connector would send</p></div>
     <div class="modal-body"><div class="note-body tape" style="font-size:12px;max-height:340px;overflow:auto">${esc(JSON.stringify(payload,null,2))}</div>

@@ -41,6 +41,7 @@ function viewAudit(){
   const actions = [...new Set(state.audit.map(a=>a.action))].sort();
   const whos = [...new Set(state.audit.map(a=>a.who).filter(Boolean))].sort();
   const rows = auditFiltered();
+  const pg = paginate('audit', rows);
   const anyF = f.preset!=='all'||f.from||f.to||f.who.length||f.action.length||f.q;
   return `
   ${can('export_csv')?`<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
@@ -65,12 +66,13 @@ function viewAudit(){
   <div class="card">
     <table class="tbl">
       <thead><tr><th style="width:150px">When</th><th style="width:170px">Who</th><th>Action</th><th>Detail</th></tr></thead>
-      <tbody>${rows.length? rows.map(a=>`<tr>
+      <tbody>${rows.length? pg.slice.map(a=>`<tr>
         <td class="time-cell">${fmtDT(a.ts)}</td>
         <td class="mini" style="padding-top:12px">${esc(a.who)}</td>
         <td><span class="cell-title">${esc(a.action)}</span></td>
         <td class="mini" style="padding-top:12px">${esc(a.detail)}</td>
       </tr>`).join('') : `<tr><td colspan="4" class="mini muted" style="padding:18px 16px">Nothing matches these filters.</td></tr>`}</tbody>
     </table>
+    ${pagerBar(pg)}
   </div>`;
 }

@@ -267,7 +267,8 @@ function createProject(){
 /* ---- views ---- */
 function viewProjects(){
   const rows = scoped().filter(isProj).sort((a,b)=>b.updatedAt-a.updatedAt);
-  const table = rows.map(t=>{
+  const pg = paginate('projects', rows);
+  const table = pg.slice.map(t=>{
     const sum=projSummary(t), c=client(t.clientId);
     const pct = sum.total? Math.round(sum.done/sum.total*100) : 0;
     return `<tr style="cursor:pointer" onclick="openTicket(${t.id})">
@@ -287,7 +288,7 @@ function viewProjects(){
   </div>
   <div class="card">${rows.length?`<table class="tbl">
     <thead><tr><th>Project</th><th>Client</th><th>Owner</th><th>Checklist</th><th class="num">Hourly time</th><th class="num">Billing</th><th>Status</th></tr></thead>
-    <tbody>${table}</tbody></table>`
+    <tbody>${table}</tbody></table>${pagerBar(pg)}`
     :`<div class="empty">${icon(IC.proj)}<div>No projects yet.${can('manage_projects')?' Create one — pick a checklist template and set per-task billing.':''}</div></div>`}</div>`;
 }
 function projChecklistCard(t){

@@ -1,13 +1,17 @@
 /* ==========================================================================
    Ledger — views/settings.js
-   Settings view: global defaults, Docket connection, the RBAC pointer to
-   Docket's Directory, and the Odoo export connector (an open stub — safe
-   to leave blank; while disabled, exports produce a preview payload only).
+   Settings view: global defaults, default billing rates (effective-dated;
+   clients opt in per client on their client page), Docket connection, the
+   RBAC pointer to Docket's Directory, and the Odoo export connector (an
+   open stub — safe to leave blank; while disabled, exports produce a
+   preview payload only).
    Endpoints called:
      PUT /api/config/ledger  — persistLedgerCfg() (debounced 600 ms)
      PUT /api/config/odoo    — persistLedgerCfg() (same debounce; API key
                                stripped — it travels the secrets path only)
      PUT /api/secrets/odoo   — saveOdooKey() (write-only, never read back)
+     PUT /api/default-rates/{typeId} — defaultRatePut() (debounced 600 ms)
+                               for setDefaultRate (global default rates)
    ========================================================================== */
 
 function viewSettings(){
@@ -18,10 +22,8 @@ function viewSettings(){
     <div class="card">
       <div class="card-head"><h3>Global defaults</h3></div>
       <div class="card-pad" style="border-bottom:1px solid var(--line)">
-        <label class="mini" style="display:inline-flex;gap:8px;align-items:center;text-transform:none;cursor:pointer">
-          <input type="checkbox" ${state.settings.retainers.enabled?'checked':''} onchange="state.settings.retainers.enabled=this.checked; log('Retainers module '+(this.checked?'enabled':'disabled'),'suite-wide'); render();persistLedgerCfg()" style="width:auto;accent-color:var(--brand)">
-          <b>Retainers / block-hour agreements</b></label>
-        <div class="mini muted" style="margin-top:4px">Turn off if agreements are managed in Odoo — per-client configuration and burn-down disappear everywhere, but nothing is deleted.</div>
+        ${row('Retainers / block-hour agreements','Turn off if agreements are managed in Odoo — per-client configuration and burn-down disappear everywhere, but nothing is deleted.',
+          `<button class="toggle ${state.settings.retainers.enabled?'on':''}" onclick="s_toggleRetainers()"></button>`)}
       </div>
       <div class="card-pad">
         ${row('Default billing cycle','New clients inherit this. Override per client on the Clients page.',
@@ -38,12 +40,27 @@ function viewSettings(){
     <div class="card">
       <div class="card-head"><h3>Docket connection</h3></div>
       <div class="card-pad">
-        ${row('Docket','The helpdesk this app pairs with. Both apps read one Postgres and share Entra SSO — no API tokens stored here.',
-          `<input type="text" value="${esc(s.host)}" onchange="state.settings.host=this.value;persistLedgerCfg()" style="width:260px">`)}
-        ${row('Shared data','Clients, agents and activity types are one set of tables; time entries arrive live from Docket’s ticket timer.',
-          `<button class="btn sm" onclick="toast('Shared tables verified: '+state.clients.length+' clients, '+state.techs.length+' agents ('+state.zammadRoles.filter(r=>r.tech).length+' tech roles), '+state.types.filter(t=>!t.sentinel).length+' activity types + Unclassified')">Sync now</button>`)}
-        <div class="notice info" style="margin-top:6px">${icon(IC.check)}<div>Runs as its own service beside Docket — separate deploys, one shared database, one SSO session.</div></div>
+        ${row('Docket','The helpdesk this app pairs with.',
+          `<input type="text" class="ro in-mono" readonly value="${esc(s.host||location.host)}" title="Derived from this deployment — the suite shares one origin behind nginx" style="width:260px">`)}
       </div>
+    </div>
+  </div>
+
+  <div class="section-gap"></div>
+  <div class="card">
+    <div class="card-head"><h3>Default billing rates</h3><span class="hint">clients opt in per client — “use global default rates”</span></div>
+    <div class="card-pad">
+      <div class="notice info" style="margin-bottom:14px">${icon(IC.tag)}<div>These rates price any billable type for clients whose <b>use global default rates</b> switch is on (Clients → a client → Billing configuration), unless that type is toggled off there or the client has its own rate. Rates are <b>effective-dated</b> — a change today never re-prices earlier time, and locked periods never change.</div></div>
+      <table class="tbl">
+        <thead><tr><th>Activity type</th><th class="num">Rate ($/h)</th><th>Effective from</th></tr></thead>
+        <tbody>${state.types.filter(t=>!t.sentinel&&t.active!==false).map(t=>{
+          const d=state.defaultRates[t.id]||{rate:null,hist:[]};
+          const last=d.hist.length?d.hist[d.hist.length-1].from:null;
+          return `<tr>
+            <td><div class="cell-title">${esc(t.name)}</div></td>
+            <td class="num">${canSeeMoney()&&(can('approve')||can('export'))?`<input type="number" min="0" step="5" value="${d.rate!=null?d.rate:''}" placeholder="—" data-fkey="df-${t.id}" oninput="setDefaultRate('${t.id}',this.value)" style="width:110px;text-align:right">`:(canSeeMoney()&&d.rate!=null?`<span class="in-mono">${d.rate}</span>`:'<span class="muted">—</span>')}</td>
+            <td class="mini muted">${last?(last==='1970-01-01'?'always':fmtDate(last)):'—'}</td>
+          </tr>`;}).join('')}</tbody></table>
     </div>
   </div>
 
@@ -62,11 +79,11 @@ function viewSettings(){
     <div class="card-head"><h3>Odoo export connector</h3><span class="hint">open stub — safe to leave blank; export previews without posting</span></div>
     <div class="card-pad">
       <div class="grid g-2">
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Instance URL</b></div><input type="text" placeholder="https://mycompany.odoo.com" value="${esc(o.url)}" onchange="state.settings.odoo.url=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Database</b></div><input type="text" placeholder="mycompany-prod" value="${esc(o.db)}" onchange="state.settings.odoo.db=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
-        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API user</b></div><input type="text" placeholder="billing@mycompany.com" value="${esc(o.user)}" onchange="state.settings.odoo.user=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Instance URL</b></div><input type="text" class="in-mono" placeholder="https://mycompany.odoo.com" value="${esc(o.url)}" onchange="state.settings.odoo.url=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Database</b></div><input type="text" class="in-mono" placeholder="mycompany-prod" value="${esc(o.db)}" onchange="state.settings.odoo.db=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
+        <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API user</b></div><input type="text" class="in-mono" placeholder="billing@mycompany.com" value="${esc(o.user)}" onchange="state.settings.odoo.user=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
         <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>API key</b> ${state.odooSecret?`<span class="mini muted">rotated ${fmtStamp(state.odooSecret.at)}${state.odooSecret.by?' by '+esc(state.odooSecret.by):''}</span>`:`<span class="mini muted">not set</span>`}</div>
-          <div style="display:flex;gap:8px;margin-top:6px"><input type="password" id="odooKeyIn" placeholder="write-only — sealed under the KEK, never shown again" style="flex:1" autocomplete="new-password"><button class="btn sm" onclick="saveOdooKey()">Save key</button></div></label>
+          <div style="display:flex;gap:8px;margin-top:6px"><input type="password" id="odooKeyIn" class="in-mono" placeholder="write-only — sealed under the KEK, never shown again" style="flex:1" autocomplete="new-password"><button class="btn sm" onclick="saveOdooKey()">Save key</button></div></label>
         <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Journal</b></div><input type="text" value="${esc(o.journal)}" onchange="state.settings.odoo.journal=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"></label>
         <label class="setting-row" style="border:0;padding:0;display:block"><div class="sl"><b>Post invoices as</b></div><select onchange="state.settings.odoo.mode=this.value;persistLedgerCfg()" style="width:100%;margin-top:6px"><option value="draft" ${o.mode==='draft'?'selected':''}>Draft (review in Odoo)</option><option value="posted" ${o.mode==='posted'?'selected':''}>Posted</option></select></label>
       </div>
@@ -108,4 +125,31 @@ function saveOdooKey(){
       toast('Odoo key sealed — write-only from here on'); hydrate(); });
 }
 function s_toggle(k){ state.settings[k]=!state.settings[k]; render(); persistLedgerCfg(); }
+function s_toggleRetainers(){ state.settings.retainers.enabled=!state.settings.retainers.enabled;
+  log('Retainers module '+(state.settings.retainers.enabled?'enabled':'disabled'),'suite-wide');
+  render(); persistLedgerCfg(); }
 function s_toggleOdoo(){ state.settings.odoo.enabled=!state.settings.odoo.enabled; render(); persistLedgerCfg(); }
+
+/* ---- global default billing rates — one function per control, mirroring
+   the clientRatePut pattern: optimistic local mutation + dated history row
+   (histToday, views/clients.js — loads earlier in ledger.html), diff-guard,
+   debounced PUT, oops() on refusal, focus carried by data-fkey. ---- */
+const dfTimers={};
+const defaultRatePut=(tid,rate)=>{
+  clearTimeout(dfTimers[tid]);
+  dfTimers[tid]=setTimeout(()=>
+    $fetch('/api/default-rates/'+encodeURIComponent(tid),{method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rate_cents:rate!=null?Math.round(rate*100):null})})
+      .then(async r=>{ if(!r.ok) return oops(await jshort(r));
+        setTimeout(()=>hydrate(),300); }),600);
+};
+function setDefaultRate(tid,v){
+  const d=state.defaultRates[tid]||(state.defaultRates[tid]={rate:null,hist:[]});
+  const nv=v===''?null:Number(v);
+  if(nv===d.rate) return;                                  /* diff-guard */
+  d.rate=nv;
+  d.hist=histToday(d.hist,'rate',nv);
+  log('Default rate changed (effective-dated)', `${esc(atype(tid).name)} → ${nv!=null?fmtMoney(nv)+'/h':'unset'} from today — earlier time keeps its price`, tid);
+  defaultRatePut(tid,nv); render();
+}

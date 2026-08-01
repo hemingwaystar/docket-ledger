@@ -1,8 +1,9 @@
 """GET /api/bootstrap — the whole Ledger UI state in one round trip:
-me, clients (rates/access folded in), techs (with group memberships),
-groups, roles (ledger perms), types (+rate history), audit tail, cfg,
-odooSecret, periods, entries, projects — 12 keys, and the UI's mapIn()
-consumes every one (hydration completeness, ledger row 36's lesson)."""
+me, clients (rates/access/default-rate opt-ins folded in), techs (with
+group memberships), groups, roles (ledger perms), types (+rate history),
+defaultRates, audit tail, cfg, odooSecret, periods, entries, projects —
+13 keys, and the UI's mapIn() consumes every one (hydration completeness,
+ledger row 36's lesson)."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from . import auth, db
@@ -28,11 +29,13 @@ def bootstrap(request: Request, limit: int = 1000):
                                     WHERE cr.client_id = c.id AND cr.activity_type_id IS NULL
                                     ORDER BY cr.valid_from DESC LIMIT 1) AS wide_rate
                              FROM shared.clients c ORDER BY c.is_sentinel DESC, c.name""")
-            clients = {str(r["id"]): {"id": str(r["id"]), "name": r["name"],
+            clients = {str(r["id"]): {"id": str(r["id"]), "zorg": str(r["id"])[:8],
+                       "name": r["name"],
                        "sentinel": r["is_sentinel"], "cycle": r["billing_cycle"],
                        "rateOverride": (r["wide_rate"] / 100) if r["wide_rate"] is not None else None,
                        "billableDefault": r["billable_default"],
                        "archived": r["archived_at"] is not None,
+                       "useDefaults": False, "useDefaultsHist": [], "defaultTypeFlags": {},
                        "rates": {}, "access": {"mode": "all", "techs": [], "groups": []}}
                        for r in cur.fetchall()}
             cur.execute("SELECT client_id, mode, tech_ids, group_ids FROM ledger.client_access")
@@ -62,6 +65,21 @@ def bootstrap(request: Request, limit: int = 1000):
                     if r["billable"] is not None:
                         o["billable"] = r["billable"]
                         o["billableHist"].append({"from": day, "billable": r["billable"]})
+            cur.execute("""SELECT client_id, activity_type_id, valid_from, enabled
+                             FROM ledger.client_default_rate_optin ORDER BY valid_from""")
+            for r in cur.fetchall():
+                c = clients.get(str(r["client_id"]))
+                if c is None:
+                    continue
+                day = r["valid_from"].isoformat()
+                if r["activity_type_id"] is None:      # the client-wide switch lane
+                    c["useDefaults"] = r["enabled"]    # rows are date-ordered → last wins
+                    c["useDefaultsHist"].append({"from": day, "enabled": r["enabled"]})
+                else:
+                    o = c["defaultTypeFlags"].setdefault(str(r["activity_type_id"]),
+                                                         {"enabled": None, "hist": []})
+                    o["enabled"] = r["enabled"]
+                    o["hist"].append({"from": day, "enabled": r["enabled"]})
             out["clients"] = list(clients.values())
             cur.execute("""SELECT a.id, a.name, a.initials, a.email,
                              COALESCE((SELECT array_agg(ag.group_id) FROM shared.agent_groups ag
@@ -107,6 +125,15 @@ def bootstrap(request: Request, limit: int = 1000):
                 if r["billable"] is not None:
                     t["billableHist"].append({"from": r["valid_from"].isoformat(),
                                               "billable": r["billable"]})
+            cur.execute("""SELECT activity_type_id, valid_from, rate_cents
+                             FROM ledger.default_rates ORDER BY valid_from""")
+            out["defaultRates"] = {}
+            for r in cur.fetchall():
+                d = out["defaultRates"].setdefault(str(r["activity_type_id"]),
+                                                   {"rate": None, "hist": []})
+                rate = (r["rate_cents"] / 100) if r["rate_cents"] is not None else None
+                d["rate"] = rate
+                d["hist"].append({"from": r["valid_from"].isoformat(), "rate": rate})
             cur.execute("""SELECT at, actor, action, entity, detail FROM audit.events
                             WHERE app IN ('ledger', 'auth')
                             ORDER BY at DESC LIMIT 200""")

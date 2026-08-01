@@ -119,6 +119,7 @@ function viewApprovals(){
   if(f.client.length) sheets=sheets.filter(s=>f.client.includes(s.clientId));
   if(f.period.length) sheets=sheets.filter(s=>f.period.includes(s.per.key));
   if(f.status.length) sheets=sheets.filter(s=>f.status.includes(s.status));
+  const pg = paginate('approvals', sheets);
   const anyF=f.tech.length||f.group.length||f.client.length||f.period.length||f.status.length;
   const statuses=[['all','All'],['awaiting','Awaiting review'],['partial','Partially submitted'],['open','In progress'],['approved','Approved'],['locked','Locked']];
   const toolbar=`
@@ -137,7 +138,7 @@ function viewApprovals(){
   </div></div>`;
   if(!sheets.length) return toolbar+`<div class="section-gap"></div><div class="card"><div class="empty">${icon(IC.seal)}<div>No timesheets match these filters.</div></div></div>`;
   const colCount = money?8:7;
-  const body=sheets.map(s=>{
+  const body=pg.slice.map(s=>{
     const c=client(s.clientId), t=tech(s.techId);
     const gNames=techGroups(s.techId).map(gid=>{const g=state.zammadGroups.find(x=>x.id===gid); return g?g.name:gid;}).join(', ');
     let act='';
@@ -175,5 +176,5 @@ function viewApprovals(){
   <div class="notice info" style="margin-bottom:16px">${icon(IC.seal)}<div>Approving a timesheet <b>freezes its entries</b> — the technician can no longer edit or recall them (revocable here until the billing period itself is approved &amp; locked). The Billing Periods page tracks this approval, not raw submission.</div></div>
   <div class="card"><table class="tbl">
     <thead><tr><th>Technician</th><th>Client</th><th>Period</th><th class="num">Entries</th><th class="num">Hours</th>${money?'<th class="num">Amount</th>':''}<th>Status</th><th></th></tr></thead>
-    <tbody>${body}</tbody></table></div>`;
+    <tbody>${body}</tbody></table>${pagerBar(pg)}</div>`;
 }

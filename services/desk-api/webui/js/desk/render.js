@@ -4,7 +4,8 @@
    go()/openTicket()/openClient() · shared chip renderers · commitRender +
    input ergonomics listeners · modal/scrim · combo (searchable dropdown) ·
    multiCombo (checkbox dropdown + chips, empty = All) · toast ·
-   notification bell · global search.
+   notification bell · global search · list pagination paginate()/pagerBar()
+   (per-list page state + per-user page-size persistence).
    Endpoints: POST /api/automations/notifications/read
      ({ids:[id]} bellGo · {all:true} bellAllRead).
    Invariants: render() is the only #content rebuild (plus nav/title/badge);
@@ -13,7 +14,7 @@
 
 function go(v){ if(!canView(v)) v='dashboard'; state.view=v; render(); }
 function openTicket(id){ const t=tk(id); if(!ticketVisible(t)) { toast('That ticket is outside your access.'); return; } state.ticketId=id; state.view='ticket'; state.composer={kind:'reply', typeId:null, logTime:true}; render(); }
-function openClient(id){ if(!can('view_clients')) return; state.clientId=id; state.view='clientv'; render(); }
+function openClient(id){ if(!can('view_clients')) return; state.clientId=id; state.clf={st:[],tag:[],owner:[],q:''}; state.view='clientv'; render(); }
 
 function renderNav(){
   const sc = scoped();
@@ -32,7 +33,6 @@ function renderNav(){
     }).join('');
   document.getElementById('userName').textContent = state.user.name;
   document.getElementById('userAv').textContent = state.user.initials;
-  document.getElementById('userMeta').textContent = 'Entra SSO · ' + state.user.role;
 }
 
 function render(){
@@ -294,4 +294,38 @@ function toast(msg){
   const t = document.createElement('div');
   t.className='toast'; t.innerHTML=`<span class="cdot"></span><span>${msg}</span>`;
   w.appendChild(t); setTimeout(()=>t.remove(), 4200);
+}
+
+/* ---------------- list pagination (build 13) ----------------
+   ONE pattern for every long object list, applied AFTER the view's existing
+   filters/search: page-size select (10/25/50/100), prev/next, 'x–y of N'.
+   Page number lives per-list in _pagers (JS object, never the URL); page SIZE
+   persists per user in localStorage under an app prefix — desk and ledger
+   share one origin behind nginx, so the prefix is load-bearing. A pager key
+   may carry an instance suffix after ':' ('clientTickets:<id>'): the size is
+   remembered per list TYPE (prefix before ':'), the page per instance.
+   Aggregates, counts and CSV exports keep reading the FULL filtered set. */
+const _pagers = {};
+const PAGE_SIZES = [10,25,50,100];
+const PAGER_LS = 'dk.pgsz.';
+function pagerSize(key){ let v=0; try{ v=Number(localStorage.getItem(PAGER_LS+key.split(':')[0])); }catch(e){} return PAGE_SIZES.includes(v)?v:25; }
+function pagerState(key){ return _pagers[key]||(_pagers[key]={page:0}); }
+function pagerSetSize(key,v){ try{ localStorage.setItem(PAGER_LS+key.split(':')[0],String(v)); }catch(e){} pagerState(key).page=0; render(); }
+function pagerGo(key,delta){ pagerState(key).page+=delta; render(); }
+function paginate(key,rows){
+  const size=pagerSize(key), p=pagerState(key);
+  const nPages=Math.max(1,Math.ceil(rows.length/size));
+  if(p.page>nPages-1) p.page=nPages-1;      /* filters shrank the list */
+  if(p.page<0) p.page=0;
+  const start=p.page*size;
+  return { key, slice:rows.slice(start,start+size), total:rows.length, start, size, page:p.page, nPages };
+}
+function pagerBar(pg){
+  if(pg.total<=PAGE_SIZES[0]) return '';    /* nothing to page */
+  return `<div class="pager">
+    <select onchange="pagerSetSize('${jsq(pg.key)}',Number(this.value))" title="Rows per page">${PAGE_SIZES.map(s=>`<option value="${s}" ${s===pg.size?'selected':''}>${s} / page</option>`).join('')}</select>
+    <span class="mini muted">${pg.start+1}–${Math.min(pg.total,pg.start+pg.size)} of ${pg.total}</span>
+    <button class="rowbtn" ${pg.page===0?'disabled':''} onclick="pagerGo('${jsq(pg.key)}',-1)">‹ Prev</button>
+    <button class="rowbtn" ${pg.page>=pg.nPages-1?'disabled':''} onclick="pagerGo('${jsq(pg.key)}',1)">Next ›</button>
+  </div>`;
 }

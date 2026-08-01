@@ -22,6 +22,7 @@ function viewDashboard(){
     let h=0,a=0,u=0; es.forEach(e=>{const p=priced(e); h+=p.h; a+=p.amount; if(p.unclassified)u++;});
     return {c,per,h,a,u,n:es.length};
   }).sort((x,y)=>y.a-x.a);
+  const pgD=paginate('dashClients',clientCards);
 
   return `
   <div class="grid g-4">
@@ -39,9 +40,9 @@ function viewDashboard(){
     <table class="tbl">
       <thead><tr><th>Client</th><th>Cycle · period</th><th>Entries</th><th class="num">Hours</th><th class="num">Amount</th><th></th></tr></thead>
       <tbody>
-        ${clientCards.map(x=>`
+        ${pgD.slice.map(x=>`
           <tr>
-            <td><div class="cell-title">${esc(x.c.name)}</div><div class="cell-meta">org #${x.c.zorg} · shared with Docket</div></td>
+            <td><div class="cell-title">${esc(x.c.name)}</div><div class="cell-meta">client #${x.c.zorg} · shared with Docket</div></td>
             <td><span class="chip nonbill" style="text-transform:capitalize">${x.c.cycle}</span> <span class="mini">${x.per.label}</span></td>
             <td>${x.n}${x.u?` · <span style="color:var(--warn)">${x.u} unclassified</span>`:''}</td>
             <td class="num">${fmtHours(x.h)}</td>
@@ -49,7 +50,7 @@ function viewDashboard(){
             <td class="right"><button class="btn sm" onclick="go('periods')">Review</button></td>
           </tr>`).join('')}
       </tbody>
-    </table>
+    </table>${pagerBar(pgD)}
   </div>`;
 }
 

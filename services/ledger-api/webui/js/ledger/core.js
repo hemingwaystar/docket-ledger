@@ -93,7 +93,12 @@ function _presetDates(f,p){
 
 /* pricing resolution:
    billable = per-client-type override ?? type.billable (sentinel never billable)
-   rate     = per-client-type rate ?? client.rateOverride ?? type.rate
+   rate     = per-client-type rate ?? client.rateOverride
+              ?? (client opted in AND type not toggled off) global default rate
+              ?? type.rate
+   The gated default rung mirrors ledger.priced() (0029) exactly: the
+   client-wide "use global default rates" switch defaults OFF, the per-type
+   inherit toggle defaults ON, both resolved as-of the entry's date.
    EFFECTIVE-DATED: every rate holder may carry a history array
    [{from:'YYYY-MM-DD', rate:N}, ...]; an entry prices against the rate in
    force at its startedAt, so changing a rate NEVER reprices history. */
@@ -123,6 +128,24 @@ function effRate(current, hist, atMs){
   hist.forEach(hh=>{ if(hh.from<=day && (!best || hh.from>best.from)) best = hh; });
   return best ? best.rate : (hist[0].preHistory!=null ? hist[0].preHistory : current);
 }
+function effFlag(current, hist, atMs, dflt){
+  /* boolean twin of effRateN: as-of flag; before the first dated row the
+     answer is the lane's default (wide=false, typed=true) — matching the
+     SQL COALESCE(subquery, false/true) exactly */
+  if(!hist || !hist.length) return current!=null?current:dflt;
+  const day=new Date(atMs).toISOString().slice(0,10);
+  let best=null; hist.forEach(h=>{ if(h.from<=day && (!best||h.from>best.from)) best=h; });
+  return best?best.enabled:dflt;
+}
+function clientUsesDefaultsAsOf(c, tid, atMs){
+  if(effFlag(null, c.useDefaultsHist, atMs, false)!==true) return false;   /* wide switch, default off */
+  const tf=(c.defaultTypeFlags||{})[tid];
+  return effFlag(null, tf&&tf.hist, atMs, true)!==false;                   /* typed toggle, default on */
+}
+function defaultRateAsOf(tid, atMs){
+  const d=state.defaultRates[tid]; if(!d) return null;
+  return effRateN(d.rate, d.hist, atMs);   /* NULL hist row = dated unset, falls through */
+}
 function projFor(e){ return (state.projects && state.projects[e.zTicket]) || null; }
 function projTaskFor(e){ const p=projFor(e); if(!p||!e.zTask) return null; return p.tasks.find(x=>x.id===e.zTask.id)||null; }
 function priced(e){
@@ -148,9 +171,11 @@ function priced(e){
   if(billable){
     const ovRate = ov ? effRateN(ov.rate, ov.rateHist, e.startedAt) : null;
     const cwRate = effRateN(c.rateOverride, c.rateOverrideHist, e.startedAt);
+    const dfRate = clientUsesDefaultsAsOf(c, e.typeId, e.startedAt) ? defaultRateAsOf(e.typeId, e.startedAt) : null;
     if(pt && pt.mode==='hourly' && pt.rate!=null) rate = pt.rate;
     else if(ovRate!=null)              rate = ovRate;
     else if(cwRate!=null)              rate = cwRate;
+    else if(dfRate!=null)              rate = dfRate;
     else                               rate = effRate(t.rate, t.rateHist, e.startedAt);
   }
   const amount = e.status==='void' ? 0 : (billable ? h*rate : 0);

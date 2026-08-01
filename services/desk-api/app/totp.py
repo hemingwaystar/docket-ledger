@@ -6,6 +6,7 @@ import hmac
 import os
 import struct
 import time
+from urllib.parse import quote
 
 
 def new_secret() -> str:
@@ -28,5 +29,7 @@ def verify(secret: str, code: str) -> bool:
 
 
 def otpauth_uri(secret: str, email: str) -> str:
-    return (f"otpauth://totp/Hemingway%20Tech%20Solutions:{email}"
+    # the label rides in a URI — a '+' or stray character in the email would
+    # corrupt what the authenticator app parses
+    return (f"otpauth://totp/Hemingway%20Tech%20Solutions:{quote(email, safe='')}"
             f"?secret={secret}&issuer=Hemingway%20Tech%20Solutions")

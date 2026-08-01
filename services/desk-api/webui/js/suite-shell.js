@@ -24,24 +24,12 @@ window.addEventListener('message', ev=>{
   if(d.src==='docket'){
     if(d.type==='suite-nav'){ show(d.app==='ledger'?'ledger':'docket'); return; }
     fr('fr-ledger').postMessage(d, location.origin);
-    if(d.type==='time-logged') flash('Time entry flowed Docket \u2192 Ledger');
-    if(d.type==='time-updated') flash('Entry edit flowed Docket \u2192 Ledger');
-    if(d.type==='time-removed') flash('Removal flowed Docket \u2192 Ledger (voided there)');
   }
   if(d.src==='ledger'){
     fr('fr-docket').postMessage(d, location.origin);
-    if(d.type==='open-ticket'){ show(view==='split'?'split':'docket'); flash('Jumped Ledger \u2192 Docket ticket #'+d.ticket); }
-    if(d.type==='entry-removed') flash('Removal flowed Ledger \u2192 Docket');
-    if(d.type==='entry-updated') flash('Entry edit flowed Ledger \u2192 Docket');
+    if(d.type==='open-ticket'){ show(view==='split'?'split':'docket'); }
   }
 });
-let flashT = null;
-function flash(msg){
-  const el = document.getElementById('hintTxt');
-  el.textContent = '\u26a1 ' + msg;
-  clearTimeout(flashT);
-  flashT = setTimeout(()=>{ el.textContent = 'Log time on a ticket in Docket — watch it land in Ledger live'; }, 5000);
-}
 
 /* live: on the nginx front (standard https port) Ledger is proxied under
    /ledger/; on direct NetBird access it stays on its own service port */

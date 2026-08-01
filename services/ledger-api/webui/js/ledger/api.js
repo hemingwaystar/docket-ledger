@@ -9,7 +9,7 @@
    (server period rows — id lookup for approve / mark-exported).
    Invariant: mapIn() consumes EVERY bootstrap key the server emits
    (me, clients, techs, types, entries, cfg, odooSecret, periods,
-   projects, audit, groups, roles) — all 12, nothing dropped.
+   projects, audit, groups, roles, defaultRates) — all 13, nothing dropped.
    ========================================================================== */
 
 /* behind nginx, Ledger lives under /ledger/ with the prefix stripped
@@ -31,6 +31,10 @@ function mapIn(d){
   (d.roles||[]).forEach(r=>state.zammadRoles.push({name:r.name,tech:true,note:r.note||'',
     archived:r.active===false,perms:(r.ledgerPerms||[]).slice()}));
   state.types.length=0;   d.types.forEach(t=>state.types.push(t));
+  /* global default billing rates — cleared-and-refilled every hydrate like
+     periods/projects (hydration completeness, row 36) */
+  Object.keys(state.defaultRates).forEach(k=>delete state.defaultRates[k]);
+  Object.entries(d.defaultRates||{}).forEach(([k,v])=>{ state.defaultRates[k]=v; });
   state.entries.length=0; d.entries.forEach(e=>state.entries.push(e));
   if(d.cfg){
     if(d.cfg.ledger) Object.assign(state.settings, d.cfg.ledger);

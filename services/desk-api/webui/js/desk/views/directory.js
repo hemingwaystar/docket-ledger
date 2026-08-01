@@ -1,37 +1,51 @@
 /* ==========================================================================
    js/desk/views/directory.js — the shared control plane page: the roles
-   matrix (rendered by roles.js), groups & membership, activity types, the
-   clients pointer, and the agents card with live credential badges — the
-   hasPassword/mfa flags ride in on bootstrap's agent rows. Also owns the
-   Entra CSV contact import (launched from a client page).
-   Owns: viewDirectory · pwReset/mfaReset · entraParse · csvImportModal ·
-   csvPreview · csvImportGo.
+   matrix (rendered by roles.js), groups & membership (member chips + a
+   type-to-search adder — toggleMembership in settings.js stays the ONE
+   control for add and remove), activity types, the clients pointer, and the
+   agents card: per-agent group multiCombo plus the auth panel — the
+   hasPassword/mfa/mfaPending/mfaAt flags ride in on bootstrap's agent rows.
+   Also owns the Entra CSV contact import (launched from a client page).
+   Owns: viewDirectory · pwReset/mfaReset · authModal · mfaEnrollSelf/
+   mfaConfirmSelf · entraParse · csvImportModal · csvPreview · csvImportGo.
    Endpoints: POST /auth/admin/set-password · POST /auth/admin/reset-mfa ·
+   POST /auth/mfa/enroll · POST /auth/mfa/confirm ·
    POST /api/directory/contacts (one per fresh imported row).
    Invariants: password resets are admin-direct — the SERVER mints the temp
-   password, it is shown ONCE here and never emailed. The CSV import dedupes
-   on email and never overwrites an existing contact. The editors the cards
-   call (agentModal/groupModal/typeModal and their saves) live in
-   views/settings.js; the roles matrix lives in views/roles.js.
+   password; it is shown ONCE, inside authModal (a shown-once credential must
+   persist until dismissed, never a 4.2s toast) and never emailed.
+   Self-service TOTP enrollment is two-phase: /auth/mfa/enroll mints a
+   PENDING secret, /auth/mfa/confirm proves possession before it goes live.
+   The CSV import dedupes on email and never overwrites an existing contact.
+   The editors the cards call (agentModal/groupModal/typeModal, their saves,
+   toggleMembership and setAgentGroups) live in views/settings.js; the roles
+   matrix lives in views/roles.js.
    ========================================================================== */
 
 function viewDirectory(){
+  const pgA = paginate('dirAgents', AGENTS);
   return `
-  <div class="notice info" style="margin-bottom:16px">${icon(IC.client)}<div><b>This is the shared control plane.</b> Clients, groups, agents, activity types and all role permissions are one set of records in the shared database — Docket, Ledger and any future app read and write the same rows. Every change here broadcasts to Ledger live; nothing syncs, because there is nothing to sync <i>from</i>.</div></div>
   <h3 style="margin:4px 0 10px;display:flex;align-items:center;gap:10px">Roles &amp; permissions <button class="btn sm" onclick="roleModal()">+ Add role</button></h3>
   ${rolesSection()}
   <div class="section-gap"></div>
   <div class="grid g-2">
     <div class="card card-pad">
       <div class="card-head flush"><h3>Groups &amp; membership</h3><span class="hint">boards, routing and access scopes — shared</span></div>
-      ${GROUPS.map(g=>{ const arch=isArch(g); return `<div class="setting-row" style="align-items:flex-start;${arch?'opacity:.55':''}"><div class="sl" style="flex:1">
+      ${GROUPS.map(g=>{ const arch=isArch(g);
+        const members = AGENTS.filter(a=>a.groups.includes(g.id));
+        const addable = AGENTS.filter(a=>!a.groups.includes(g.id)).map(a=>({v:a.id,label:a.name,sub:a.email}));
+        return `<div class="setting-row" style="align-items:flex-start;${arch?'opacity:.55':''}"><div class="sl" style="flex:1">
           <b>${esc(g.name)}</b>${arch?` <span class="chip st-closed"><span class="cdot"></span>Archived</span>`:''}
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:7px">${AGENTS.map(a=>`<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" ${a.groups.includes(g.id)?'checked':''} ${arch?'disabled':''} onchange="toggleMembership('${g.id}','${a.id}')" style="width:auto;accent-color:var(--brand)">${esc(a.name.split(' ')[0])}</label>`).join('')}</div>
+          <span class="mini muted" style="margin-left:6px">${members.length} member${members.length===1?'':'s'}</span>
+          <div style="display:flex;gap:4px 6px;flex-wrap:wrap;margin-top:7px">
+            ${members.map(a=>`<span class="chip tagchip">${esc(a.name)}${arch?'':`<button onclick="toggleMembership('${g.id}','${a.id}')" title="remove">×</button>`}</span>`).join('')||'<span class="mini muted">no members</span>'}
+          </div>
+          ${arch||!addable.length?'':`<div style="max-width:260px;margin-top:7px">${combo('gmAdd-'+g.id, addable, '', ()=>{ const v=document.getElementById('gmAdd-'+g.id).value; if(v) toggleMembership(g.id, v); }, '+ Add member — type to search…')}</div>`}
         </div>
         <button class="rowbtn" onclick="groupModal('${g.id}')">Rename</button>
         <button class="rowbtn" onclick="archiveGroup('${g.id}')">${arch?'Restore':'Archive'}</button></div>`;}).join('')}
       <button class="btn sm" style="margin-top:12px" onclick="groupModal()">+ Add group</button>
-      <div class="mini muted" style="margin-top:8px">Membership drives ticket visibility here and client access in Ledger — one checkbox, both apps.</div>
+      <div class="mini muted" style="margin-top:8px">Membership drives ticket visibility here and client access in Ledger — one list, both apps.</div>
     </div>
     <div>
       <div class="card card-pad">
@@ -51,19 +65,61 @@ function viewDirectory(){
       <div class="section-gap"></div>
       <div class="card card-pad">
         <div class="card-head flush"><h3>Agents</h3><span class="hint">shared — sign-in matches by email</span></div>
-        ${AGENTS.map(a=>`<div class="setting-row"><div class="sl" style="display:flex;gap:10px;align-items:center">${avatarOf(a)}<span><b>${esc(a.name)}</b><p style="margin:2px 0 0">${a.groups.map(gid=>esc(grp(gid)?.name||gid)).join(' · ')}</p></span></div>
+        ${pgA.slice.map(a=>`<div class="setting-row"><div class="sl" style="display:flex;gap:10px;align-items:center">${avatarOf(a)}<span><b>${esc(a.name)}</b></span><span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('agGrp-'+a.id, GROUPS.filter(g=>!isArch(g)||a.groups.includes(g.id)).map(g=>({v:g.id,label:g.name,archived:isArch(g)})), a.groups, 'setAgentGroups', 'Groups…')}</span></div>
           ${AUTH_CFG.localPasswords?`
             <span class="chip ${a.hasPassword?'st-solved':'st-closed'}" style="padding:1px 8px"><span class="cdot"></span>${a.hasPassword?'password':'no pw'}</span>
-            <button class="rowbtn" onclick="pwReset('${a.id}')">${a.hasPassword?'Reset pw':'Set pw'}</button>
-            <span class="chip ${a.mfa?'st-solved':'st-closed'}" style="padding:1px 8px"><span class="cdot"></span>${a.mfa?'MFA':'no MFA'}</span>
-            ${a.mfa?`<button class="rowbtn" onclick="mfaReset('${a.id}')">Reset MFA</button>`:''}`:''}
-          <select style="width:auto" onchange="setAgentRole('${a.id}',this.value)" title="${AUTH_CFG.roleMapping?'Entra mapping is ON — manual changes are overwritten at next sign-in':'Manual assignment — this IS the role'}">${state.roleDefs.filter(r=>r.active!==false && r.name!=='Customer').map(r=>`<option ${a.role===r.name?'selected':''}>${esc(r.name)}</option>`).join('')}</select>
+            <span class="chip ${a.mfa?'st-solved':(a.mfaPending?'st-hold':'st-closed')}" style="padding:1px 8px"><span class="cdot"></span>${a.mfa?'MFA':(a.mfaPending?'MFA pending':'no MFA')}</span>
+            <button class="rowbtn" onclick="authModal('${a.id}')">Auth…</button>`:''}
+          <select style="width:auto" onchange="setAgentRole('${a.id}',this.value)" title="${AUTH_CFG.roleMapping?'Entra mapping is ON — manual changes are overwritten at next sign-in':'Manual assignment — this IS the role'}">${state.roleDefs.filter(r=>(r.active!==false || r.name===a.role) && r.name!=='Customer').map(r=>`<option value="${esc(r.name)}" ${a.role===r.name?'selected':''} ${r.active===false?'disabled':''}>${esc(r.name)}${r.active===false?' (archived)':''}</option>`).join('')}</select>
           ${can('manage_settings')&&a.id!==state.meId?`<button class="rowbtn" onclick="deactivateAgent('${a.id}')">Deactivate</button>`:''}</div>`).join('')}
+        ${pagerBar(pgA)}
         ${can('manage_settings')?`<button class="btn sm" style="margin-top:12px" onclick="agentModal()">+ Add person</button>`:''}
         <div class="mini muted" style="margin-top:8px">${AUTH_CFG.roleMapping?'Roles assigned automatically from Entra groups — the selects preview, but the mapping wins at sign-in.':'Entra mapping is off: these selects are the source of truth for each person’s role.'} Deactivated people can’t sign in and leave the pickers; their tickets and time stay. Re-adding the same email restores them.</div>
       </div>
     </div>
   </div>`;
+}
+
+/* ---- per-agent auth panel (build 13) --------------------------------------
+   ONE surface for everything credential-shaped: password status + reset, MFA
+   status + admin reset, and self-service TOTP enrollment. `temp` carries a
+   freshly minted one-time password — it stays on screen until dismissed
+   (never a toast; render.js removes those after 4.2s). `enroll` carries
+   {secret, otpauth_uri} from mfaEnrollSelf. The modal lives outside the
+   render() cycle, same scrim pattern as roleModal. */
+function authModal(tid, temp, enroll){
+  const a = agent(tid); if(!a) return;
+  const m = document.getElementById('modal');
+  const mfaStatus = a.mfa ? `enrolled ${a.mfaAt?fmtDT(a.mfaAt):''}`
+                  : (a.mfaPending ? 'pending — code never confirmed' : 'not enrolled');
+  m.innerHTML = `
+    <div class="modal-head"><h3>Authentication — ${esc(a.name)}</h3><p>Local credentials for <span class="tape">${esc(a.email)}</span>. SSO sign-in is untouched by anything here.</p></div>
+    <div class="modal-body">
+      <div class="field"><label>Password</label>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span class="mini muted" style="flex:1">${a.hasPassword?'argon2id set':'SSO only — no local password'}</span>
+          <button class="btn sm" onclick="pwReset('${a.id}')">${a.hasPassword?'Reset password':'Set password'}</button>
+        </div>
+        ${temp?`<div class="field" style="margin-top:10px"><label>Temporary password — shown ONCE, hand it over directly</label>
+          <div style="display:flex;gap:8px"><input readonly id="authTemp" value="${esc(temp)}" onclick="this.select()" style="font-family:'IBM Plex Mono',monospace;flex:1">
+          <button class="btn sm" onclick="const i=document.getElementById('authTemp');i.select();navigator.clipboard?navigator.clipboard.writeText(i.value).then(()=>toast('Copied.'),()=>toast('Copy failed — the field is selected, copy manually.')):toast('Clipboard unavailable — the field is selected, copy manually.')">Copy</button></div></div>`:''}
+      </div>
+      <div class="field" style="margin-top:14px"><label>MFA (authenticator app)</label>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span class="mini muted" style="flex:1">${mfaStatus}</span>
+          ${(a.mfa||a.mfaPending)?`<button class="btn sm" onclick="mfaReset('${a.id}')">Reset MFA</button>`:''}
+          ${a.id===state.meId&&!a.mfa&&!enroll?`<button class="btn sm" onclick="mfaEnrollSelf('${a.id}')">${a.mfaPending?'Restart enrollment':'Enroll'}</button>`:''}
+        </div>
+        ${enroll?`<div style="margin-top:10px;word-break:break-all"><span class="mini muted">Enter this secret in your authenticator app, or open the link on your phone:</span>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:6px"><b>${esc(enroll.secret)}</b></div>
+          <a href="${esc(enroll.otpauth_uri)}" class="mini" style="color:var(--brand)">${esc(enroll.otpauth_uri.slice(0,60))}…</a></div>`:''}
+        ${a.id===state.meId&&!a.mfa&&(enroll||a.mfaPending)?`<div style="display:flex;gap:8px;margin-top:10px">
+          <input type="text" id="mfaCode" inputmode="numeric" placeholder="6-digit code" style="width:140px">
+          <button class="btn sm primary" onclick="mfaConfirmSelf('${a.id}')">Confirm</button></div>`:''}
+      </div>
+    </div>
+    <div class="modal-foot"><span class="mini muted" style="margin-right:auto">MFA policy is “${esc(AUTH_CFG.mfa||'optional')}” — change it in Settings → Authentication.</span><button class="btn ghost" onclick="closeModal()">Close</button></div>`;
+  document.getElementById('scrim').classList.add('open');
 }
 
 /* ---- credential resets (admin-direct, §10.16) ----------------------------
@@ -79,8 +135,8 @@ function pwReset(tid){
       const was = a.hasPassword;
       a.hasPassword = true;
       log(was?'Password reset':'Password set', `${a.name} · by ${state.user.name} · temporary password issued in-app (shown once), must change at next sign-in — no email sent`);
-      toast(`${a.name.split(' ')[0]}’s temporary password (shown ONCE — hand it over directly): ${d.temp_password}`);
       render();
+      authModal(tid, d.temp_password);
     });
 }
 function mfaReset(tid){
@@ -89,11 +145,40 @@ function mfaReset(tid){
     headers:{'Content-Type':'application/json'},body:JSON.stringify({email:a.email})})
     .then(async r=>{
       if(!r.ok) return oops(await r.json().catch(()=>0));
-      a.mfa = false;
-      log('MFA reset', `${a.name} · by ${state.user.name} · TOTP secret revoked — re-enrolls at next local sign-in`);
-      toast(`${a.name.split(' ')[0]}’s MFA cleared — they re-enroll at next sign-in.`);
+      a.mfa = false; a.mfaPending = false;
+      log('MFA reset', `${a.name} · by ${state.user.name} · TOTP revoked — they enroll at next sign-in (required policy) or from this panel`);
+      toast(`${a.name.split(' ')[0]}’s MFA cleared — they enroll at next sign-in or from this panel.`);
       render();
+      authModal(tid);
     });
+}
+
+/* ---- self-service TOTP (two-phase; sessions.py) ---------------------------
+   enroll mints a PENDING secret (409s if MFA is already live — admin reset
+   is the only replacement path); confirm proves possession and flips it
+   live. Only my own row gets these controls. */
+function mfaEnrollSelf(tid){
+  const a = agent(tid); if(!a || a.id!==state.meId) return;
+  $fetch('/auth/mfa/enroll',{method:'POST'}).then(async r=>{
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) return oops(d);
+    a.mfaPending = true;
+    log('MFA enrollment started', `${a.name} · pending code confirmation`);
+    render();
+    authModal(tid, null, d);          /* {secret, otpauth_uri} → modal shows secret + code input */
+  });
+}
+function mfaConfirmSelf(tid){
+  const a = agent(tid); if(!a || a.id!==state.meId) return;
+  const code = (document.getElementById('mfaCode')||{}).value||'';
+  if(!code.trim()){ toast('Enter the 6-digit code first.'); return; }
+  $fetch('/auth/mfa/confirm',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({code:code.trim()})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      a.mfa = true; a.mfaPending = false;
+      log('MFA enrolled', `${a.name} · self-service, code confirmed`);
+      toast('MFA is on for your account.');
+      closeModal(); render(); });
 }
 
 /* ---- Entra CSV contact import --------------------------------------------

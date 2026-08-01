@@ -81,8 +81,9 @@ window.addEventListener('message', ev=>{
   const upsertClient = (cl)=>{
     let c = state.clients.find(x=>x.id===cl.id);
     if(!c){
-      c = { id:cl.id, zorg: 100 + state.clients.length + 1, name:cl.name, cycle:'monthly', rateOverride:null,
-            billableDefault:true, rates:{}, access:{mode:'all', techs:[]} };
+      c = { id:cl.id, zorg: String(cl.id||'').slice(0,8), name:cl.name, cycle:'monthly', rateOverride:null,
+            billableDefault:true, rates:{}, access:{mode:'all', techs:[]},
+            useDefaults:false, useDefaultsHist:[], defaultTypeFlags:{} };
       state.clients.push(c);
       log('Client received from Directory', `${cl.name} — created in Docket, billing defaults applied (monthly cycle, standard rates)`);
       toast(`⚡ New client from Docket: ${cl.name} — set its cycle and rates here.`);
@@ -187,7 +188,6 @@ window.addEventListener('message', ev=>{
       else if(rr.ledgerPerms) r.perms = rr.ledgerPerms.slice();
     });
     log('Directory reconciled', `${sn.clients.length} clients · ${sn.groups.length} groups · ${sn.agents.length} agents · ${sn.types.length} activity types — authoritative copy from the shared control plane`);
-    const el = document.getElementById('syncTxt'); if(el) el.textContent = 'Directory linked · shared DB';
     render();
   }
 });

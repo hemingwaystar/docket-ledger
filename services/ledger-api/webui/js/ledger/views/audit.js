@@ -16,6 +16,7 @@ function viewAudit(){
   const entities=[...new Set(state.audit.map(a=>a.entity).filter(Boolean))].sort();
   const entLabel={entry:'Entries',period:'Billing periods',client:'Clients'};
   const filtered=auditFiltered();
+  const pg=paginate('audit',filtered);
   const controls=`
   <div class="card"><div class="card-pad" style="display:flex;flex-direction:column;gap:13px">
     <div class="rpt-line"><span class="rpt-lab">Period</span>
@@ -37,7 +38,7 @@ function viewAudit(){
     </div>
   </div></div>`;
   const body = filtered.length
-    ? filtered.map(a=>`
+    ? pg.slice.map(a=>`
       <tr>
         <td class="time-cell" style="white-space:nowrap">${fmtStamp(a.ts)}</td>
         <td><span class="chip ${auditChip(a.action)}"><span class="cdot"></span>${esc(a.action)}</span></td>
@@ -56,7 +57,7 @@ function viewAudit(){
       </div></div>
     <table class="tbl">
       <thead><tr><th style="width:150px">When</th><th style="width:190px">Event</th><th>Detail</th><th style="width:140px">Actor</th></tr></thead>
-      <tbody>${body}</tbody></table></div>`;
+      <tbody>${body}</tbody></table>${pagerBar(pg)}</div>`;
 }
 function setAuf(k,v){ state.auf[k]=v; if(k!=='q') render(); else softRerender(); }
 function clearAuf(){ state.auf={from:'', to:'', actor:'all', action:'all', entity:'all', q:''}; render(); }

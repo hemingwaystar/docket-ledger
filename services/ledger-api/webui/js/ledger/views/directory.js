@@ -9,6 +9,8 @@
 
 function viewDirectory(){
   const gname = id => (state.zammadGroups.find(g=>g.id===id)||{}).name||id;
+  const pgC=paginate('dirClients',state.clients);
+  const pgA=paginate('dirAgents',state.techs);
   return `
   <div class="notice info" style="margin-bottom:16px">${icon(IC.client)}<div><b>Read-only mirror of the shared control plane.</b> These are the same records Docket manages — one set of clients, groups, agents, activity types and role permissions in the shared database. Edits happen in <b>Docket → Directory</b> and land here instantly; this page is for looking things up without leaving Ledger.</div></div>
   <div class="grid g-2">
@@ -24,7 +26,7 @@ function viewDirectory(){
       <div class="section-gap"></div>
       <div class="card card-pad">
         <div class="card-head" style="padding:0 0 6px;border:0"><h3>Agents</h3><span class="hint">shared</span></div>
-        ${state.techs.map(t=>`<div class="setting-row"><div class="sl"><b>${esc(t.name)}</b><p>${t.groups.map(gname).map(esc).join(' · ')}</p></div></div>`).join('')}
+        ${pgA.slice.map(t=>`<div class="setting-row"><div class="sl"><b>${esc(t.name)}</b><p>${t.groups.map(gname).map(esc).join(' · ')}</p></div></div>`).join('')}${pagerBar(pgA)}
       </div>
     </div>
   </div>
@@ -32,7 +34,7 @@ function viewDirectory(){
   <div class="grid g-2">
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Clients</h3><span class="hint">shared directory</span></div>
-      ${state.clients.map(c=>`<div class="setting-row" ${c.archivedInDocket?'style="opacity:.55"':''}><div class="sl"><b>${esc(c.name)}</b>${c.archivedInDocket?' <span class="chip void slim"><span class="cdot"></span>archived in Docket</span>':''}<p>org #${c.zorg} · ${c.cycle} cycle</p></div></div>`).join('')}
+      ${pgC.slice.map(c=>`<div class="setting-row" ${c.archivedInDocket?'style="opacity:.55"':''}><div class="sl"><b>${esc(c.name)}</b>${c.archivedInDocket?' <span class="chip void slim"><span class="cdot"></span>archived in Docket</span>':''}<p>client #${c.zorg} · ${c.cycle} cycle</p></div></div>`).join('')}${pagerBar(pgC)}
     </div>
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Activity types</h3><span class="hint">rates set on the Activity Types page</span></div>

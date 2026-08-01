@@ -11,6 +11,11 @@
                                         setClientRate (client-wide default),
                                         setClientTypeRate, toggleClientTypeBillable,
                                         clearClientTypeOverride (all-NULL row = inherit)
+     PUT   /api/clients/{id}/default-rates — toggleClientUseDefaults (the
+                                        client-wide “use global default rates”
+                                        switch), toggleClientTypeDefault
+                                        (per-type inherit toggle) — immediate,
+                                        effective-dated flags
      PUT   /api/clients/{id}/access   — pushAccess (debounced 500 ms) for
                                         setClientAccessMode, toggleClientAccessTech,
                                         toggleClientAccessGroup
@@ -23,7 +28,8 @@ function viewClients(){
   const showMoney=canSeeMoney();
   const list=accessibleClients();
   const hidden=state.clients.length-list.length;
-  const rows=list.map(c=>{
+  const pg=paginate('clients',list);
+  const rows=pg.slice.map(c=>{
     const es=state.entries.filter(e=>e.clientId===c.id && e.status!=='void' && !isLocked(e));
     let h=0,a=0; es.forEach(e=>{const p=priced(e); h+=p.h; a+=p.amount;});
     const acc = (!c.access||c.access.mode==='all')
@@ -32,7 +38,7 @@ function viewClients(){
       ? `<span class="chip submitted slim"><span class="cdot"></span>${(c.access.groups||[]).length} group${(c.access.groups||[]).length===1?'':'s'}</span>`
       : `<span class="chip submitted slim"><span class="cdot"></span>${(c.access.techs||[]).length} tech${(c.access.techs||[]).length===1?'':'s'}</span>`;
     return `<tr class="clickable" onclick="openClient('${c.id}')">
-      <td><div class="cell-title">${esc(c.name)}${c.archivedInDocket?' <span class="chip void" style="padding:1px 8px;margin-left:6px"><span class="cdot"></span>archived in Docket</span>':''}</div><div class="cell-meta">org #${c.zorg} · shared with Docket</div></td>
+      <td><div class="cell-title">${esc(c.name)}${c.archivedInDocket?' <span class="chip void" style="padding:1px 8px;margin-left:6px"><span class="cdot"></span>archived in Docket</span>':''}</div><div class="cell-meta">client #${c.zorg}</div></td>
       <td><span class="chip nonbill" style="text-transform:capitalize;padding:1px 8px"><span class="cdot"></span>${c.cycle}</span></td>
       <td>${acc}</td>
       <td class="num">${es.length} · ${fmtHours(h)} h</td>
@@ -41,10 +47,10 @@ function viewClients(){
     </tr>`;
   }).join('');
   return `
-  <div class="notice info" style="margin-bottom:16px">${icon(IC.client)}<div>Clients live in the shared directory — Docket reads and writes the same records. Click one to configure its <b>per-activity-type billing</b>, browse its <b>ticket breakdown</b>, and set <b>which technicians can access it</b>.${hidden>0?` <span class="muted">${hidden} client${hidden===1?'':'s'} hidden — you don’t have access.</span>`:''}</div></div>
+  ${hidden>0?`<div class="notice info" style="margin-bottom:16px">${icon(IC.client)}<div>${hidden} client${hidden===1?'':'s'} hidden — you don’t have access.</div></div>`:''}
   <div class="card"><table class="tbl">
     <thead><tr><th>Client</th><th>Cycle</th><th>Access</th><th class="num">Open work</th>${showMoney?'<th class="num">Amount</th>':''}<th></th></tr></thead>
-    <tbody>${rows||`<tr><td colspan="6"><div class="empty">${icon(IC.client)}<div>No clients you can access.</div></div></td></tr>`}</tbody></table></div>`;
+    <tbody>${rows||`<tr><td colspan="6"><div class="empty">${icon(IC.client)}<div>No clients you can access.</div></div></td></tr>`}</tbody></table>${pagerBar(pg)}</div>`;
 }
 
 /* ===================== CLIENT DETAIL ===================== */
@@ -71,18 +77,24 @@ function viewClient(){
   const typeRows=state.types.filter(t=>!t.sentinel && t.active!==false).map(t=>{
     const ov=(c.rates&&c.rates[t.id])||null;
     const effBill = ov&&ov.billable!=null ? !!ov.billable : !!t.billable;
-    const effRate = effBill ? (ov&&ov.rate!=null?ov.rate:(c.rateOverride!=null?c.rateOverride:t.rate)) : 0;
+    const tf=(c.defaultTypeFlags||{})[t.id];
+    const dfOn = !!c.useDefaults && !(tf&&tf.enabled===false);
+    const dfCur = dfOn && state.defaultRates[t.id] ? state.defaultRates[t.id].rate : null;
+    const effRate = effBill ? (ov&&ov.rate!=null?ov.rate:(c.rateOverride!=null?c.rateOverride:(dfCur!=null?dfCur:t.rate))) : 0;
     const overridden = !!ov && (ov.rate!=null||ov.billable!=null);
-    const src = ov&&ov.rate!=null ? 'client override' : (c.rateOverride!=null&&effBill ? 'client default rate' : 'type rate');
+    const src = ov&&ov.rate!=null ? 'client override'
+              : (c.rateOverride!=null&&effBill) ? 'client default rate'
+              : (dfCur!=null&&effBill) ? 'global default'
+              : 'type rate';
     return `<tr>
       <td><div class="cell-title">${esc(t.name)}</div><div class="cell-meta">${t.note?esc(t.note):'<span class="muted">—</span>'}</div></td>
       <td>${manage
         ? `<div style="display:flex;align-items:center;gap:8px"><button class="toggle ${effBill?'on':''}" onclick="toggleClientTypeBillable('${c.id}','${t.id}')"></button><span class="mini">${effBill?'Billable':'Non-billable'}</span></div>`
         : `<span class="chip ${effBill?'billable':'nonbill'} slim"><span class="cdot"></span>${effBill?'Billable':'Non-billable'}</span>`}</td>
       <td class="num">${!showMoney?'<span class="muted">—</span>':(manage
-        ? `<input type="number" min="0" step="5" value="${effBill?effRate:''}" placeholder="${effBill?(c.rateOverride!=null?c.rateOverride:t.rate):'—'}" data-fkey="cr-${c.id}-${t.id}" oninput="setClientTypeRate('${c.id}','${t.id}',this.value)" ${effBill?'':'disabled'} style="width:100px;text-align:right">`
+        ? `<input type="number" min="0" step="5" value="${effBill?effRate:''}" placeholder="${effBill?(c.rateOverride!=null?c.rateOverride:(dfCur!=null?dfCur:t.rate)):'—'}" data-fkey="cr-${c.id}-${t.id}" oninput="setClientTypeRate('${c.id}','${t.id}',this.value)" ${effBill?'':'disabled'} style="width:100px;text-align:right">`
         : (effBill?fmtMoney(effRate)+'/h':'—'))}</td>
-      <td class="mini muted">${showMoney?src:''}${overridden&&manage?` · <a href="#" onclick="clearClientTypeOverride('${c.id}','${t.id}');return false" style="color:inherit;text-decoration:underline">reset</a>`:''}</td>
+      <td class="mini muted">${showMoney?src:''}${overridden&&manage?` · <a href="#" onclick="clearClientTypeOverride('${c.id}','${t.id}');return false" style="color:inherit;text-decoration:underline">reset</a>`:''}${c.useDefaults&&manage?` · <label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;cursor:pointer"><input type="checkbox" ${!(tf&&tf.enabled===false)?'checked':''} onclick="toggleClientTypeDefault('${c.id}','${t.id}')" style="width:auto"> inherit default</label>`:''}</td>
     </tr>`;
   }).join('');
 
@@ -113,12 +125,17 @@ function viewClient(){
         <div><div class="mini muted">Billing cycle</div>${manage?`<select onchange="setClientCycle('${c.id}',this.value)" style="text-transform:capitalize;margin-top:4px">${cycles.map(cy=>`<option value="${cy}" ${c.cycle===cy?'selected':''}>${cy}</option>`).join('')}</select>`:`<div class="v" style="text-transform:capitalize">${c.cycle}</div>`}</div>
         <div><div class="mini muted">Client default rate (all billable types)</div>${(manage&&showMoney)?`<input type="number" min="0" step="5" placeholder="use type rate" value="${c.rateOverride??''}" data-fkey="crw-${c.id}" oninput="setClientRate('${c.id}',this.value)" style="width:150px;margin-top:4px">`:`<div class="v tape">${showMoney?(c.rateOverride!=null?fmtMoney(c.rateOverride)+'/h':'type rate'):'—'}</div>`}</div>
         <div><div class="mini muted">Billable by default</div>${manage?`<label class="mini" style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer"><input type="checkbox" ${c.billableDefault?'checked':''} onchange="toggleClientBillable('${c.id}')"> new time bills</label>`:`<div class="v">${c.billableDefault?'Yes':'No'}</div>`}</div>
-        <div><div class="mini muted">Org</div><div class="v tape">#${c.zorg}</div></div>
+        <div><div class="mini muted">Shared client ID</div><div class="v tape">#${c.zorg}</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        ${manage?`<button class="toggle ${c.useDefaults?'on':''}" onclick="toggleClientUseDefaults('${c.id}')"></button>`:''}
+        <span class="mini"><b>Use global default rates</b></span>
+        <span class="mini muted">${c.useDefaults?'billable types with no client rate price at the Settings defaults — toggle individual types below':'off — this client prices only from its own rates and the type base rates'}</span>
       </div>
       <table class="tbl">
         <thead><tr><th>Activity type</th><th>Billable (this client)</th><th class="num">Rate ($/h)</th><th>Effective from</th></tr></thead>
         <tbody>${typeRows}</tbody></table>
-      <div class="mini muted" style="margin-top:10px">Rate resolution: <b>per-type override</b> → <b>client default rate</b> → <b>activity-type rate</b>. Overrides only change <b>open</b> entries; locked periods never re-price.</div>
+      <div class="mini muted" style="margin-top:10px">Rate resolution: <b>per-type override</b> → <b>client default rate</b> → <b>global default</b> (when switched on) → <b>activity-type rate</b>. Overrides only change <b>open</b> entries; locked periods never re-price.</div>
     </div>
   </div>`;
 
@@ -136,6 +153,7 @@ function viewClient(){
   if(cf.status.length) es=es.filter(e=> cf.status.some(s=> s==='void'?e.status==='void':s==='locked'?(isLocked(e)&&e.status!=='void'):s==='approved'?(e.tsApproved&&!isLocked(e)&&e.status!=='void'):s==='submitted'?(e.submitted&&!e.tsApproved&&!isLocked(e)&&e.status!=='void'):(e.status==='pending'&&!isLocked(e)&&!e.submitted)));
   if(cf.q){const q=cf.q.toLowerCase(); es=es.filter(e=>(e.ticketTitle+e.content+tech(e.techId).name).toLowerCase().includes(q));}
   es=es.slice().sort((a,b)=>b.startedAt-a.startedAt);
+  const pgE=paginate('clientEntries:'+c.id, es);
   // breakdown by activity type
   const byType={}; let tot={h:0,a:0,n:0};
   es.forEach(e=>{const p=priced(e); if(e.status==='void')return; const k=e.typeId; (byType[k]=byType[k]||{h:0,a:0,n:0}); byType[k].h+=p.h; byType[k].a+=p.amount; byType[k].n++; tot.h+=p.h; tot.a+=p.amount; tot.n++;});
@@ -162,7 +180,7 @@ function viewClient(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Showing</span><div class="mini">${es.length} entr${es.length===1?'y':'ies'} · <span class="tape">${fmtHours(tot.h)}</span> h${showMoney?` · <span class="tape" style="font-weight:600;color:var(--ink)">${fmtMoney(tot.a)}</span>`:''}</div></div>
   </div></div>`;
-  const ticketRows=es.map(e=>{const p=priced(e);return `<tr class="${e.status==='void'?'void':(isLocked(e)?'locked-row':'')}">
+  const ticketRows=pgE.slice.map(e=>{const p=priced(e);return `<tr class="${e.status==='void'?'void':(isLocked(e)?'locked-row':'')}">
     <td><div class="cell-title">${esc(e.ticketTitle)}</div><div class="cell-meta">#${e.zTicket}${can('view_all')?' · '+esc(tech(e.techId).name):''} · ${fmtDate(e.startedAt)}</div></td>
     <td>${atype(e.typeId).sentinel?'<span class="chip unclassified slim"><span class="cdot"></span>Unclassified</span>':esc(atype(e.typeId).name)}</td>
     <td class="num" style="font-weight:600">${fmtHours(p.h)}</td>
@@ -176,7 +194,7 @@ function viewClient(){
         <tfoot><tr class="rpt-total"><td>Total</td><td class="num">${tot.n}</td><td class="num">${fmtHours(tot.h)}</td>${showMoney?`<td class="num">${fmtMoney(tot.a)}</td>`:''}</tr></tfoot></table>`:''}
       ${filters}
       <table class="tbl"><thead><tr><th>Ticket</th><th>Activity</th><th class="num">Hours</th>${showMoney?'<th class="num">Amount</th>':''}<th>Status</th></tr></thead>
-        <tbody>${ticketRows||`<tr><td colspan="5"><div class="empty" style="padding:20px">${icon(IC.sheet)}<div>No entries match.</div></div></td></tr>`}</tbody></table>
+        <tbody>${ticketRows||`<tr><td colspan="5"><div class="empty" style="padding:20px">${icon(IC.sheet)}<div>No entries match.</div></div></td></tr>`}</tbody></table>${pagerBar(pgE)}
     </div>
   </div>`;
 
@@ -300,6 +318,35 @@ function clearClientTypeOverride(cid,tid){
   o.rateHist=histToday(o.rateHist,'rate',null);
   o.billableHist=histToday(o.billableHist,'billable',null);
   clientRatePut(cid,tid,null); render();          /* all-NULL row = inherit, history kept */
+}
+/* ---- global-default opt-in: the client-wide switch + per-type toggles.
+   Toggles mirror IMMEDIATELY (no debounce — row 34's lesson): local flip +
+   dated history row first, oops() on refusal. Effective-dated flags mean a
+   flip today never re-prices earlier time. ---- */
+function toggleClientUseDefaults(cid){
+  const c=client(cid); if(!c) return;
+  c.useDefaults=!c.useDefaults;
+  c.useDefaultsHist=histToday(c.useDefaultsHist,'enabled',c.useDefaults);
+  log('Client billing changed', `${esc(c.name)} → global default rates ${c.useDefaults?'ON':'OFF'} (effective today; earlier time keeps its pricing)`, cid);
+  render();
+  $fetch('/api/clients/'+encodeURIComponent(cid)+'/default-rates',{method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({activity_type:null,enabled:c.useDefaults})})
+    .then(async r=>{ if(!r.ok) return oops(await jshort(r)); setTimeout(()=>hydrate(),300); });
+}
+function toggleClientTypeDefault(cid,tid){
+  const c=client(cid); if(!c) return;
+  c.defaultTypeFlags=c.defaultTypeFlags||{};
+  const o=c.defaultTypeFlags[tid]||(c.defaultTypeFlags[tid]={enabled:null,hist:[]});
+  const was=!(o.enabled===false);
+  o.enabled=!was;
+  o.hist=histToday(o.hist,'enabled',o.enabled);
+  log('Client billing changed', `${esc(c.name)} · ${esc(atype(tid).name)} → ${o.enabled?'inherits':'excluded from'} global default rates (effective today)`, cid);
+  render();
+  $fetch('/api/clients/'+encodeURIComponent(cid)+'/default-rates',{method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({activity_type:tid,enabled:o.enabled})})
+    .then(async r=>{ if(!r.ok) return oops(await jshort(r)); setTimeout(()=>hydrate(),300); });
 }
 
 /* ---- access control ---- */

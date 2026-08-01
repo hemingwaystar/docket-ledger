@@ -95,10 +95,16 @@ function viewTimesheets(){
   // checkbox acts on any live (non-void, non-deleted) row; which actions are
   // offered depends on the signed-in person's permissions.
   const eligible = rows.filter(e=> e.status!=='void' && !e.zDeleted);
-  f._vis = eligible.map(e=>e.id);
-  Object.keys(f.sel).forEach(id=>{ if(!f._vis.includes(id)) delete f.sel[id]; });
+  /* selections survive paging: prune against the FULL filtered eligible set… */
+  const eligibleIds = new Set(eligible.map(e=>e.id));
+  Object.keys(f.sel).forEach(id=>{ if(!eligibleIds.has(id)) delete f.sel[id]; });
+  const pg = paginate('timesheets', rows);
+  /* …but 'Select all shown' (header checkbox + toggleSelAll via _vis) acts on
+     the CURRENT PAGE only, so the checkbox never lies about what it toggles */
+  const pageEligible = pg.slice.filter(e=> e.status!=='void' && !e.zDeleted);
+  f._vis = pageEligible.map(e=>e.id);
   const selCount = Object.keys(f.sel).length;
-  const allChecked = eligible.length>0 && eligible.every(e=>f.sel[e.id]);
+  const allChecked = pageEligible.length>0 && pageEligible.every(e=>f.sel[e.id]);
 
   let selBar='';
   if(selCount){
@@ -116,7 +122,7 @@ function viewTimesheets(){
   }
 
   const colCount = showMoney ? 8 : 7;
-  const body = rows.map(e=>{
+  const body = pg.slice.map(e=>{
     const c=client(e.clientId), t=tech(e.techId), p=priced(e), locked=isLocked(e), voided=e.status==='void';
     const cls = voided?'void':(locked?'locked-row':'');
     const canAct = !voided && !e.zDeleted;
@@ -175,7 +181,7 @@ function viewTimesheets(){
 
   return toolbar + hint + `<div class="section-gap"></div>` + selBar + `<div class="card"><table class="tbl">
     <thead><tr><th class="selcell"><input type="checkbox" ${allChecked?'checked':''} onclick="toggleSelAll(this.checked)" title="Select all shown"></th><th>Ticket / client${admin?' / tech':''}</th><th>Activity type</th><th>Time · date</th><th class="num">Hours</th>${showMoney?'<th class="num">Amount</th>':''}<th>Status</th><th></th></tr></thead>
-    <tbody>${body}</tbody></table></div>`;
+    <tbody>${body}</tbody></table>${pagerBar(pg)}</div>`;
 }
 
 /* ---- row selection ---- */

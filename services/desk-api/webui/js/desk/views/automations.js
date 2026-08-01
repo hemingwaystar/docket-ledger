@@ -32,6 +32,7 @@
    ========================================================================== */
 
 function viewAutomations(){
+  const pgM = paginate('mailboxes', MAILBOXES), pgR = paginate('rules', RULES), pgG = paginate('trigs', TRIGGERS);
   return `
   <div class="notice info" style="margin-bottom:16px">${icon(IC.mail)}<div><b>One Entra app registration, every mailbox.</b> Ingestion runs on Microsoft Graph change-notification subscriptions with application-type <span class="tape">Mail.Read</span>, scoped by an application access policy to just these mailboxes — the same pattern the verification sender uses for <span class="tape">Mail.Send</span>. Shared mailboxes need no license; licensed mailboxes work identically. A 60s delta-query poll backstops missed webhooks.</div></div>
   <div class="card card-pad" style="margin-bottom:16px">
@@ -56,7 +57,7 @@ function viewAutomations(){
       <button class="btn sm primary" onclick="mailboxModal()">${icon(IC.plus)}Add mailbox</button></div>
     <table class="tbl">
       <thead><tr><th>Mailbox</th><th>Type</th><th>Board</th><th>Default priority</th><th>Outbound</th><th class="right">Today</th><th>Subscription</th><th></th></tr></thead>
-      <tbody>${MAILBOXES.map(m=>`<tr ${m.status==='paused'?'style="opacity:.55"':''}>
+      <tbody>${pgM.slice.map(m=>`<tr ${m.status==='paused'?'style="opacity:.55"':''}>
         <td><div class="cell-title tape" style="font-size:12.5px">${esc(m.addr)}</div><div class="cell-meta">${esc(m.desc)}</div></td>
         <td>${m.type==='shared'?`<span class="chip st-open"><span class="cdot"></span>Shared</span>`:`<span class="chip st-pending"><span class="cdot"></span>Licensed</span>`}</td>
         <td class="mini" style="padding-top:13px"><a href="#" onclick="goBoard('${m.groupId}');return false" style="color:var(--brand);text-decoration:none;border-bottom:1px dotted var(--brand)">${esc(grp(m.groupId).name)}</a></td>
@@ -68,6 +69,7 @@ function viewAutomations(){
           <button class="rowbtn" onclick="toggleMailbox('${m.id}')">${m.status==='connected'?'Pause':'Resume'}</button></td>
       </tr>`).join('')}</tbody>
     </table>
+    ${pagerBar(pgM)}
   </div>
   <div class="section-gap"></div>
   <div class="card">
@@ -95,7 +97,8 @@ function viewAutomations(){
       <button class="btn sm primary" onclick="ruleModal()">${icon(IC.plus)}New rule</button></div>
     <table class="tbl">
       <thead><tr><th style="width:36px"></th><th>Rule</th><th>When</th><th>Then</th><th class="right">Runs</th><th></th></tr></thead>
-      <tbody>${RULES.map((r,i)=>`<tr ${r.enabled?'':'style="opacity:.5"'}>
+      <tbody>${pgR.slice.map((r,ix)=>{ const i=pgR.start+ix;   /* GLOBAL index — order labels and move guards span pages */
+        return `<tr ${r.enabled?'':'style="opacity:.5"'}>
         <td style="padding-top:12px"><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleRule2('${r.id}')" title="${r.enabled?'disable':'enable'}"></td>
         <td><div class="cell-title">${esc(r.name)}</div><div class="cell-meta">#${i+1} in order</div></td>
         <td class="mini" style="padding-top:12px">${esc(ruleWhen(r))}</td>
@@ -104,8 +107,9 @@ function viewAutomations(){
         <td class="right"><button class="rowbtn" onclick="ruleModal('${r.id}')">Edit</button>
           ${i>0?`<button class="rowbtn" onclick="moveRule('${r.id}',-1)" title="run earlier">↑</button>`:''}
           ${i<RULES.length-1?`<button class="rowbtn" onclick="moveRule('${r.id}',1)" title="run later">↓</button>`:''}</td>
-      </tr>`).join('')}</tbody>
+      </tr>`; }).join('')}</tbody>
     </table>
+    ${pagerBar(pgR)}
   </div>
   <div class="section-gap"></div>
   <div class="card">
@@ -113,7 +117,7 @@ function viewAutomations(){
       <button class="btn sm primary" onclick="trigModal()">${icon(IC.plus)}New trigger</button></div>
     <table class="tbl">
       <thead><tr><th style="width:36px"></th><th>Trigger</th><th>Activated by</th><th>Only if</th><th>Actions</th><th class="right">Runs</th><th></th></tr></thead>
-      <tbody>${TRIGGERS.map(g=>`<tr ${g.enabled?'':'style="opacity:.5"'}>
+      <tbody>${pgG.slice.map(g=>`<tr ${g.enabled?'':'style="opacity:.5"'}>
         <td style="padding-top:12px"><input type="checkbox" ${g.enabled?'checked':''} onchange="toggleTrig('${g.id}')"></td>
         <td><div class="cell-title">${esc(g.name)}</div></td>
         <td class="mini" style="padding-top:12px">${esc(TRIG_EVENTS.find(e=>e.id===g.event)?.label.replace('…','')||g.event)}${g.event==='state'&&g.eventValue?esc(st8(g.eventValue)?.label||g.eventValue):''}</td>
@@ -124,6 +128,7 @@ function viewAutomations(){
           <button class="rowbtn" onclick="deleteTrig('${g.id}')">Delete</button></td>
       </tr>`).join('')}</tbody>
     </table>
+    ${pagerBar(pgG)}
     <div class="mini muted" style="padding:10px 16px 12px">Templates take variables: <span class="tape">#{ticket.number}</span> <span class="tape">#{ticket.title}</span> <span class="tape">#{customer.first}</span> <span class="tape">#{customer.name}</span> <span class="tape">#{client.name}</span> <span class="tape">#{agent.name}</span> <span class="tape">#{state.label}</span>. Auto-reply emails route through the same outbound resolution as agent replies.</div>
   </div>`;
 }

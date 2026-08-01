@@ -3,25 +3,23 @@
    Owns: viewDashboard() — stat tiles (queue / mine / unassigned / SLA), the
    needs-attention table, queue-by-state bars (visibility filtered through
    shownDashboardStates(), state.js) with the ⚙ per-user show/hide popover
-   (toggleDashGear/toggleDashState/resetDashStates), and the time-this-cycle
+   (toggleDashGear/setDashHiddenUser/resetDashStates), and the time-this-cycle
    card. Controls route to newTicketModal() (newticket.js), openTicket()
    (render.js) and openLedger() (suite.js).
    Endpoints: PUT /auth/me/prefs — via savePrefs({dashboardStates}) from the
-   ⚙ popover's checkboxes; lists carry SHOWN labels, an ABSENT personal key
-   means "follow the admin desk_ui default" (design §Storage).
+   ⚙ popover's hidden-states multi-select; lists carry SHOWN labels, an
+   ABSENT personal key means "follow the admin desk_ui default" (design
+   §Storage).
    ========================================================================== */
 
 /* ⚙ popover open/shut — pure local UI state, survives render() rebuilds */
 function toggleDashGear(){ state.dashGear = !state.dashGear; render(); }
-/* flip one state's visibility for THIS user: start from the effective shown
-   list (personal pref if set, else admin default, else all), toggle, persist.
-   savePrefs (state.js) mutates state.prefs locally, re-renders, PUTs
-   /auth/me/prefs and oops()es on failure — one code path per control. */
-function toggleDashState(label){
-  const shown = shownDashboardStates().map(s=>s.label);
-  const i = shown.indexOf(label);
-  if(i>=0) shown.splice(i,1); else shown.push(label);
-  savePrefs({ dashboardStates: shown });
+/* multiCombo handler (GLOBAL NAME — the component calls window[name](arr)):
+   the selection is HIDDEN labels; prefs store SHOWN labels, so invert.
+   savePrefs (state.js) mutates state.prefs locally, diff-guards, re-renders,
+   PUTs /auth/me/prefs and oops()es on failure — one code path per control. */
+function setDashHiddenUser(vals){
+  savePrefs({ dashboardStates: aSTATES().map(s=>s.label).filter(l=>!vals.includes(l)) });
 }
 /* drop the personal key entirely — back to following the admin default */
 function resetDashStates(){ savePrefs({ dashboardStates: null }); }
@@ -76,10 +74,9 @@ function viewDashboard(){
           <span class="spacer"></span>
           <button class="btn sm ghost" onclick="toggleDashGear()" title="Choose which states this card shows">⚙</button>
         </div>
-        ${state.dashGear?`<div style="position:absolute;right:14px;top:44px;z-index:60;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);padding:10px 12px;min-width:180px">
-          <div class="mini muted" style="margin-bottom:6px;text-transform:uppercase;letter-spacing:.07em;font-weight:600">Show states</div>
-          ${aSTATES().map(s=>`<label class="mini" style="display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer">
-            <input type="checkbox" ${shownStates.some(x=>x.id===s.id)?'checked':''} onchange="toggleDashState('${jsq(s.label)}')"> ${esc(s.label)}</label>`).join('')}
+        ${state.dashGear?`<div style="position:absolute;right:14px;top:44px;z-index:60;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);padding:10px 12px;min-width:240px">
+          <div class="mini muted" style="margin-bottom:6px;text-transform:uppercase;letter-spacing:.07em;font-weight:600">Hidden states</div>
+          ${multiCombo('dashHide', aSTATES().map(s=>({v:s.label,label:s.label})), aSTATES().map(s=>s.label).filter(l=>!shownStates.some(x=>x.label===l)), 'setDashHiddenUser', 'None hidden')}
           <div class="mini muted" style="margin-top:7px;padding-top:7px;border-top:1px solid var(--line)">${personalStates?`<a href="#" onclick="resetDashStates();return false">Use admin default</a>`:'(admin default)'}</div>
         </div>`:''}
         ${byState.map(({s,n})=>`
@@ -90,9 +87,8 @@ function viewDashboard(){
       </div>
       ${can('see_billing')?`<div class="section-gap"></div>
       <div class="card card-pad">
-        <div class="card-head" style="padding:0 0 8px;border:0"><h3>Time this cycle</h3><span class="hint">flows into Ledger</span></div>
+        <div class="card-head" style="padding:0 0 8px;border:0"><h3>Time this cycle</h3></div>
         <div style="display:flex;align-items:baseline;gap:8px"><span class="tape" style="font-size:26px;font-weight:600">${fmtHours(hrsToday)}</span><span class="muted">hours logged from tickets</span></div>
-        <div class="mini muted" style="margin-top:6px">Pricing, approval and invoicing happen in Ledger — Docket only records who, what and how long.</div>
         <button class="btn sm" style="margin-top:10px" onclick="openLedger()">Open in Ledger ${icon(IC.clock)}</button>
       </div>`:''}
     </div>

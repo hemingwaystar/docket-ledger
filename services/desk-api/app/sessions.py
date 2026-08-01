@@ -3,6 +3,14 @@ argon2id passwords, TOTP MFA, temp-password must-change flow, NO email reset
 links ever — admin-direct resets only, everything audited. Sessions are
 DB-backed (0004) with the role matrix snapshotted at sign-in.
 
+TOTP enrollment is two-phase (build 13): /auth/mfa/enroll (session) and
+/auth/mfa/enroll-start (pre-session, password-gated — the required-policy
+escape hatch) mint a PENDING secret (totp_secret_enc set, totp_enrolled_at
+NULL); a valid code at /auth/mfa/confirm — or at /auth/login itself under
+required policy — flips it live. The login gate keys on totp_enrolled_at,
+so a pending secret never locks anyone out, and an ACTIVE secret is never
+replaced here — admin reset (/auth/admin/reset-mfa) is the only path.
+
 Also owns per-user UI prefs (build 10): PUT /auth/me/prefs stores the whole
 prefs object under app_config 'uprefs:<agent uuid>' — the uuid comes from
 the session, never the body, so nobody can write another user's prefs."""
@@ -70,14 +78,14 @@ def login(body: Login, request: Request, response: Response):
     with db.connect("auth") as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT id, name, password_hash, password_must_change,
-                                  totp_secret_enc, active
+                                  totp_secret_enc, totp_enrolled_at, active
                              FROM shared.agents WHERE lower(email) = lower(%s)""",
                         (body.email,))
             row = cur.fetchone()
             generic = HTTPException(401, "Invalid email or password")
             if row is None:
                 raise generic
-            agent_id, name, pw_hash, must_change, totp_enc, active = row
+            agent_id, name, pw_hash, must_change, totp_enc, totp_enrolled_at, active = row
             if not active or not pw_hash:
                 raise generic
             try:
@@ -85,19 +93,40 @@ def login(body: Login, request: Request, response: Response):
             except VerifyMismatchError:
                 auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
                            f"{body.email} — wrong password")
+                conn.commit()  # keep the failure audit — the raise would roll it back
                 raise generic
             policy = _mfa_policy(cur)
-            if totp_enc is not None:
+            # the gate keys on totp_enrolled_at, NOT secret presence — a
+            # PENDING secret (enrollment started, code never confirmed)
+            # must never lock the account
+            enrolled = totp_enrolled_at is not None
+            if enrolled:
                 if not body.totp_code:
                     raise HTTPException(401, "TOTP code required", headers={"X-MFA": "required"})
                 secret = crypto.open_(totp_enc).decode()
                 if not totp.verify(secret, body.totp_code):
                     auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
                                f"{body.email} — bad TOTP")
+                    conn.commit()  # keep the failure audit — the raise would roll it back
                     raise HTTPException(401, "Invalid TOTP code")
             elif policy == "required":
-                raise HTTPException(403, "MFA is required — enroll first",
-                                    headers={"X-MFA": "enroll"})
+                if totp_enc is not None and body.totp_code:
+                    # pending secret: proof of possession completes enrollment
+                    secret = crypto.open_(totp_enc).decode()
+                    if not totp.verify(secret, body.totp_code):
+                        auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
+                                   f"{body.email} — bad TOTP (enrollment)")
+                        conn.commit()  # keep the failure audit — the raise would roll it back
+                        raise HTTPException(401, "Invalid TOTP code")
+                    cur.execute("UPDATE shared.agents SET totp_enrolled_at = now() WHERE id = %s",
+                                (agent_id,))
+                    auth.audit(conn, "auth", "MFA enrolled", f"agent:{agent_id}",
+                               f"{body.email} — confirmed at sign-in")
+                else:
+                    raise HTTPException(403, "MFA is required — enroll below",
+                                        headers={"X-MFA": "enroll"})
+            # optional policy + pending/no secret → plain password sign-in
+            # (a pending secret stays inert until confirmed)
             token, perms = mint_session(conn, cur, request, agent_id)
         auth.audit(conn, "auth", "Signed in", f"agent:{agent_id}", body.email)
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax",
@@ -185,20 +214,95 @@ def change_password(body: ChangePassword, request: Request):
 
 @router.post("/mfa/enroll")
 def mfa_enroll(request: Request):
-    """Self-enroll TOTP: returns the otpauth URI once. Secret stored envelope-
-    encrypted; re-enrolling replaces it."""
+    """Self-enroll TOTP, phase one: mints a PENDING secret (enrolled_at NULL,
+    envelope-encrypted at rest) and returns the otpauth URI once. Nothing is
+    live until a valid code lands at /auth/mfa/confirm — or at /auth/login
+    under required policy. Refuses to replace an ACTIVE secret: admin reset
+    is the only path (a hijacked session must not silently swap MFA)."""
     with db.connect() as conn:
         who = auth.require(conn, request)
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
-        secret = totp.new_secret()
         with conn.cursor() as cur:
+            cur.execute("SELECT totp_enrolled_at FROM shared.agents WHERE id = %s",
+                        (who["agent_id"],))
+            (enrolled_at,) = cur.fetchone()
+            if enrolled_at is not None:
+                raise HTTPException(409, "MFA is already enrolled — an admin must reset it first")
+            secret = totp.new_secret()
             cur.execute("""UPDATE shared.agents
-                              SET totp_secret_enc = %s, totp_enrolled_at = now()
+                              SET totp_secret_enc = %s, totp_enrolled_at = NULL
                             WHERE id = %s""",
                         (crypto.seal(secret.encode()), who["agent_id"]))
-        auth.audit(conn, "auth", "MFA enrolled", f"agent:{who['agent_id']}", who["email"])
+        auth.audit(conn, "auth", "MFA enrollment started", f"agent:{who['agent_id']}",
+                   f"{who['email']} — pending code confirmation")
         return {"otpauth_uri": totp.otpauth_uri(secret, who["email"]),
+                "secret": secret}
+
+
+class MfaConfirm(BaseModel):
+    code: str
+
+
+@router.post("/mfa/confirm")
+def mfa_confirm(body: MfaConfirm, request: Request):
+    """Prove possession: a valid code flips the pending secret live."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        with conn.cursor() as cur:
+            cur.execute("""SELECT totp_secret_enc, totp_enrolled_at
+                             FROM shared.agents WHERE id = %s""", (who["agent_id"],))
+            enc, at = cur.fetchone()
+            if enc is None:
+                raise HTTPException(409, "No enrollment in progress — start one first")
+            if at is not None:
+                return {"ok": True}                     # already live — idempotent
+            if not totp.verify(crypto.open_(enc).decode(), body.code):
+                raise HTTPException(401, "Invalid TOTP code")
+            cur.execute("UPDATE shared.agents SET totp_enrolled_at = now() WHERE id = %s",
+                        (who["agent_id"],))
+        auth.audit(conn, "auth", "MFA enrolled", f"agent:{who['agent_id']}", who["email"])
+        return {"ok": True}
+
+
+class EnrollStart(BaseModel):
+    email: str
+    password: str
+
+
+@router.post("/mfa/enroll-start")
+def mfa_enroll_start(body: EnrollStart):
+    """Login-time enrollment: password re-verified, no session needed. Mints a
+    PENDING secret (active only after a valid code at /auth/login). Refuses if
+    MFA is already live — admin reset is the only way to replace an active secret."""
+    with db.connect("auth") as conn, conn.cursor() as cur:
+        cur.execute("""SELECT id, password_hash, totp_enrolled_at, active
+                         FROM shared.agents WHERE lower(email) = lower(%s)""",
+                    (body.email,))
+        row = cur.fetchone()
+        generic = HTTPException(401, "Invalid email or password")
+        if row is None:
+            raise generic
+        agent_id, pw_hash, enrolled_at, active = row
+        if not active or not pw_hash:
+            raise generic
+        try:
+            ph.verify(pw_hash, body.password)
+        except VerifyMismatchError:
+            auth.audit(conn, "auth", "MFA enroll-start failed", f"agent:{agent_id}",
+                       f"{body.email} — wrong password")
+            conn.commit()  # keep the failure audit — the raise would roll it back
+            raise generic
+        if enrolled_at is not None:
+            raise HTTPException(409, "MFA is already enrolled — ask an admin to reset it")
+        secret = totp.new_secret()
+        cur.execute("""UPDATE shared.agents SET totp_secret_enc = %s, totp_enrolled_at = NULL
+                        WHERE id = %s""", (crypto.seal(secret.encode()), agent_id))
+        auth.audit(conn, "auth", "MFA enrollment started", f"agent:{agent_id}",
+                   f"{body.email} — at sign-in, pending code confirmation")
+        return {"otpauth_uri": totp.otpauth_uri(secret, body.email.lower()),
                 "secret": secret}
 
 

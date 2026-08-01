@@ -31,9 +31,13 @@ def bootstrap(request: Request, limit: int = 500):
             cur.execute("SELECT id, name, active FROM shared.groups ORDER BY name")
             out["groups"] = [{"id": str(r["id"]), "name": r["name"],
                               "active": r["active"]} for r in cur.fetchall()]
+            # mfaPending/mfaAt feed the auth panel (enroll started ≠ enrolled);
+            # booleans and a timestamp only — the secret itself never rides
             cur.execute("""SELECT a.id, a.name, a.initials, a.email, r.name AS role,
                              a.password_hash IS NOT NULL AS has_password,
                              a.totp_enrolled_at IS NOT NULL AS mfa,
+                             a.totp_secret_enc IS NOT NULL AND a.totp_enrolled_at IS NULL AS mfa_pending,
+                             a.totp_enrolled_at,
                              COALESCE((SELECT array_agg(ag.group_id) FROM shared.agent_groups ag
                                         WHERE ag.agent_id = a.id), '{}') AS gids
                              FROM shared.agents a LEFT JOIN shared.roles r ON r.id = a.role_id
@@ -41,6 +45,7 @@ def bootstrap(request: Request, limit: int = 500):
             out["agents"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
                              "email": r["email"], "role": r["role"] or "Technician",
                              "hasPassword": r["has_password"], "mfa": r["mfa"],
+                             "mfaPending": r["mfa_pending"], "mfaAt": ms(r["totp_enrolled_at"]),
                              "groups": [str(g) for g in r["gids"]]} for r in cur.fetchall()]
             cur.execute("""SELECT c.id, c.name, c.is_sentinel, c.archived_at, c.profile,
                              COALESCE((SELECT array_agg(domain) FROM shared.client_domains d
@@ -166,13 +171,17 @@ def bootstrap(request: Request, limit: int = 500):
             out["groupSendas"] = [{"groupId": str(r["id"]),
                                    "mailboxId": str(r["mailbox_id"]) if r["mailbox_id"] else None,
                                    "override": r["override"]} for r in cur.fetchall()]
-            cur.execute("""SELECT r.name, r.note, r.is_core, r.entra_group,
+            # archived roles ride along (active:false) so the roles cards can
+            # show Archived/Restore — pickers already filter; matches Ledger's
+            # emission, which never filtered
+            cur.execute("""SELECT r.name, r.note, r.is_core, r.entra_group, r.active,
                              COALESCE((SELECT array_agg(permission_id)
                                         FROM shared.role_permissions rp
                                        WHERE rp.role_id = r.id), '{}') AS perms
-                             FROM shared.roles r WHERE r.active ORDER BY r.name""")
+                             FROM shared.roles r ORDER BY r.name""")
             out["roles"] = [{"name": r["name"], "note": r["note"], "core": r["is_core"],
                              "entra": r["entra_group"] or "",
+                             "active": r["active"],
                              "perms": list(r["perms"])} for r in cur.fetchall()]
             # automations — emitted in the prototype's own vocabulary so the
             # builders hydrate without translation (bug #22's lesson)

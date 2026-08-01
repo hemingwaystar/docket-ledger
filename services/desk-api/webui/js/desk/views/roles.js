@@ -1,16 +1,22 @@
 /* ==========================================================================
    js/desk/views/roles.js — Roles & access matrix (rendered inside Directory).
    Owns: rolesSection() · toggleRole · togglePerm (one path for BOTH apps'
-   permissions — Ledger ids are l_*-prefixed) · applyPreset · roleModal ·
-   saveRole · entraSet (the Entra-mapping inputs in Settings call it) ·
-   LEDGER_CATALOG (static vocabulary — mirrors the shared.permissions ledger
-   rows 1:1; the checked state comes from state.roleDefs[].perms).
+   permissions — Ledger ids are l_*-prefixed) · applyPreset · archiveRole ·
+   deleteRole · roleModal · saveRole · entraSet (the Entra-mapping inputs in
+   Settings call it) · LEDGER_CATALOG (static vocabulary — mirrors the
+   shared.permissions ledger rows 1:1; the checked state comes from
+   state.roleDefs[].perms).
    Endpoints: POST /api/directory/roles · PATCH /api/directory/roles/{name}
-   (note / rename / entra_group / add[] / remove[]).
-   Invariants: no delete, and no archive — the server keeps roles active-only
-   and PatchRole carries no active field. Core roles keep their names (server
-   409s a rename; refused client-side too). Permission changes apply at each
-   agent's next sign-in — sessions snapshot perms.
+   (note / rename / entra_group / active / add[] / remove[]) ·
+   DELETE /api/directory/roles/{name}.
+   Invariants: custom roles archive/restore (PATCH {active} — archived =
+   hidden from pickers, holders keep it until reassigned) and hard-delete
+   (DELETE — the ONE user-approved exception to no-DELETE, migration 0030);
+   core roles keep their names (server 409s a rename; refused client-side
+   too) and stay active. Delete is refused while any agent — including
+   deactivated ones — still holds the role (server pre-check + 0030 guard
+   trigger). Permission changes apply at each agent's next sign-in —
+   sessions snapshot perms.
    ========================================================================== */
 
 function toggleRole(name){ state.openRole = state.openRole===name? null : name; render(); }
@@ -70,6 +76,42 @@ function applyPreset(name, preset){
     .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
 }
 
+/* ---- lifecycle: archive/restore (PATCH {active}) and hard delete (0030).
+   Client guards mirror the server's: core roles are untouchable; delete is
+   member-gated here on ACTIVE members only — deactivated holders are
+   invisible to the UI (bootstrap agents ride WHERE a.active), so the server
+   409 names the real count and the remedy, and oops() rehydrates the row
+   back (the checkbox-truth pattern, bug-#30 class). */
+function archiveRole(name){
+  if(!can('manage_roles')) return;
+  const r = state.roleDefs.find(x=>x.name===name); if(!r || r.core) return;
+  const to = r.active===false;                       /* restoring? */
+  r.active = to;
+  log(to?'Role restored':'Role archived', `${name} · ${to?'back in the pickers':'hidden from pickers — current holders keep it until reassigned'}`);
+  toast(`Role “${name}” ${to?'restored':'archived'}.`);
+  render();
+  $fetch('/api/directory/roles/'+encodeURIComponent(name),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({active:to})})
+    .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
+}
+function deleteRole(name){
+  if(!can('manage_roles')) return;
+  const i = state.roleDefs.findIndex(x=>x.name===name);
+  const r = state.roleDefs[i]; if(!r || r.core) return;
+  /* live count, not the mapIn snapshot — setAgentRole mutates a.role without
+     recomputing r.members, and the 409 remedy is exactly that reassign flow */
+  const members = AGENTS.filter(a=>a.role===name).length;
+  if(members>0){ toast(`${members} member${members===1?'':'s'} still hold “${name}” — reassign them first.`); return; }
+  if(!confirm(`Delete role “${name}” permanently?\nIts permission grants go with it. The server refuses if any agent — including deactivated ones — still holds it.`)) return;
+  state.roleDefs.splice(i,1);
+  if(state.openRole===name) state.openRole=null;
+  log('Role deleted', `${name} · hard-deleted — the audit log keeps its history`);
+  toast(`Role “${name}” deleted.`);
+  render();
+  $fetch('/api/directory/roles/'+encodeURIComponent(name),{method:'DELETE'})
+    .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
+}
+
 function roleModal(name){
   if(!can('manage_roles')&&!can('manage_settings')) return;
   const r0 = name? state.roleDefs.find(r=>r.name===name) : {};
@@ -108,7 +150,7 @@ function saveRole(oldName){
       .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
     return;
   }
-  state.roleDefs.push({ name, note, perms:new Set(), members:0, core:false, entra:'' });
+  state.roleDefs.push({ name, note, perms:new Set(), members:0, core:false, entra:'', active:true });
   log('Role added', `${name} — grant permissions in the matrix; assign people via the matching Entra group`);
   toast(`Role “${name}” saved — applies in both apps.`);
   closeModal(); render();
@@ -139,15 +181,20 @@ function rolesSection(){
   <div class="notice info" style="margin-bottom:14px">${icon(IC.shield)}<div><b>All RBAC lives here.</b> One role list, two permission matrices — what each role can do in <b>Docket</b> and in <b>Ledger</b> — managed in one place and mapped from the same Entra security groups. Changes apply at each agent’s next sign-in; Ledger’s Settings page points back here.</div></div>
   ${state.roleDefs.map(r=>{
     const open = state.openRole===r.name;
-    return `<div class="role-card ${open?'open':'collapsed'}">
+    const arch = r.active===false;
+    const mem  = AGENTS.filter(a=>a.role===r.name).length; /* live — r.members is a hydrate snapshot */
+    return `<div class="role-card ${open?'open':'collapsed'}" ${arch?'style="opacity:.55"':''}>
       <div class="role-card-head">
         <div class="role-card-toggle" onclick="toggleRole('${jsq(r.name)}')">
           <span class="role-caret">▶</span>
           <div style="min-width:0"><b style="font-size:14px">${esc(r.name)}</b>
-          <div class="mini muted">${esc(r.note)} · ${r.members} member${r.members===1?'':'s'} · ${r.perms.size}/${total} permissions</div></div>
+          <div class="mini muted">${esc(r.note)} · ${mem} member${mem===1?'':'s'} · ${r.perms.size}/${total} permissions</div></div>
         </div>
         <span class="chip ${r.perms.has('view_all')?'st-open':'st-closed'}"><span class="cdot"></span>${r.perms.has('view_all')?'sees all tickets':'scoped view'}</span>
+        ${arch?'<span class="chip st-closed"><span class="cdot"></span>Archived</span>':''}
         <button class="rowbtn" onclick="event.stopPropagation();roleModal('${jsq(r.name)}')">${r.core?'Edit':'Rename'}</button>
+        ${r.core||!can('manage_roles')?'':`<button class="rowbtn" onclick="event.stopPropagation();archiveRole('${jsq(r.name)}')">${arch?'Restore':'Archive'}</button>
+        <button class="rowbtn" onclick="event.stopPropagation();deleteRole('${jsq(r.name)}')">Delete</button>`}
       </div>
       ${open? `<div class="perm-grid">
         ${groups.map(g=>`<div class="perm-col"><div class="perm-group">${g}</div>

@@ -12,7 +12,9 @@
    ========================================================================== */
 
 function viewTypes(){
-  const rows=state.types.map(a=>{
+  const list=state.types;
+  const pg=paginate('types',list);
+  const rows=pg.slice.map(a=>{
     const n=state.entries.filter(e=>e.typeId===a.id && e.status!=='void').length;
     if(a.sentinel) return `<tr>
       <td><div class="cell-title">${esc(a.name)} <span class="chip unclassified" style="margin-left:6px"><span class="cdot"></span>system</span></div>
@@ -39,7 +41,7 @@ function viewTypes(){
   <div class="notice info" style="margin-bottom:16px">${icon(IC.tag)}<div>These are the same activity types Docket’s ticket timer logs against. Turning a type <b>billable</b> and setting a rate re-prices every open (unlocked) entry that uses it. Locked entries never change.</div></div>
   <div class="card"><table class="tbl">
     <thead><tr><th>Activity type</th><th>Billable</th><th class="num">Rate ($/h)</th><th class="num">Entries</th></tr></thead>
-    <tbody>${rows}</tbody></table>
+    <tbody>${rows}</tbody></table>${pagerBar(pg)}
     <div class="mini muted" style="padding:10px 16px 12px">Create, rename or archive types in <b>Docket → Directory</b> (the shared control plane). Billable status and rates live here.</div></div>`;
 }
 

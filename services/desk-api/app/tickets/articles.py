@@ -4,6 +4,7 @@ outbound switch allow — otherwise recorded only."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from .. import auth, db, helpers, mailer
+from .common import _sane_span
 
 router = APIRouter(prefix="/api")
 
@@ -34,6 +35,7 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
         auth.need(who, "reply" if body.kind == "reply" else "note")
         if body.time:
             auth.need(who, "log_time")
+            _sane_span(body.time.started_at, body.time.ended_at)
         with conn.cursor() as cur:
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)

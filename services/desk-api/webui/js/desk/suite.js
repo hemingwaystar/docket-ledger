@@ -65,5 +65,5 @@ function openLedger(note){
       : location.protocol + '//' + location.hostname + ':8082/ui/ledger.html';
     window.open(url, 'ledger');
   }
-  toast(note || 'Opening Ledger — same sign-on, same clients, shared database.');
+  toast(note || 'Opening Ledger.');
 }

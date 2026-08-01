@@ -35,7 +35,6 @@
         <div class="avatar" id="userAv"></div>
         <div>
           <div class="who-name" id="userName"></div>
-          <div class="who-meta"><span class="dot"></span><span id="userMeta"></span></div>
           <a href="#" onclick="signOut();return false" class="mini" style="color:#8fa0ab;text-decoration:underline;text-underline-offset:2px">Sign out</a>
         </div>
       </div>
@@ -56,9 +55,6 @@
       <div style="position:relative">
         <button class="rowbtn" style="font-size:15px;padding:4px 9px" onclick="toggleBell()" title="Notifications — SLA escalations land here (and email/Teams in production)">&#128276;<span id="bellBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:#b3261e;color:#fff;border-radius:10px;font-size:10px;padding:0 5px"></span></button>
         <div id="bellBox" style="display:none;position:absolute;top:36px;right:0;width:380px;max-height:400px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 30px rgba(21,32,41,.14);z-index:60"></div>
-      </div>
-      <div class="topbar-right">
-        <div class="sync"><span class="dot"></span><span id="syncTxt">Graph mail · Entra SSO</span></div>
       </div>
     </header>
     <div class="content" id="content"><div class="card card-pad muted">Loading…</div></div>

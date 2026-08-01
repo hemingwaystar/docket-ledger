@@ -1,5 +1,5 @@
 /* suite.css — suite.html chrome.
-   map: tokens · topbar + mark · tabs · hint · stage/panes (split, narrow) */
+   map: tokens · topbar + mark · tabs · stage/panes (split, narrow) */
 :root{
   --brand:#0e6e63; --ink:#152029; --ink-2:#3d4b57; --ink-3:#75828d;
   --paper:#f5f6f4; --surface:#ffffff; --line:#e4e7e3; --seal:#b0862f;
@@ -16,8 +16,6 @@ body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:var(--
 .tabs button{border:0;background:transparent;color:#aebbc4;font:inherit;font-size:13px;font-weight:500;padding:6px 16px;border-radius:7px;cursor:pointer}
 .tabs button.on{background:var(--brand);color:#fff}
 .tabs button:hover:not(.on){color:#e8edf0}
-.hint{font-size:12px;color:#8fa0ab;margin-left:auto;display:flex;align-items:center;gap:8px}
-.hint .dot{width:7px;height:7px;border-radius:50%;background:#3ddc97;display:inline-block}
 .stage{flex:1;display:flex;min-height:0;background:var(--paper)}
 .pane{flex:1;min-width:0;display:none;position:relative}
 .pane.show{display:block}

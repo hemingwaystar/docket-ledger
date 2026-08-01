@@ -5,12 +5,12 @@
    dashboard defaults (desk_ui), caller verification config, secrets, and
    the read-only PAT list.
    Owns: viewSettings · groupModal/saveGroup/archiveGroup · agentModal/
-   saveAgent/deactivateAgent/toggleMembership/setAgentRole · typeModal/
-   saveType/archiveType · stateModal/saveState/archiveState/moveState ·
+   saveAgent/deactivateAgent/toggleMembership/setAgentGroups/setAgentRole ·
+   typeModal/saveType/archiveType · stateModal/saveState/archiveState/moveState ·
    stSwatches/stateColorSet/stateDescSet/stPalPick (state decor, 0027) ·
    prioModal/savePrio/archivePrio · prioSwatches/prioColorSet (priority
-   decor, 0028) · deskUiCard/ovModal/saveOverview/
-   moveOverview/hideOverview/dashDefToggle/deskUiPush (+ deskOvs/
+   decor, 0028) · deskUiCard/ovModal/saveOverview/moveOverview/hideOverview/
+   dashHiddenDefault/setDashHiddenDefault/deskUiPush (+ deskOvs/
    ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
    vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows.
    Endpoints: POST /api/directory/groups · PATCH /api/directory/groups/{id} ·
@@ -163,7 +163,24 @@ function toggleMembership(gid, tid){
   toast(`${a.name.split(' ')[0]} ${has?'removed from':'added to'} ${grp(gid).name} — applies in Ledger too.`);
   render();
   /* the mirror sends the FULL groups list; a refusal re-hydrates via oops()
-     so the checkboxes tell the truth (bug-#30 class) */
+     so the membership UI tells the truth (bug-#30 class) */
+  $fetch('/api/directory/agents/'+encodeURIComponent(a.email),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:a.groups.slice()})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+/* the agent-row group multiCombo (views/directory.js) lands here: a GLOBAL
+   NAME handler (render.js calls window[name](selectedArr, fkey)) — same
+   endpoint, same full-list replace semantics as toggleMembership, two views
+   of one membership truth */
+function setAgentGroups(sel, fkey){
+  if(!can('manage_settings')) return;
+  const a = agent(fkey.slice('agGrp-'.length)); if(!a) return;
+  if(!sel.length){ toast(`${a.name.split(' ')[0]} needs at least one group.`); render(); return; }
+  if(sel.length===a.groups.length && sel.every(g=>a.groups.includes(g))) return;   /* diff-guard (row 21) */
+  a.groups = sel.slice();
+  log('Groups updated', `${a.name} → ${a.groups.map(g=>grp(g)?.name||g).join(', ')} — applies in Ledger too`);
+  bridgeSend('dir-agent-upsert', { agent:{ id:a.id, name:a.name, initials:a.initials, groups:a.groups.slice() } });
+  render();
   $fetch('/api/directory/agents/'+encodeURIComponent(a.email),{method:'PATCH',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:a.groups.slice()})})
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
@@ -563,16 +580,21 @@ function hideOverview(id){
   render();
   deskUiPush();
 }
-function dashDefToggle(label, on){
+/* the admin default expressed as HIDDEN labels — multiCombo's
+   empty-selection-=-All convention maps exactly onto §Storage's
+   absent-key = all-shown semantics. Storage stays SHOWN labels; only the
+   control inverts. */
+function dashHiddenDefault(){
   const all = aSTATES().map(s=>s.label);
-  const shown = Array.isArray(DESK_UI.dashboardStates)? DESK_UI.dashboardStates.slice() : all.slice();
-  if(on===shown.includes(label)) return;             /* no change — nothing to mirror */
-  const next = on ? all.filter(l=>shown.includes(l)||l===label) : shown.filter(l=>l!==label);
-  /* every active state shown = same as absent; stay absent so future states
-     default to visible instead of being pinned out by an old list */
-  if(all.every(l=>next.includes(l))) delete DESK_UI.dashboardStates;
-  else DESK_UI.dashboardStates = next;
-  log('Dashboard default changed', `Queue by state · ${label} ${on?'shown':'hidden'} by default`);
+  return Array.isArray(DESK_UI.dashboardStates) ? all.filter(l=>!DESK_UI.dashboardStates.includes(l)) : [];
+}
+function setDashHiddenDefault(vals){
+  const all = aSTATES().map(s=>s.label);
+  const cur = Array.isArray(DESK_UI.dashboardStates) ? DESK_UI.dashboardStates : null;
+  const next = vals.length ? all.filter(l=>!vals.includes(l)) : null;   /* null = absent key — all shown, future states auto-visible */
+  if(JSON.stringify(cur)===JSON.stringify(next)) return;               /* diff-guard (row 21) */
+  if(next===null) delete DESK_UI.dashboardStates; else DESK_UI.dashboardStates = next;
+  log('Dashboard default changed', `Queue by state · hidden by default: ${vals.length? vals.join(', ') : 'none'}`);
   render();
   deskUiPush();
 }
@@ -662,11 +684,8 @@ function deskUiCard(){
       <button class="btn sm" style="margin-top:12px" onclick="ovModal()">+ Add tab</button>
       <div class="mini muted" style="margin-top:8px">${custom?'Customized — saved as the shared default for every agent.':'Showing the shipped defaults — the first change saves the whole list as the shared default.'} Hiding is archive-style: the definition stays and can be restored. Personal tabs and per-user order live on each person's queue (⚙), not here.</div>
       <div class="card-head flush" style="margin-top:16px"><h3>Dashboard — queue by state</h3><span class="hint">shown by default · each person can override on the card</span></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
-        ${aSTATES().map(s=>{ const on=!Array.isArray(DESK_UI.dashboardStates)||DESK_UI.dashboardStates.includes(s.label);
-          return `<label class="mini" style="display:inline-flex;gap:5px;align-items:center;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" ${on?'checked':''} onchange="dashDefToggle('${jsq(s.label)}',this.checked)" style="width:auto;accent-color:var(--brand)">${esc(s.label)}</label>`;}).join('')}
-      </div>
-      <div class="mini muted" style="margin-top:8px">Unchecked states leave the dashboard's Queue-by-state card for anyone who hasn't set their own view; counts elsewhere are untouched. All boxes checked = new states show automatically.</div>
+      <div style="margin-top:6px;max-width:360px">${multiCombo('duiDashHide', aSTATES().map(s=>({v:s.label,label:s.label})), dashHiddenDefault(), 'setDashHiddenDefault', 'No states hidden')}</div>
+      <div class="mini muted" style="margin-top:8px">Pick the states to <b>hide</b> from the dashboard’s Queue-by-state card by default; anyone who has set their own view on the card (⚙) is untouched. No selection = every active state shows, and new states show automatically.</div>
     </div>`;
 }
 
@@ -872,8 +891,6 @@ function viewSettings(){
     <div class="card card-pad">
       <div class="card-head flush"><h3>Channels</h3><span class="hint">how tickets arrive</span></div>
       <div class="setting-row"><div class="sl"><b>Microsoft Graph mail</b><p>${MAILBOXES.length} mailbox${MAILBOXES.length===1?'':'es'} (${MAILBOXES.filter(m=>m.type==='shared').length} shared, ${MAILBOXES.filter(m=>m.type==='licensed').length} licensed) · webhook subscriptions + 60s delta poll · outbound routed per ticket/board${can('manage_automations')?` — <a href="#" onclick="go('automations');return false" style="color:var(--brand)">authenticate &amp; manage in Automations</a>`:''}</p></div><span class="chip ${GRAPH_AUTH.connected?'st-solved':'st-closed'}"><span class="cdot"></span>${GRAPH_AUTH.connected?'Connected':'Not authenticated'}</span></div>
-      <div class="setting-row"><div class="sl"><b>Ledger link</b><p>Time entries stream to the timesheet ledger over the shared database — no sync job, no extension</p></div><span class="chip st-solved"><span class="cdot"></span>Native</span></div>
-      <div class="setting-row"><div class="sl"><b>Customer portal</b><p>Kept in the schema in case it's ever wanted — not being built</p></div><span class="chip st-closed"><span class="cdot"></span>Not planned</span></div>
     </div>
     <div class="card card-pad">
       <div class="card-head flush"><h3>Authentication</h3><span class="hint">who gets in, and as what</span></div>

@@ -254,8 +254,9 @@ function viewReports(){
   </div>`;
 
   const head=`<tr>${rep.cols.map(c=>`<th class="${c.num?'num':''}">${c.l}</th>`).join('')}</tr>`;
+  const pgR=paginate('report',rep.rows);
   const body= rep.rows.length
-    ? rep.rows.map(row=>`<tr>${rep.cols.map(c=>`<td class="${c.num?'num':''}">${rcellHTML(c.k,row)}</td>`).join('')}</tr>`).join('')
+    ? pgR.slice.map(row=>`<tr>${rep.cols.map(c=>`<td class="${c.num?'num':''}">${rcellHTML(c.k,row)}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${rep.cols.length}" style="padding:26px;text-align:center" class="muted">No entries match this report. Widen the date range or clear a filter.</td></tr>`;
   const foot= rep.rows.length
     ? `<tr class="rpt-total">${rep.cols.map((c,i)=> i===0?`<td>Total · ${rep.rows.length} ${isDet?'entries':'rows'}</td>`:`<td class="${c.num?'num':''}">${rtotalHTML(c.k,t)}</td>`).join('')}</tr>`
@@ -267,7 +268,7 @@ function viewReports(){
         <button class="btn sm" onclick="copyCSV()">Copy</button>
         <button class="btn primary" onclick="downloadCSV()">${icon(IC.export)}Export CSV</button>
       </div></div>
-    <div style="overflow:auto"><table class="tbl"><thead>${head}</thead><tbody>${body}${foot}</tbody></table></div>
+    <div style="overflow:auto"><table class="tbl"><thead>${head}</thead><tbody>${body}${foot}</tbody></table></div>${pagerBar(pgR)}
   </div>`;
 
   return `
@@ -291,7 +292,6 @@ function viewReports(){
           <span class="tape" style="width:190px;text-align:right">${r.bil.toFixed(1)} / ${r.tot.toFixed(1)} h · <b>${r.pct.toFixed(0)}%</b></span>
         </div>`).join(''); })()}
     </div>
-  </div>`:''}
-<div class="notice info" style="margin-bottom:16px">${icon(IC.report)}<div>Build any billing or productivity report — choose how to group it, the date range and filters, and which metrics to include, then <b>Export CSV</b> for invoicing backup, accounting, or your own records.</div></div>`
+  </div>`:''}`
     + controls + stats + table;
 }

@@ -435,7 +435,7 @@ function renderProps(t){
              ...((client(t.clientId)||{contacts:[]}).contacts||[]).filter(p=>p.active!==false||p.id===t.contactId).map(p=>({v:p.id,label:(p.vip?'★ ':'')+p.name,sub:p.email}))],
             t.contactId||null, function(){ setPrimaryContact(t.id, document.getElementById('tkContact-'+t.id).value); }, 'Search contacts…')
           : `<div class="v mini">${(contact(t.contactId)||{}).name?esc(contact(t.contactId).name):'—'}</div>`}
-        ${(contact(t.contactId)||{}).vip?`<span class="chip st-pending" style="margin-top:4px" title="VIP contact — automations can key on this"><span class="cdot"></span>★ VIP</span>`:''}
+        ${(contact(t.contactId)||{}).vip?`<span class="chip st-pending" style="margin-top:4px" title="VIP contact"><span class="cdot"></span>★ VIP</span>`:''}
         <div class="mini muted" style="margin-top:4px">Caller verification and outgoing replies address this person</div></div>
       ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
         <input type="datetime-local" value="${t.pendingUntil? new Date(t.pendingUntil).toISOString().slice(0,16):''}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">

@@ -5,7 +5,7 @@
    Owns: ovPred/overviews (OverviewDef evaluator)/setOverview/setQF/viewTickets ·
    tabsModal/tabsDraw/tabsRow/tabsMove/tabsToggle/tabsAddCustom/tabsRmCustom/
    tabsSave (per-user queue-tab prefs) · bulkToggle/bulkApply ·
-   ticketsCSVRows/auditCSVRows/exportTicketsCSV/exportAuditCSV/copyRowsCSV/
+   ticketsCSVData/ticketsCSVRows/auditCSVRows/exportTicketsCSV/exportAuditCSV/copyRowsCSV/
    copyTicketsCSV/copyAuditCSV · viewTicket/renderArt · insertCanned/trigVars ·
    agentEmail · attachTime/editTimeEntry/removeTimeEntry · addAtts/rmAtt ·
    addTag/rmTag · checkPendingWakes · composerTimerStart/
@@ -126,6 +126,7 @@ function viewTickets(){
   rows.sort((a,b)=> b.prio-a.prio || (slaInfo(a)?.due||9e15)-(slaInfo(b)?.due||9e15) || b.updatedAt-a.updatedAt);
   /* done-only views read newest-first — priority/SLA order is meaningless after solve */
   if(cur && (cur.def.stateKinds||[]).join()==='done') rows.sort((a,b)=>b.updatedAt-a.updatedAt);
+  const pg = paginate('tickets', rows);
 
   const bulkN = state.bulk.filter(id=>rows.some(r=>r.id===id)).length;
   return `
@@ -140,7 +141,7 @@ function viewTickets(){
   <div class="toolbar">
     ${can('export_csv')?`<span style="order:99;margin-left:auto;display:inline-flex;gap:8px">
       <button class="btn sm" onclick="copyTicketsCSV()" title="Copies the CSV for the rows currently shown">Copy</button>
-      <button class="btn primary" onclick="exportTicketsCSV()" title="Exports exactly the rows currently shown — overview + filters applied">${icon(IC.export)}Export CSV</button>
+      <button class="btn primary" onclick="exportTicketsCSV()" title="Exports every row matching the current overview + filters — all pages">${icon(IC.export)}Export CSV</button>
     </span>`:''}
     <div class="seg wrap">${ov.map(o=>`<button class="${state.overview===o.id?'on':''}" onclick="setOverview('${jsq(o.id)}')">${esc(o.label)}<span class="pip">${o.n}</span></button>`).join('')}</div>
     <button class="btn sm ghost" onclick="tabsModal()" title="Customize tabs — reorder, hide, add personal tabs" style="padding:4px 8px">⚙</button>
@@ -163,7 +164,7 @@ function viewTickets(){
   <div class="card">
     ${rows.length? `<table class="tbl">
       <thead><tr>${can('edit_props')||can('assign')?'<th style="width:34px"></th>':''}<th style="width:64px">#</th><th>Ticket</th><th>State</th><th>Priority</th><th>Group</th><th>Owner</th><th>SLA</th><th class="right">Updated</th></tr></thead>
-      <tbody>${rows.map(t=>`
+      <tbody>${pg.slice.map(t=>`
         <tr class="clickable" onclick="openTicket(${t.id})">
           ${can('edit_props')||can('assign')?`<td style="width:34px" onclick="event.stopPropagation()"><input type="checkbox" ${state.bulk.includes(t.id)?'checked':''} onchange="bulkToggle(${t.id},this.checked)" style="width:auto;accent-color:var(--brand)"></td>`:''}
           <td class="num"><span class="tape muted">#${t.id}</span></td>
@@ -175,7 +176,7 @@ function viewTickets(){
           <td>${t.ownerId? `<span style="display:inline-flex;align-items:center;gap:6px">${avatarOf(agent(t.ownerId))}<span class="mini">${esc(agent(t.ownerId).name.split(' ')[0])}</span></span>` : `<span class="chip st-pending"><span class="cdot"></span>Unassigned</span>`}</td>
           <td>${slaCell(t)}</td>
           <td class="num mini">${fmtAgo(t.updatedAt)}</td>
-        </tr>`).join('')}</tbody></table>`
+        </tr>`).join('')}</tbody></table>${pagerBar(pg)}`
     : `<div class="empty">${icon(IC.ticket)}<div>No tickets match this view. Clear a filter or switch overview.</div></div>`}
   </div>`;
 }
@@ -341,11 +342,10 @@ function bulkApply(k, v){
   render();
 }
 
-/* ---- CSV: exports exactly the rows currently shown ---- */
-function ticketsCSVRows(){
-  const ov = overviews(); const cur = ov.find(o=>o.id===state.overview) || ov[0] || null;
-  let rows = cur? scoped().filter(cur.f) : [];
-  rows = qfApply(rows);
+/* ---- CSV: exports every row matching the current filters — all pages ---- */
+/* the ONE ticket-CSV shape — the queue export and the client-page export
+   (views/clients.js) both build through this, so the columns can never drift */
+function ticketsCSVData(rows){
   const data = [['number','title','client','contact','group','state','priority','owner','tags','opened','updated','hours_logged','sla_due','sla_breached']];
   rows.forEach(t=>{ const sla = slaInfo(t);
     data.push([t.id, TITLES[t.id]||firstLine(t), client(t.clientId).name, contact(t.contactId)?.email||'', grp(t.groupId).name,
@@ -354,6 +354,10 @@ function ticketsCSVRows(){
       sla? new Date(sla.due).toISOString():'', sla? (sla.breached?'YES':'no'):'' ]);
   });
   return data;
+}
+function ticketsCSVRows(){
+  const ov = overviews(); const cur = ov.find(o=>o.id===state.overview) || ov[0] || null;
+  return ticketsCSVData(qfApply(cur? scoped().filter(cur.f) : []));
 }
 function auditCSVRows(){
   const data = [['when','who','action','detail']];

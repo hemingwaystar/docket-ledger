@@ -65,7 +65,7 @@ The rules that make this safe:
 * `render()` is the only innerHTML rebuild and carries focus/caret/scroll
   across the rebuild (bug #26). Don't rebuild DOM elsewhere. `#content` shows
   a Loading card until the first hydrate lands.
-* `mapIn()` must consume EVERY key bootstrap emits (desk 20, ledger 12) and
+* `mapIn()` must consume EVERY key bootstrap emits (desk 20, ledger 13) and
   every rendered collection must be fed by it — hydration-completeness, row 36.
   Collections start empty; there is no seed data anywhere.
 * Fetch paths are **absolute per origin** (bug #8). Ledger prefixes `LBASE`

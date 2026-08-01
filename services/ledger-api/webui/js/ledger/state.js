@@ -3,8 +3,10 @@
    The single state object — every collection starts EMPTY; api.js/mapIn()
    is the only place bootstrap data enters — plus the static catalogs
    (NAV, PAGES, NAV_PERM, AF_DEFAULTS, TS_STATUS_CHIP), the router
-   (go/openClient) and the RBAC helpers. Identity and permissions come only
-   from bootstrap `me`. No server calls.
+   (go/openClient), the RBAC helpers and signOut(). Identity and permissions
+   come only from bootstrap `me`. No server calls except signOut()'s
+   POST /auth/logout — desk-api's route (one shared session, both apps),
+   posted at the origin root, deliberately never through $fetch/LBASE.
    ========================================================================== */
 
 const state = {
@@ -30,6 +32,7 @@ const state = {
   zammadRoles:[],   // roles — bootstrap-fed (name/note/archived + stripped l_* perms)
   types:[],         // activity types shared with Docket; billable + rate configured here
   projects:{},      // Docket-approved projects keyed by ticket # — flat-fee / task pricing overlay
+  defaultRates:{},  // global default billing rates keyed by typeId — {rate, hist:[{from,rate}]}; per-client opt-in flags ride on each client (useDefaults/useDefaultsHist/defaultTypeFlags)
   entries:[],       // timesheet ledger
   periods:{},       // key `${clientId}|${periodKey}` -> {status, approvedAt, approvedBy, exportedAt, exportRef}
   audit:[],         // audit trail
@@ -76,7 +79,7 @@ const PAGES={
   types:{t:'Activity Types', s:()=>'Shared with Docket · set billable status and rate for each'},
   periods:{t:'Billing Periods', s:()=>'Review, approve and lock a period per client'},
   reports:{t:'Reports', s:()=> isAdmin()?'Build and export billing &amp; productivity reports · any grouping, range or metric':'Your hours — build and export a report of your own logged time'},
-  export:{t:'Odoo Export', s:()=>'Push approved periods to Odoo · connector is a stub, ready to wire up'},
+  export:{t:'Odoo Export', s:()=>'Push approved periods to Odoo'},
   audit:{t:'Audit Log', s:()=>'Immutable record of every change, including entries removed in Docket'},
   directory:{t:'Directory', s:()=>'The shared control plane — mirrored live from Docket; edits happen there'},
   settings:{t:'Settings', s:()=>'Global defaults · per-client billing lives on each client page'},
@@ -140,4 +143,19 @@ function canRecallEntry(e){
   if(isLocked(e)||e.status==='void'||!e.submitted||e.tsApproved) return false;
   const own = e.techId===state.myTechId;
   return (own && can('submit')) || can('edit_submitted');
+}
+
+/* ---- session ---- */
+function signOut(){
+  /* one shared session, and desk-api owns /auth: behind nginx both apps share
+     the origin (LBASE '/ledger'), so POST the desk logout path at the ORIGIN
+     ROOT — deliberately NOT via $fetch, which would prefix /ledger and miss
+     (ledger-api has no /auth routes). Direct :8082 access just navigates to
+     the desk login, the same redirect hydrate()'s 401 path uses. Navigate the
+     TOP window so the whole suite leaves, not just this pane. */
+  const dk=(typeof LBASE!=='undefined'&&LBASE)?'':location.protocol+'//'+location.hostname+':8081';
+  const done=()=>{ try{ (window.top||window).location.href=dk+'/ui/login.html'; }
+                   catch(e){ location.href=dk+'/ui/login.html'; } };
+  if(!dk) fetch('/auth/logout',{method:'POST',credentials:'same-origin'}).finally(done);
+  else done();
 }

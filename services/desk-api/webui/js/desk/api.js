@@ -3,7 +3,8 @@
    Owns: $fetch · mapIn() (the ONE place bootstrap data enters state — every
    key the server emits is consumed here: me (incl. me.prefs → state.prefs),
    groups, agents, clients, atypes, states, priorities, canned, graph, vcfg,
-   authCfg, secretMeta, outboundEnabled, mailboxes, groupSendas, roles, rules,
+   authCfg, secretMeta, outboundEnabled, mailboxes, groupSendas, roles (rows
+   carry `active` since build 13 — archived roles ride too), rules,
    sla, biz, deskUi, tickets, audit, notifs) · hydrate() · oops() ·
    attOpen() · stageUploads() ·
    srvId/isUuid/iso/typeName · ME (session identity) · HYD (focus throttle).
@@ -17,8 +18,8 @@ let ME=null, HYD=0;
 
 function mapIn(d){
   GROUPS.length=0; d.groups.forEach(g=>GROUPS.push(g));
-  /* agent rows ride whole — including hasPassword/mfa, which the Directory's
-     credential badges render */
+  /* agent rows ride whole — including hasPassword/mfa/mfaPending/mfaAt,
+     which the Directory's credential chips and auth panel render */
   AGENTS.length=0; d.agents.forEach(a=>AGENTS.push(a));
   /* client rows ride whole — including each nested contact's vip flag
      (0028), which the ★ VIP chips and the trigger builder read */
@@ -143,10 +144,14 @@ function mapIn(d){
   }
   }catch(err){ console.error('cosmetic hydration failed (core data is live):', err); }
   if(d.roles){
+    /* roles ride ALL rows incl. archived (build 13, matching Ledger's
+       contract): active:false dims the card and leaves the pickers.
+       members counts ACTIVE agents only — bootstrap agents ride WHERE
+       a.active; the server names deactivated holders on a delete 409. */
     state.roleDefs.length=0;
     d.roles.forEach(r=>state.roleDefs.push({name:r.name,note:r.note||'',
       perms:new Set(r.perms),members:AGENTS.filter(a=>a.role===r.name).length,
-      core:r.core,entra:r.entra||''}));
+      core:r.core,entra:r.entra||'',active:r.active!==false}));
   }
   ME=d.me;
   state.user={name:ME.name,initials:ME.initials,role:'Live'};

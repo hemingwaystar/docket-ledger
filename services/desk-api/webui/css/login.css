@@ -1,5 +1,6 @@
 /* login.css — sign-in card (login.html).
-   map: tokens · card + logo · form fields · button · error strip · footer */
+   map: tokens · card + logo · form fields · button · error strip ·
+   MFA enroll panel · footer */
 :root{--brand:#0e6e63;--ink:#1d2b36;--mut:#5b6b78;--line:#dde5ea;--bg:#f2f5f7;--bad:#b23c3c}
 *{box-sizing:border-box;margin:0}
 body{font:15px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);
@@ -18,4 +19,8 @@ button:hover{filter:brightness(1.06)}
 .err{display:none;margin-top:14px;padding:9px 12px;border-radius:8px;background:#fbeaea;
      color:var(--bad);font-size:13px}
 #mfaRow{display:none}
+/* login-time MFA enrollment (build 13): the secondary action must not read
+   as the submit — outline style, same geometry as the sign-in button */
+#enrollGo{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+#enrollGo:hover{filter:none;background:#f4faf9}
 .foot{margin-top:18px;text-align:center;color:var(--mut);font-size:12px}

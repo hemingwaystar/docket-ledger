@@ -57,7 +57,7 @@ def _export_payload(cur, period_id):
     for title, label, cents in cur.fetchall():
         lines.append({"name": f"{title} — {label}", "quantity": 1,
                       "price_unit": cents / 100.0, "uom": "Fee"})
-    return {"partner": client_name, "period": period_key,
+    return {"partner": client_name, "client_id": str(client_id), "period": period_key,
             "move_type": "out_invoice", "state": "draft",
             "invoice_line_ids": lines,
             "total": round(sum(l["quantity"] * l["price_unit"] for l in lines), 2)}

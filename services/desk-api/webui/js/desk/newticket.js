@@ -78,7 +78,7 @@ function addContactModal(clientId, fromTicket){
     groupId:document.getElementById('ntGroup')?.value, prio:document.getElementById('ntPrio')?.value };
   const m = document.getElementById('modal');
   m.innerHTML = `
-    <div class="modal-head"><h3>Add contact — ${esc(c.name)}</h3><p>Goes straight into the shared directory; Ledger sees it too. Email defaults to @${esc(c.domain)}.</p></div>
+    <div class="modal-head"><h3>Add contact — ${esc(c.name)}</h3><p>Email defaults to @${esc(c.domain)}.</p></div>
     <div class="modal-body">${contactFields()}</div>
     <div class="modal-foot"><button class="btn ghost" onclick="${fromTicket?`reopenTicketDraft('${c.id}')`:'closeModal()'}">Cancel</button><button class="btn primary" onclick="saveContact('${c.id}',${fromTicket?'true':'false'})">Add contact</button></div>`;
   document.getElementById('scrim').classList.add('open');
