@@ -263,7 +263,9 @@ function paginate(key,rows){
   return { key, slice:rows.slice(start,start+size), total:rows.length, start, size, page:p.page, nPages };
 }
 function pagerBar(pg){
-  if(pg.total<=PAGE_SIZES[0]) return '';    /* nothing to page */
+  if(pg.total===0) return '';   /* empty lists keep their empty-state message;
+     any rows at all render the bar — the size select must stay discoverable
+     even on short lists (build 14a: the ≤10 auto-hide read as "no pages") */
   return `<div class="pager">
     <select onchange="pagerSetSize('${jsq(pg.key)}',Number(this.value))" title="Rows per page">${PAGE_SIZES.map(s=>`<option value="${s}" ${s===pg.size?'selected':''}>${s} / page</option>`).join('')}</select>
     <span class="mini muted">${pg.start+1}–${Math.min(pg.total,pg.start+pg.size)} of ${pg.total}</span>
