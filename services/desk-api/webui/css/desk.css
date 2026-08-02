@@ -270,7 +270,10 @@ select:disabled{opacity:.55;cursor:not-allowed}
 
 /* ============================ Docket-specific: ticket workspace ============================ */
 .tk-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
-@media(max-width:1000px){.tk-layout{grid-template-columns:1fr}}
+/* on-hold tickets gain a third column for the Schedules bar (build 16); order
+   is main | schedules | props, so the props panel stays rightmost */
+.tk-layout.has-sched{grid-template-columns:minmax(0,1fr) 300px 300px}
+@media(max-width:1000px){.tk-layout,.tk-layout.has-sched{grid-template-columns:1fr}}
 .tk-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .tk-head h2{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;line-height:1.35}
 .tk-num{font-family:"IBM Plex Mono",monospace;color:var(--ink-3);font-size:13px;font-weight:500}
@@ -325,6 +328,10 @@ select:disabled{opacity:.55;cursor:not-allowed}
 .props .pk{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:5px}
 .props select{width:100%;padding:6px 9px;font-size:12.5px}
 .props .pv{font-size:13px}
+/* Schedules bar (build 16): a .props-classed card beside the props sidebar on
+   paused tickets — its add-row datetime/text inputs stretch full-width like
+   .props select; no new color tokens, it reuses the .props card + .prop rows */
+.sched input[type=datetime-local],.sched input[type=text]{width:100%}
 .tagrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .tagadd{border:1px dashed var(--line);background:none;color:var(--ink-3);border-radius:20px;padding:2px 9px;font-size:11.5px}
 .tagadd:hover{color:var(--brand);border-color:var(--brand)}

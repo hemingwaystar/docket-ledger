@@ -247,6 +247,12 @@ def bootstrap(request: Request, limit: int = 500):
                     # the bootstrap desk key COUNT is unchanged and a pre-0032
                     # payload can't crash mapIn.
                     "assigneeIds": [],
+                    # schedules (0033): per-tech time blocks on on-hold tickets.
+                    # Also a per-ticket FIELD, ALWAYS present ([] here, filled
+                    # below), so the desk key COUNT is unchanged and a pre-0033
+                    # payload can't crash mapIn. pendingUntil (above) is now the
+                    # DERIVED MIN future start over these rows.
+                    "schedules": [],
                     "version": r["version"], "articles": [], "time": []}
             if tickets:
                 ids = list(tickets)
@@ -262,6 +268,23 @@ def bootstrap(request: Request, limit: int = 500):
                     t = tickets.get(r["ticket_id"])
                     if t is not None:
                         t["assigneeIds"] = list(r["aids"])
+                # schedules (0033): per-tech time blocks per ticket. Ordered by
+                # (ticket_id, starts_at) and appended in order, so each ticket's
+                # list arrives sorted by start. Timestamps are epoch ms (ms()) —
+                # same units as every other ticket timestamp, so the UI reuses
+                # fmtDT/dtLocalVal without translation; tickets with none keep
+                # the [] default seeded above (field ALWAYS present).
+                cur.execute("""SELECT ticket_id, id, agent_id, starts_at, ends_at, note
+                                 FROM desk.ticket_schedules WHERE ticket_id = ANY(%s)
+                                ORDER BY ticket_id, starts_at""", (ids,))
+                for r in cur.fetchall():
+                    t = tickets.get(r["ticket_id"])
+                    if t is not None:
+                        t["schedules"].append({"id": str(r["id"]),
+                                               "agentId": str(r["agent_id"]),
+                                               "startsAt": ms(r["starts_at"]),
+                                               "endsAt": ms(r["ends_at"]),
+                                               "note": r["note"]})
                 # ticket links — related both ways, child directed; a linked
                 # ticket outside the hydrate window still shows as a bare #id
                 cur.execute("""SELECT kind, src_id, dst_id FROM desk.ticket_links

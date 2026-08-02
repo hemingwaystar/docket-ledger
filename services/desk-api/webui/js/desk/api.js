@@ -5,7 +5,8 @@
    groups, agents, clients, atypes, states, priorities, canned, graph, vcfg,
    authCfg, secretMeta, outboundEnabled, mailboxes, groupSendas, roles (rows
    carry `active` since build 13 — archived roles ride too), rules,
-   sla, biz, deskUi, tickets (rows carry assigneeIds since build 15), audit,
+   sla, biz, deskUi, tickets (rows carry assigneeIds since build 15 and
+   schedules since build 16), audit,
    notifs) · hydrate() · oops() ·
    attOpen() · stageUploads() ·
    srvId/isUuid/iso/typeName · ME (session identity) · HYD (focus throttle).
@@ -62,6 +63,12 @@ function mapIn(d){
        always emitted as an array. Default [] so a pre-migration bootstrap
        that predates the field can't crash isMine() or the props multiCombo. */
     t.assigneeIds = t.assigneeIds||[];
+    /* tech schedules (build 16): a FIELD on every ticket row (like assigneeIds),
+       always emitted as an array. Default [] so a pre-0033 bootstrap that
+       predates the field can't crash renderSchedules. Each row is
+       {id, agentId, startsAt, endsAt, note}; startsAt/endsAt ride as ISO
+       strings OR epoch ms — renderSchedules' schedMs() normalizes either. */
+    t.schedules = t.schedules||[];
     /* article↔entry linkage (0012): same object on both sides, so an edit
        in either place is an edit everywhere — mirrors mkTicket's contract */
     t.time.forEach(e=>{ if(e.articleId){

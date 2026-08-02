@@ -441,6 +441,10 @@ function viewTicket(){
   if(!t || !ticketVisible(t)) return `<div class="empty">${icon(IC.ticket)}<div>Ticket not found in your scope.</div></div>`;
   const c = client(t.clientId), p = contact(t.contactId);
   const canWork = can('reply')||can('note');
+  /* the on-hold Schedules bar (build 16) rides ONLY on paused tickets — the
+     same gate the Wake-up field used ("applies to the on-hold statuses"); it
+     adds a third column to .tk-layout (has-sched) and defines pending_until */
+  const paused = (st8(t.st)||{}).type==='paused';
   const closedNote = t.st==='closed' ? `<div class="notice lock" style="margin-bottom:14px">${icon(IC.audit)}<div><b>Closed.</b> A customer reply re-opens it automatically; its logged time is already priced in Ledger${can('see_billing')?' and locks with the billing period':''}.</div></div>` : '';
 
   return `
@@ -468,7 +472,7 @@ function viewTicket(){
     ${slaInfo(t)? `<div style="padding-top:6px">${slaCell(t)}</div>`:''}
   </div>
   ${closedNote}
-  <div class="tk-layout">
+  <div class="tk-layout${paused?' has-sched':''}">
     <div>
       ${isProj(t)? projChecklistCard(t) : ''}
       <div class="card" style="padding:4px 18px">
@@ -477,6 +481,7 @@ function viewTicket(){
       ${projLocked(t)? `<div class="notice lock" style="margin-top:14px">${icon(IC.seal)}<div><b>Approved &amp; locked.</b> This project ticket is immutable — no notes, replies, time or property changes.${can('approve_projects')?' Use <b>Unlock (admin)</b> on the checklist card if something genuinely needs fixing.':' An admin can unlock it if something genuinely needs fixing.'}</div></div>`
         : canWork? renderComposer(t) : `<div class="notice lock" style="margin-top:14px">${icon(IC.shield)}<div>Your role can view this ticket but not respond. Ask a dispatcher or admin if that looks wrong.</div></div>`}
     </div>
+    ${paused? renderSchedules(t) : ''}
     ${renderProps(t)}
   </div>`;
 }

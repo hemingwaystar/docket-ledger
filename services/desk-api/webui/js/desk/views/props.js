@@ -1,19 +1,28 @@
 /* ==========================================================================
    js/desk/views/props.js — the ticket properties sidebar and its actions:
-   state/priority/owner/group, client move, primary contact, wake timer,
-   title rename, merge, related links, parent/child (one level) with the
-   close-cascade prompt, and on-ticket caller verification.
+   state/priority/owner/group, client move, primary contact, tech schedules
+   (the on-hold Schedules bar — build 16), title rename, merge, related links,
+   parent/child (one level) with the close-cascade prompt, and on-ticket caller
+   verification.
    Owns: renderProps() · setProp() + cascadeModal/cascadeJust/cascadeAll ·
-   setAssignees() · setPendingUntil() · saveTitle() · mergeModal/doMerge ·
+   setAssignees() · renderSchedules()/addSchedule/removeSchedule/schedMs/
+   reconcileSched (build 16) · saveTitle() · mergeModal/doMerge ·
    linkModal/doLink/
    unlink · childModal/doChild/unchild · setPrimaryContact() ·
    reclientTicket() · verifyModal/vfySend/vfyCheck.
    Endpoints:
      PATCH /api/tickets/{id}                (state/priority/owner/group · title
-                                             · primary contact · pending_until)
+                                             · primary contact)
      PUT   /api/tickets/{id}/assignees      (assigned techs — FULL REPLACE; the
                                              side table carries no version, so
                                              this never raises the 409 lock)
+     POST   /api/tickets/{id}/schedules            (add one tech time block)
+     DELETE /api/tickets/{id}/schedules/{sid}      (remove one block)
+                                            (both write desk.tickets.pending_until
+                                             as a DERIVED value = MIN future
+                                             starts_at; no version → never 409.
+                                             pending_until is no longer hand-set:
+                                             Schedules drives the wake mechanism)
      POST  /api/tickets/{id}/client         (move to another client)
      POST  /api/tickets/{id}/merge
      POST  /api/tickets/{id}/links          (kind: related | child)
@@ -150,34 +159,138 @@ function unchild(pid, cid){
     .then(async r=>{ if(!r.ok){ oops(await r.json().catch(()=>0)); setTimeout(()=>hydrate(),200); } });
 }
 
-/* ---------------- wake timer / title / properties ---------------- */
+/* ---------------- schedule inputs / title / properties ---------------- */
 /* datetime-local wants LOCAL wall-clock; toISOString() is UTC and shifted
-   the displayed wake time by the timezone offset */
+   the displayed time by the timezone offset. Shared by the Schedules bar's
+   start/end inputs (build 16) — was the Wake-up field's helper before. */
 function dtLocalVal(ms){
   const d=new Date(ms), p=n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-function setPendingUntil(tid, v, srcEl){
-  const t = tk(tid); if(!t || !can('edit_props')) return;
-  const was = t.pendingUntil;
-  if(!v){
-    delete t.pendingUntil;
-    log('Wake timer cleared', `#${tid}`);
-    commitRender(srcEl);
-  } else {
-    const ms = new Date(v).getTime();
-    if(isNaN(ms)) return;
-    t.pendingUntil = ms;
-    if(!was) t.articles.push(art('sys', me(), nowMs(), 'Pending until '+fmtDT(ms)+' — reopens automatically'));
-    log(was?'Wake timer changed':'Wake timer set', `#${tid} · ${was?fmtDT(was)+' → ':''}${fmtDT(ms)}`);
-    commitRender(srcEl);
+
+/* ==========================================================================
+   TECH SCHEDULES (build 16) — the on-hold "Schedules" bar. Replaces the single
+   Wake-up field: a list of per-tech time blocks (who works this paused ticket
+   and when). The server keeps desk.tickets.pending_until = MIN(starts_at) among
+   FUTURE schedule rows, so the EXISTING wake mechanism (mail-worker's
+   wake_pending + the local checkPendingWakes) auto-resumes the ticket at the
+   earliest scheduled start — untouched. pending_until is now DERIVED, never
+   hand-set. renderSchedules is placed next to renderProps by viewTicket ONLY on
+   paused tickets, mirroring where Wake-up used to live.
+   startsAt/endsAt ride from bootstrap as ISO strings OR epoch ms — schedMs()
+   normalizes either to ms for dtLocalVal/fmtDT; addSchedule POSTs ISO strings
+   (the fixed contract). Modeled on setAssignees: the endpoints write a side
+   table (never read/bump ticket.version → never the 409 lock), so each handler
+   optimistically mutates + render()s, then reconciles t.schedules AND the
+   derived t.pendingUntil from the authoritative response, oops() on refusal.
+   ========================================================================== */
+const schedMs = v => v==null? null : (typeof v==='number'? v : new Date(v).getTime());
+/* reconcile local state against the endpoint's authoritative return: the full
+   schedule list and the recomputed pending_until (the derived wake moment) */
+function reconcileSched(t, d){
+  if(d && Array.isArray(d.schedules)) t.schedules = d.schedules;
+  if(d && ('pending_until' in d)){
+    const pu = schedMs(d.pending_until);
+    if(pu) t.pendingUntil = pu; else delete t.pendingUntil;
   }
-  if(t.pendingUntil===was) return;                 /* nothing changed */
-  $fetch('/api/tickets/'+tid,{method:'PATCH',
+  /* the schedule write bumps the ticket's version via the touch trigger — keep
+     the optimistic-lock token fresh so the next property edit doesn't 409 */
+  if(d && d.version) t.version = d.version;
+  render();
+}
+function renderSchedules(t){
+  const asg = can('assign');
+  const list = (t.schedules||[]).slice().sort((a,b)=>(schedMs(a.startsAt)||0)-(schedMs(b.startsAt)||0));
+  /* prefill the tech picker with the owner, then the first assignee, then the
+     first active agent — the person most likely being scheduled */
+  const dflt = t.ownerId || (t.assigneeIds||[])[0] || (AGENTS.find(a=>!isArch(a))||{}).id || '';
+  return `
+  <div>
+    <div class="card props sched">
+      <div class="prop"><div class="pk">Schedules</div>
+        <div class="mini muted">At the earliest start, the ticket comes off hold automatically.</div></div>
+      ${list.length? list.map(s=>{
+        const nm = agent(s.agentId)?.name || '?';
+        const a = schedMs(s.startsAt), b = schedMs(s.endsAt);
+        return `<div class="prop sched-row">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div class="pv" style="font-weight:600">${esc(nm)}</div>
+              <div class="mini">${fmtDT(a)}${b?' – '+fmtDT(b):''}</div>
+              ${s.note?`<div class="mini muted" style="margin-top:2px;white-space:pre-wrap">${esc(s.note)}</div>`:''}
+            </div>
+            ${asg?`<button class="rowbtn" style="padding:0 6px" onclick="removeSchedule(${t.id},'${jsq(s.id)}')" title="Remove this schedule">✕</button>`:''}
+          </div></div>`;
+      }).join('') : `<div class="prop"><div class="mini muted">No techs scheduled yet.</div></div>`}
+      ${asg?`<div class="prop">
+        <div class="pk">Add a tech</div>
+        <select id="sched-tech-${t.id}">
+          ${AGENTS.filter(a=>!isArch(a)).map(a=>`<option value="${a.id}" ${a.id===dflt?'selected':''}>${esc(a.name)}</option>`).join('')}
+        </select>
+        <div class="mini muted" style="margin:7px 0 3px">Start</div>
+        <input type="datetime-local" id="sched-start-${t.id}" value="${dtLocalVal(nowMs())}" title="When this tech is scheduled to start — the earliest future start takes the ticket off hold">
+        <div class="mini muted" style="margin:7px 0 3px">End</div>
+        <input type="datetime-local" id="sched-end-${t.id}" title="Optional — when the block ends">
+        <input type="text" id="sched-note-${t.id}" placeholder="Note (optional)" style="margin-top:7px">
+        <button class="btn sm primary" style="margin-top:9px" onclick="addSchedule(${t.id})">Add schedule</button>
+      </div>`:''}
+    </div>
+  </div>`;
+}
+/* read the add-row inputs, validate BEFORE touching the ticket (a blocked add
+   leaves no side effects), optimistically append + render, POST ISO, reconcile */
+function addSchedule(tid){
+  if(!can('assign')) return;
+  const t = tk(tid); if(!t) return;
+  const tech = (document.getElementById('sched-tech-'+tid)||{}).value || '';
+  const sv   = (document.getElementById('sched-start-'+tid)||{}).value || '';
+  const ev   = (document.getElementById('sched-end-'+tid)||{}).value || '';
+  const note = ((document.getElementById('sched-note-'+tid)||{}).value || '').trim();
+  if(!tech){ toast('Pick a tech to schedule.'); return; }
+  if(!sv){ toast('A schedule needs a start time.'); return; }
+  const startMs = new Date(sv).getTime();
+  if(isNaN(startMs)){ toast('That start time is invalid.'); return; }
+  let endMs = null;
+  if(ev){
+    endMs = new Date(ev).getTime();
+    if(isNaN(endMs)){ toast('That end time is invalid.'); return; }
+    if(!(endMs>startMs)){ toast('End must be after start — schedule not added.'); return; }
+  }
+  /* --- validated; mutation begins --- */
+  t.schedules = t.schedules || [];
+  const nm = agent(tech)?.name || tech;
+  /* a distinctively-prefixed temp id so removeSchedule can tell an un-mirrored
+     optimistic row (nothing to DELETE) from a server bigint id */
+  t.schedules.push({ id:'sched-tmp-'+(state.schedSeq=(state.schedSeq||0)+1),
+    agentId:tech, startsAt:startMs, endsAt:endMs, note:note||null });
+  t.schedules.sort((a,b)=>(schedMs(a.startsAt)||0)-(schedMs(b.startsAt)||0));
+  t.articles.push(art('sys', me(), nowMs(), `Scheduled ${nm} ${fmtDT(startMs)}${endMs?'–'+fmtDT(endMs):''}`));
+  log('Schedule added', `#${t.id} · ${nm} · ${fmtDT(startMs)}${endMs?'–'+fmtDT(endMs):''}`);
+  render();
+  $fetch('/api/tickets/'+tid+'/schedules',{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({pending_until:t.pendingUntil?new Date(t.pendingUntil).toISOString():'',version:t.version})})
+    body:JSON.stringify({agent_id:tech, starts_at:new Date(startMs).toISOString(),
+      ends_at:endMs?new Date(endMs).toISOString():null, note:note||null})})
     .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
-      if(d&&d.version) t.version=d.version; });   /* keep the lock fresh — a second edit before the next hydrate must not 409 */
+      reconcileSched(t, d); });
+}
+/* optimistically splice the row + render, then DELETE and reconcile. An
+   un-mirrored optimistic row (temp id) has nothing on the server to delete */
+function removeSchedule(tid, schedId){
+  if(!can('assign')) return;
+  const t = tk(tid); if(!t) return;
+  const before = (t.schedules||[]).length;
+  const gone = (t.schedules||[]).find(s=>String(s.id)===String(schedId));
+  t.schedules = (t.schedules||[]).filter(s=>String(s.id)!==String(schedId));
+  if(t.schedules.length===before) return;           /* nothing removed */
+  const nm = gone? (agent(gone.agentId)?.name||gone.agentId) : '';
+  t.articles.push(art('sys', me(), nowMs(), `Schedule removed${nm?' — '+nm:''}`));
+  log('Schedule removed', `#${t.id}${nm?' · '+nm:''}`);
+  render();
+  if(String(schedId).startsWith('sched-tmp-')) return;   /* never mirrored — nothing to DELETE */
+  $fetch('/api/tickets/'+tid+'/schedules/'+encodeURIComponent(schedId),{method:'DELETE'})
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      reconcileSched(t, d); });
 }
 
 function saveTitle(tid){
@@ -489,14 +602,6 @@ function renderProps(t){
           : `<div class="v mini">${(contact(t.contactId)||{}).name?esc(contact(t.contactId).name):'—'}</div>`}
         ${(contact(t.contactId)||{}).vip?`<span class="chip st-pending" style="margin-top:4px" title="VIP contact"><span class="cdot"></span>★ VIP</span>`:''}
         <div class="mini muted" style="margin-top:4px">Caller verification and outgoing replies address this person</div></div>
-      ${(st8(t.st)||{}).type==='paused'?`<div class="prop"><div class="pk">Wake up</div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <input type="datetime-local" id="wake-${t.id}" value="${dtLocalVal(t.pendingUntil||nowMs())}" onchange="setPendingUntil(${t.id}, this.value, this)" ${dis('edit_props')} title="At this moment the ticket automatically reopens — audited">
-          ${t.pendingUntil
-            ?`<button class="rowbtn" onclick="setPendingUntil(${t.id},'',null)" ${dis('edit_props')}>Clear</button>`
-            :`<button class="rowbtn" onclick="setPendingUntil(${t.id},document.getElementById('wake-${t.id}').value,null)" ${dis('edit_props')}>Set</button>`}
-        </div>
-        <div class="mini muted" style="margin-top:4px">${t.pendingUntil? 'reopens '+fmtDT(t.pendingUntil) : 'no timer — prefilled with now; adjust or press Set'}</div></div>`:''}
       ${t.parentId?`<div class="prop"><div class="pk">Parent ticket</div>
         <div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${t.parentId});return false" style="color:var(--brand)">#${t.parentId}</a>${(pp=>pp?`<span ${stChipAttrs(st8(pp.st))}><span class="cdot"></span>${esc((st8(pp.st)||{}).label||pp.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[pp.id]||firstLine(pp)).slice(0,36))}</span>`:'<span class="muted">not in view</span>')(tk(t.parentId))}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.parentId},${t.id})" title="Detach from the parent">×</button>`:''}</div></div>`:''}
       ${(t.children&&t.children.length)?`<div class="prop"><div class="pk">Child tickets · ${t.children.filter(id=>{const c=tk(id);return c&&(st8(c.st)||{}).type!=='done';}).length} open of ${t.children.length}</div>

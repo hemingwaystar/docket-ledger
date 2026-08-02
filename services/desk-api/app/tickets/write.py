@@ -1,11 +1,14 @@
 """Ticket writes: create, the optimistic-locked property patch (with the
-0025 parent/child bookkeeping), client moves, tags, and the assignee-set
+0025 parent/child bookkeeping), client moves, tags, the assignee-set
 full-replace (0032 membership join — additional techs beyond the single
-owner). Locked projects refuse everything (423)."""
+owner), and the per-tech schedule add/remove (0033 — each write keeps
+desk.tickets.pending_until in sync as the MIN future scheduled start, which
+is what drives the existing worker/UI auto-resume). Locked projects refuse
+everything (423)."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from .. import auth, db, helpers
-from .common import emit_event, live_parent_of, sys_note
+from .common import _sane_span, emit_event, live_parent_of, sys_note
 
 router = APIRouter(prefix="/api")
 
@@ -315,3 +318,126 @@ def set_assignees(ticket_id: int, body: Assignees, request: Request):
         auth.audit(conn, "desk", "Assignees updated", f"ticket:{ticket_id}",
                    f"#{ticket_id} · " + label)
         return {"ok": True, "assignees": wanted}
+
+
+# --- Schedules (0033) -------------------------------------------------------
+# Per-tech time blocks on on-hold tickets (the "Schedules" bar). Adding or
+# removing a block RECOMPUTES desk.tickets.pending_until = MIN(starts_at) among
+# the ticket's FUTURE schedule rows (NULL if none) and writes it directly as a
+# derived value. That derived pending_until is the ONLY coupling to resume: the
+# mail-worker's wake_pending() and the frontend's checkPendingWakes() both act
+# on it unchanged (the worker service is not touched by this build). Schedules
+# thus REPLACE the old hand-set "Wake up" field — pending_until is never edited
+# by hand in the UI anymore, only derived here.
+
+def _ms(dt):
+    """epoch ms | None — the same unit every ticket timestamp uses in bootstrap,
+    so the UI reuses fmtDT/dtLocalVal/checkPendingWakes without translation."""
+    return int(dt.timestamp() * 1000) if dt else None
+
+
+def _span_label(starts_at: str, ends_at: str | None) -> str:
+    """Human 'start–end' (or 'from start') for the sys article. Inputs already
+    passed _sane_span, so fromisoformat parses; fall back to the raw string."""
+    from datetime import datetime
+    def fmt(v):
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, AttributeError):
+            return v
+    return f"{fmt(starts_at)}–{fmt(ends_at)}" if ends_at else f"from {fmt(starts_at)}"
+
+
+def _sync_pending(cur, ticket_id: int):
+    """Recompute desk.tickets.pending_until as MIN future scheduled start (NULL
+    if none) and persist it with a VERSION-FREE update (this is a derived value,
+    not a user edit — so it never contends the optimistic lock and never raises
+    the 409). Returns (schedules list [ms timestamps, sorted by start],
+    pending_until [ms|None], version [int]) for the endpoint response so the UI
+    reconciles all three from one payload. NOTE: this write is version-FREE (no
+    predicate — it never contends the optimistic lock, so no 409), BUT the
+    tickets `touch` trigger still bumps version on every UPDATE; we RETURN the
+    new version so the UI can refresh its optimistic-lock token and a later
+    property edit doesn't 409 on a stale version."""
+    cur.execute("""SELECT min(starts_at) FROM desk.ticket_schedules
+                    WHERE ticket_id = %s AND starts_at > now()""", (ticket_id,))
+    (pending,) = cur.fetchone()
+    cur.execute("UPDATE desk.tickets SET pending_until = %s WHERE id = %s "
+                "RETURNING version", (pending, ticket_id))   # no version predicate — derived
+    (version,) = cur.fetchone()
+    cur.execute("""SELECT id, agent_id, starts_at, ends_at, note
+                     FROM desk.ticket_schedules
+                    WHERE ticket_id = %s ORDER BY starts_at""", (ticket_id,))
+    schedules = [{"id": str(r[0]), "agentId": str(r[1]),
+                  "startsAt": _ms(r[2]), "endsAt": _ms(r[3]), "note": r[4]}
+                 for r in cur.fetchall()]
+    return schedules, _ms(pending), version
+
+
+class NewSchedule(BaseModel):
+    agent_id: str                      # the scheduled tech (agent uuid)
+    starts_at: str                     # ISO8601 — block start; MIN future start drives resume
+    ends_at: str | None = None         # ISO8601 | null — optional block end
+    note: str | None = None            # optional free-text note
+
+
+@router.post("/tickets/{ticket_id}/schedules")
+def add_schedule(ticket_id: int, body: NewSchedule, request: Request):
+    """Add one per-tech schedule block, then re-derive pending_until. Like
+    set_assignees this deliberately does NOT read or bump desk.tickets.version
+    (pending_until is written as a derived value on the tickets row, no version
+    predicate), so it cannot raise the optimistic-lock 409. The span-sanity
+    guard (bug #27) rejects a mistyped year before anything is written."""
+    _sane_span(body.starts_at, body.ends_at)
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'assign')
+        with conn.cursor() as cur:
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            # Only ACTIVE agents may be scheduled — a hard 422 (a single-tech
+            # add, unlike the assignee full-replace, has no other row to keep).
+            cur.execute("SELECT id, name FROM shared.agents WHERE id::text = %s AND active",
+                        (body.agent_id,))
+            r = cur.fetchone()
+            if r is None:
+                raise HTTPException(422, "Schedule tech must be an active agent")
+            agent_id, agent_name = str(r[0]), r[1]
+            cur.execute("""INSERT INTO desk.ticket_schedules
+                             (ticket_id, agent_id, starts_at, ends_at, note, created_by)
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (ticket_id, agent_id, body.starts_at, body.ends_at,
+                         (body.note or None), who.get("name") or who.get("label") or "API"))
+            schedules, pending, version = _sync_pending(cur, ticket_id)
+            # One sys article narrating the block (author_id NULL for PATs —
+            # mirrors reclient/set_assignees); version-independent.
+            label = f"Scheduled {agent_name} {_span_label(body.starts_at, body.ends_at)}"
+            cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
+                           VALUES (%s, 'sys', %s, %s, %s)""",
+                        (ticket_id, who.get("name") or who.get("label") or "API",
+                         who.get("agent_id"), label))
+        auth.audit(conn, "desk", "Schedule added", f"ticket:{ticket_id}",
+                   f"#{ticket_id} · " + label)
+        return {"ok": True, "schedules": schedules, "pending_until": pending, "version": version}
+
+
+@router.delete("/tickets/{ticket_id}/schedules/{schedule_id}")
+def remove_schedule(ticket_id: int, schedule_id: int, request: Request):
+    """Remove one schedule block (scoped to the ticket), then re-derive
+    pending_until the same version-free way. Idempotent: a block already gone
+    (double-click, stale UI) returns ok with the current list rather than 404,
+    so the optimistic UI reconciles instead of oops()-ing; the audit line is
+    written only when a row actually left."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'assign')
+        with conn.cursor() as cur:
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            cur.execute("""DELETE FROM desk.ticket_schedules
+                            WHERE id = %s AND ticket_id = %s RETURNING agent_id""",
+                        (schedule_id, ticket_id))
+            gone = cur.fetchone()
+            schedules, pending, version = _sync_pending(cur, ticket_id)
+        if gone is not None:
+            auth.audit(conn, "desk", "Schedule removed", f"ticket:{ticket_id}",
+                       f"#{ticket_id} · schedule {schedule_id} removed")
+        return {"ok": True, "schedules": schedules, "pending_until": pending, "version": version}
