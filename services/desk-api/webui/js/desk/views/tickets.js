@@ -147,7 +147,8 @@ function viewTickets(){
   return `
   ${bulkN? `<div class="notice info" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <b>${bulkN} selected</b>
-    ${can('assign')?`<select onchange="bulkApply('owner',this.value)"><option value="">Assign to…</option>${AGENTS.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`:''}
+    ${can('assign')?`<select onchange="bulkApply('owner',this.value)"><option value="">Assign to…</option>${AGENTS.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
+    <select onchange="bulkApply('assignee',this.value)" title="Adds a tech to every selected ticket — repeat to add several; owner is unchanged"><option value="">Add tech…</option>${AGENTS.filter(a=>a.active!==false).map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`:''}
     ${can('edit_props')?`<select onchange="bulkApply('st',this.value)"><option value="">Set state…</option>${aSTATES().filter(x=>!x.system).map(x=>`<option value="${x.id}">${x.label}</option>`).join('')}</select>
     <select onchange="bulkApply('prio',this.value)"><option value="">Set priority…</option>${aPRIOS().map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
     <button class="btn sm" onclick="bulkApply('tag', prompt('Tag to add:'))">+ tag</button>`:''}
@@ -353,13 +354,37 @@ function bulkApply(k, v){
         return;
       }
       if(k==='owner' && can('assign')){ setProp(id,'ownerId',v); n++; }
+      if(k==='assignee' && can('assign')){
+        /* ADDITIVE: adds the tech to each ticket's assignee set (owner
+           untouched); already-assigned or locked-project tickets skip.
+           PUTs the full set — the side table carries no version, no 409. */
+        if(projLocked(t)) return;
+        const cur = t.assigneeIds||[];
+        if(cur.includes(v)) return;
+        t.assigneeIds = [...cur, v];
+        t.articles.push(art('sys', me(), nowMs(), 'Assignees: '+t.assigneeIds.map(x=>agent(x)?.name||x).join(', ')));
+        n++;
+        $fetch('/api/tickets/'+id+'/assignees',{method:'PUT',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({assignees:t.assigneeIds.slice()})})
+          .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+            if(d && Array.isArray(d.assignees)) t.assigneeIds = d.assignees; });
+      }
       if(k==='st' && (can('edit_props')||can('close'))){ setProp(id,'st',v); n++; }
       if(k==='prio' && can('edit_props')){ setProp(id,'prio',v); n++; }
     });
   } finally { window._bulkRun = false; }
   if(k==='tag' && n) log('Bulk tag added', `“${v}” on ${n} tickets`);
-  state.bulk = [];
-  toast(`Applied to ${n} ticket${n===1?'':'s'} — each change audited individually.`);
+  if(k==='assignee' && n) log('Bulk tech assigned', `${agent(v)?.name||v} added to ${n} ticket${n===1?'':'s'}`);
+  /* 'Add tech…' keeps the selection so several techs can be added in a row;
+     every other bulk action is one-and-done and clears */
+  if(k==='assignee'){
+    toast(n? `${agent(v)?.name||v} added to ${n} ticket${n===1?'':'s'} — pick another tech or Clear.`
+           : 'Already assigned to the selected tickets.');
+  } else {
+    state.bulk = [];
+    toast(`Applied to ${n} ticket${n===1?'':'s'} — each change audited individually.`);
+  }
   render();
 }
 
