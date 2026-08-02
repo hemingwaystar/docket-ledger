@@ -4,12 +4,16 @@
    title rename, merge, related links, parent/child (one level) with the
    close-cascade prompt, and on-ticket caller verification.
    Owns: renderProps() · setProp() + cascadeModal/cascadeJust/cascadeAll ·
-   setPendingUntil() · saveTitle() · mergeModal/doMerge · linkModal/doLink/
+   setAssignees() · setPendingUntil() · saveTitle() · mergeModal/doMerge ·
+   linkModal/doLink/
    unlink · childModal/doChild/unchild · setPrimaryContact() ·
    reclientTicket() · verifyModal/vfySend/vfyCheck.
    Endpoints:
      PATCH /api/tickets/{id}                (state/priority/owner/group · title
                                              · primary contact · pending_until)
+     PUT   /api/tickets/{id}/assignees      (assigned techs — FULL REPLACE; the
+                                             side table carries no version, so
+                                             this never raises the 409 lock)
      POST  /api/tickets/{id}/client         (move to another client)
      POST  /api/tickets/{id}/merge
      POST  /api/tickets/{id}/links          (kind: related | child)
@@ -271,6 +275,37 @@ function cascadeAll(tid,v){
       setTimeout(()=>hydrate(),400); });
 }
 
+/* ---------------- assigned techs (build 15) ----------------------------------
+   Additional techs beyond the single OWNER: an assignee gains visibility and
+   the ticket counts as theirs in "Mine"/"Assigned to me" (isMine, state.js).
+   FULL-REPLACE membership, modeled EXACTLY on setAgentGroups (views/settings.js):
+   slice the 'asg-' fkey prefix for the ticket id, take the multiCombo's
+   selection, diff-guard (row 21), optimistic-mutate + render, then PUT the
+   whole set. The endpoint writes only the desk.ticket_assignees side table —
+   it never reads or bumps ticket.version — so no version rides the body and it
+   can never raise the optimistic-lock 409; there is no success-rehydrate, oops()
+   rehydrates only on refusal (same shape as setAgentGroups). */
+function setAssignees(sel, fkey){
+  if(!can('assign')) return;
+  const t = tk(Number(fkey.slice('asg-'.length))); if(!t) return;
+  const cur = t.assigneeIds || [];
+  if(sel.length===cur.length && sel.every(id=>cur.includes(id))) return;   /* diff-guard (row 21) */
+  t.assigneeIds = sel.slice();
+  const names = t.assigneeIds.map(id=>agent(id)?.name||id).join(', ');
+  log('Assignees changed', `#${t.id} · ${names||'none'}`);
+  t.articles.push(art('sys', me(), nowMs(), names? 'Assignees: '+names : 'Assignees cleared'));
+  render();
+  $fetch('/api/tickets/'+t.id+'/assignees',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({assignees:t.assigneeIds.slice()})})
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      /* reconcile against the authoritative applied set — the server skips any
+         inactive/unknown id, so a stale selection can leave us ahead of it */
+      if(d && Array.isArray(d.assignees) &&
+         !(d.assignees.length===t.assigneeIds.length && d.assignees.every(id=>t.assigneeIds.includes(id)))){
+        t.assigneeIds = d.assignees; render();
+      } });
+}
+
 /* ---------------- client move & primary contact ---------------- */
 /* move a ticket — and, from intake, its sender — to the right client */
 function reclientTicket(tid, targetId){
@@ -434,6 +469,11 @@ function renderProps(t){
         <select onchange="setProp(${t.id},'ownerId',this.value)" ${dis('assign')}>
           <option value="">— unassigned —</option>
           ${AGENTS.map(a=>`<option value="${a.id}" ${t.ownerId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>
+      <div class="prop"><div class="pk">Assigned techs</div>
+        ${can('assign')&&!lk
+          ? multiCombo('asg-'+t.id, AGENTS.filter(a=>!isArch(a)||(t.assigneeIds||[]).includes(a.id)).map(a=>({v:a.id,label:a.name,sub:a.email,archived:isArch(a)})), t.assigneeIds||[], 'setAssignees', 'Assign techs…')
+          : `<div class="v mini">${(t.assigneeIds||[]).map(id=>esc(agent(id)?.name||'?')).join(', ')||'—'}</div>`}
+        <div class="mini muted" style="margin-top:4px">Extra techs beyond the owner — each also sees this ticket and it counts in their “Mine” / Assigned to me.</div></div>
       <div class="prop"><div class="pk">Group</div>
         <select onchange="setProp(${t.id},'groupId',this.value)" ${dis('assign')}>
           ${GROUPS.filter(g=>!isArch(g)||t.groupId===g.id).map(g=>`<option value="${g.id}" ${t.groupId===g.id?'selected':''}>${esc(g.name)}${isArch(g)?' (archived)':''}</option>`).join('')}</select></div>

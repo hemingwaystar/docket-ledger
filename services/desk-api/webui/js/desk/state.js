@@ -8,7 +8,7 @@
    api.js is the ONE place bootstrap data enters them) · static catalogs
    (ST_DECOR, ST_PALETTE, PRIO_PALETTE, DEFAULT_OVERVIEWS, TRIG_EVENTS, PERM_CATALOG/ALL_PERMS/PRESETS,
    PROJ_TEMPLATES, ENTRA_COLMAP, NAV, PAGES) · can()/canView() ·
-   ticketVisible/scoped/tk/isDone · effectiveOverviews/shownDashboardStates/
+   isMine/ticketVisible/scoped/tk/isDone · effectiveOverviews/shownDashboardStates/
    savePrefs · isBizTime/addBizHours/slaInfo · log/notify/signOut ·
    csvEsc/downloadCSV · art()/mkTicket().
    Endpoints: POST /auth/logout (signOut) · PUT /auth/me/prefs (savePrefs).
@@ -255,11 +255,19 @@ function groupsWhen(conds, fmt){
 }
 
 /* ---- visibility scope ---- */
+/* "mine" = I own it OR I'm one of its assignees (build 15). ONE definition so
+   every owner-based "mine" site reads identically and can't drift: the
+   view_own branch below, the queue overview + qf scope filters (tickets.js)
+   and the dashboard "Assigned to me" tile. assigneeIds is ALWAYS present on
+   ticket rows (mapIn defaults it to []); the ||[] guard keeps a pre-migration
+   bootstrap from crashing. Owner is NOT auto-added to assigneeIds — owner and
+   assignee are separate concepts, and this OR is what dedups them. */
+function isMine(t){ return t.ownerId===state.meId || (t.assigneeIds||[]).includes(state.meId); }
 function ticketVisible(t){
   if(!t) return false;
   if(can('view_all')) return true;
   if(can('view_group') && me().groups.includes(t.groupId)) return true;
-  if(can('view_own') && t.ownerId===state.meId) return true;
+  if(can('view_own') && isMine(t)) return true;   /* view_own extends to assignees */
   return false;
 }
 const scoped = () => state.tickets.filter(ticketVisible);

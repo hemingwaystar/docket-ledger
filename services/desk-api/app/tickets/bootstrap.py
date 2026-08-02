@@ -241,9 +241,27 @@ def bootstrap(request: Request, limit: int = 500):
                     "createdAt": ms(r["created_at"]), "updatedAt": ms(r["updated_at"]),
                     "slaFrMet": r["fr_met"],
                     "links": [], "parentId": None, "children": [],
+                    # assigneeIds (0032): additional assigned techs beyond the
+                    # single ownerId. A FIELD on each ticket, ALWAYS present —
+                    # [] here, overwritten below for tickets that have any — so
+                    # the bootstrap desk key COUNT is unchanged and a pre-0032
+                    # payload can't crash mapIn.
+                    "assigneeIds": [],
                     "version": r["version"], "articles": [], "time": []}
             if tickets:
                 ids = list(tickets)
+                # assigneeIds (0032): additional assigned techs per ticket, one
+                # aggregate over the ticket_assignees membership join. Attaches
+                # the uuid-string list; tickets with none keep the [] default
+                # seeded above (so the field is ALWAYS present).
+                cur.execute("""SELECT ticket_id,
+                                 array_agg(agent_id::text ORDER BY added_at) AS aids
+                                 FROM desk.ticket_assignees WHERE ticket_id = ANY(%s)
+                                GROUP BY ticket_id""", (ids,))
+                for r in cur.fetchall():
+                    t = tickets.get(r["ticket_id"])
+                    if t is not None:
+                        t["assigneeIds"] = list(r["aids"])
                 # ticket links — related both ways, child directed; a linked
                 # ticket outside the hydrate window still shows as a bare #id
                 cur.execute("""SELECT kind, src_id, dst_id FROM desk.ticket_links

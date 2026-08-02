@@ -26,7 +26,7 @@ function resetDashStates(){ savePrefs({ dashboardStates: null }); }
 
 function viewDashboard(){
   const sc = scoped().filter(t=>!isDone(t));
-  const mine = sc.filter(t=>t.ownerId===state.meId);
+  const mine = sc.filter(isMine);   /* owner OR assignee — isMine (state.js), build 15 */
   const unassigned = sc.filter(t=>!t.ownerId);
   const breached = sc.filter(t=>{const s=slaInfo(t); return s&&s.breached;});
   const dueSoon = sc.filter(t=>{const s=slaInfo(t); return s&&!s.breached&&s.due-nowMs()<4*H;});

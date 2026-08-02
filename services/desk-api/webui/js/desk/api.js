@@ -5,7 +5,8 @@
    groups, agents, clients, atypes, states, priorities, canned, graph, vcfg,
    authCfg, secretMeta, outboundEnabled, mailboxes, groupSendas, roles (rows
    carry `active` since build 13 — archived roles ride too), rules,
-   sla, biz, deskUi, tickets, audit, notifs) · hydrate() · oops() ·
+   sla, biz, deskUi, tickets (rows carry assigneeIds since build 15), audit,
+   notifs) · hydrate() · oops() ·
    attOpen() · stageUploads() ·
    srvId/isUuid/iso/typeName · ME (session identity) · HYD (focus throttle).
    Endpoints: GET /api/bootstrap · GET /api/attachments/{id} · POST /api/uploads.
@@ -57,6 +58,10 @@ function mapIn(d){
   state.tickets.length=0;
   d.tickets.forEach(t=>{
     t.tags=t.tags||[]; t.articles=t.articles||[]; t.time=t.time||[];
+    /* assigned techs (build 15): a FIELD on every ticket row (like ownerId),
+       always emitted as an array. Default [] so a pre-migration bootstrap
+       that predates the field can't crash isMine() or the props multiCombo. */
+    t.assigneeIds = t.assigneeIds||[];
     /* article↔entry linkage (0012): same object on both sides, so an edit
        in either place is an edit everywhere — mirrors mkTicket's contract */
     t.time.forEach(e=>{ if(e.articleId){

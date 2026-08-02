@@ -1,6 +1,7 @@
 """Ticket writes: create, the optimistic-locked property patch (with the
-0025 parent/child bookkeeping), client moves, and tags. Locked projects
-refuse everything (423)."""
+0025 parent/child bookkeeping), client moves, tags, and the assignee-set
+full-replace (0032 membership join — additional techs beyond the single
+owner). Locked projects refuse everything (423)."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from .. import auth, db, helpers
@@ -246,3 +247,71 @@ def tags(ticket_id: int, body: Tags, request: Request):
             auth.audit(conn, "desk", "Tags updated", f"ticket:{ticket_id}",
                        f"#{ticket_id} +[{', '.join(body.add)}] -[{', '.join(body.remove)}]")
         return {"ok": True}
+
+
+class Assignees(BaseModel):
+    assignees: list[str] = []          # agent uuids — the FULL desired set (replace)
+
+
+@router.put("/tickets/{ticket_id}/assignees")
+def set_assignees(ticket_id: int, body: Assignees, request: Request):
+    """Full-replace the additional-tech set on a ticket (0032). Assignees live
+    in desk.ticket_assignees, a membership join separate from the single
+    owner_id: an assignee gains visibility and the ticket counts in their
+    "Mine". Modeled on directory.patch_agent's {groups} replace — delete the
+    rows that fell out of the new set, INSERT ... ON CONFLICT DO NOTHING the
+    survivors, one transaction.
+
+    This endpoint deliberately does NOT read or bump desk.tickets.version and
+    never touches the tickets row (assignees are in the side table), so it
+    cannot raise the optimistic-lock 409 that patch_ticket/reclient can. The
+    sys article that narrates the change is likewise version-independent."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, 'assign')
+        with conn.cursor() as cur:
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            # Resolve + validate the requested set. Only ACTIVE agents may be
+            # assigned; unknown/inactive ids are SKIPPED (documented) rather
+            # than 422 — a stale UI selection must not fail the whole save, and
+            # the frontend rehydrates from the returned authoritative set. Dedup
+            # here so the sys-article label doesn't repeat a name.
+            wanted, names, seen = [], [], set()
+            for aid in body.assignees:
+                if aid in seen:
+                    continue
+                seen.add(aid)
+                cur.execute("SELECT id, name FROM shared.agents WHERE id::text = %s AND active",
+                            (aid,))
+                r = cur.fetchone()
+                if r is None:
+                    continue                       # skip unknown/inactive — documented
+                wanted.append(str(r[0])); names.append(r[1])
+            # Full-list replace. This DELETE is in-doctrine: ticket_assignees is
+            # a membership join (like shared.agent_groups, 0011), not a business
+            # record — the audit line + sys article below are the history. Diff
+            # style (delete only what fell out) preserves added_at/added_by for
+            # techs who stay; the empty set (clear all) is its own branch so we
+            # never lean on empty-array param adaptation.
+            if wanted:
+                cur.execute("""DELETE FROM desk.ticket_assignees
+                                WHERE ticket_id = %s AND NOT (agent_id = ANY(%s::uuid[]))""",
+                            (ticket_id, wanted))
+            else:
+                cur.execute("DELETE FROM desk.ticket_assignees WHERE ticket_id = %s",
+                            (ticket_id,))
+            for aid in wanted:
+                cur.execute("""INSERT INTO desk.ticket_assignees (ticket_id, agent_id, added_by)
+                               VALUES (%s, %s, %s) ON CONFLICT DO NOTHING""",
+                            (ticket_id, aid, who.get("name") or who.get("label") or "API"))
+            # One sys article on the ticket narrating the resulting set — the
+            # same way an owner change is narrated on the ticket. Independent of
+            # any version lock; author_id NULL for PAT callers (mirrors reclient).
+            label = ("Assignees: " + ", ".join(names)) if names else "Assignees cleared"
+            cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
+                           VALUES (%s, 'sys', %s, %s, %s)""",
+                        (ticket_id, who.get("name") or who.get("label") or "API",
+                         who.get("agent_id"), label))
+        auth.audit(conn, "desk", "Assignees updated", f"ticket:{ticket_id}",
+                   f"#{ticket_id} · " + label)
+        return {"ok": True, "assignees": wanted}

@@ -45,7 +45,7 @@
 function ovPred(def){
   return t=>{
     const s = st8(t.st)||{};
-    if(def.scope==='mine' && t.ownerId!==state.meId) return false;
+    if(def.scope==='mine' && !isMine(t)) return false;   /* owner OR assignee (isMine, state.js) */
     if(def.scope==='unassigned' && t.ownerId) return false;
     if(def.stateKinds?.length && !def.stateKinds.includes(s.type)) return false;
     if(def.states?.length && !def.states.includes(s.label)) return false;
@@ -103,10 +103,11 @@ function qfNorm(){
   ['group','client','tag'].forEach(k=>{ state.qf[k] = state.qf[k].filter(v=>known[k].has(v)); });
   ['prio','st'].forEach(k=>{ state.qf[k] = state.qf[k].filter(v=>known[k].has(String(v))); });
 }
-/* the same owner tests ovPred applies — the bar's scope select and any
-   scope-carrying tab always agree on what "mine"/"unassigned" mean */
+/* the same owner/assignee tests ovPred applies — the bar's scope select and
+   any scope-carrying tab always agree on what "mine"/"unassigned" mean;
+   "mine" routes through isMine (state.js): owner OR assignee (build 15) */
 function qfScopeF(rows, scope){
-  if(scope==='mine') return rows.filter(t=>t.ownerId===state.meId);
+  if(scope==='mine') return rows.filter(isMine);
   if(scope==='unassigned') return rows.filter(t=>!t.ownerId);
   return rows;
 }
