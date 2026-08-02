@@ -208,7 +208,7 @@ function renderSchedules(t){
   <div>
     <div class="card props sched">
       <div class="prop"><div class="pk">Schedules</div>
-        <div class="mini muted">At the earliest start, the ticket comes off hold automatically.</div></div>
+        <div class="mini muted">At the earliest scheduled start, an on-hold ticket comes off hold automatically.</div></div>
       ${list.length? list.map(s=>{
         const nm = agent(s.agentId)?.name || '?';
         const a = schedMs(s.startsAt), b = schedMs(s.endsAt);
