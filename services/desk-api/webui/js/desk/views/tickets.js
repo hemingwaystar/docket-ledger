@@ -4,7 +4,9 @@
    entries, tags, title, bulk actions and CSV export.
    Owns: ovPred/overviews (OverviewDef evaluator)/setOverview/setQF/viewTickets ·
    tabsModal/tabsDraw/tabsRow/tabsMove/tabsToggle/tabsAddCustom/tabsRmCustom/
-   tabsSave (per-user queue-tab prefs) · bulkToggle/bulkApply ·
+   tabsSave (per-user queue-tab prefs) · bulkToggle/bulkApply/setBulkAsg/
+   bulkAddTechs (bulk bar: Owner… sets the one owner; Assign to… multi-selects
+   techs then adds them to every selected ticket via PUT .../assignees) ·
    ticketsCSVData/ticketsCSVRows/auditCSVRows/exportTicketsCSV/exportAuditCSV/copyRowsCSV/
    copyTicketsCSV/copyAuditCSV · viewTicket/renderArt · insertCanned/trigVars ·
    agentEmail · attachTime/editTimeEntry/removeTimeEntry · addAtts/rmAtt ·
@@ -21,7 +23,8 @@
                                          whole prefs object; server keys it by
                                          session, nobody writes anyone else's)
    Title edits and bulk owner/state/priority go through saveTitle/setProp
-   in views/props.js.
+   in views/props.js; bulk "Assign to…" (assigned techs) PUTs the assignee
+   side table directly (bulkAddTechs) — no version, no 409.
    Invariants: desk.articles are immutable by DB design — notes and replies
    have no edit control. The ticket Cc list is server-owned (replies mail the
    stored list); nothing here edits it. SLA escalation notices are the server
@@ -75,6 +78,9 @@ function setQFPrio(vals){ setQF('prio', vals); }
 function setQFClient(vals){ setQF('client', vals); }
 function setQFSt(vals){ setQF('st', vals); }
 function setQFTag(vals){ setQF('tag', vals); }
+/* bulk "Assign to…" staging — ticked techs live in state.bulkAsg until the
+   Assign button applies them to the whole selection (bulkAddTechs) */
+function setBulkAsg(vals){ state.bulkAsg = vals.slice(); render(); }
 /* date-range setters — date inputs are segmented (the commitRender family):
    change fires while still focused, so the re-render defers to blur. The
    native clear (×) fires change with '' = bound removed. */
@@ -147,8 +153,9 @@ function viewTickets(){
   return `
   ${bulkN? `<div class="notice info" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <b>${bulkN} selected</b>
-    ${can('assign')?`<select onchange="bulkApply('owner',this.value)"><option value="">Assign to…</option>${AGENTS.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
-    <select onchange="bulkApply('assignee',this.value)" title="Adds a tech to every selected ticket — repeat to add several; owner is unchanged"><option value="">Add tech…</option>${AGENTS.filter(a=>a.active!==false).map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`:''}
+    ${can('assign')?`<select onchange="bulkApply('owner',this.value)" title="Sets the single owner of every selected ticket"><option value="">Owner…</option>${AGENTS.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
+    <span style="display:inline-block;min-width:170px;vertical-align:middle" title="Tick techs, then Assign — they're added to every selected ticket; the owner is unchanged">${multiCombo('bulkAsg', AGENTS.filter(a=>a.active!==false).map(a=>({v:a.id,label:a.name})), state.bulkAsg||[], 'setBulkAsg', 'Assign to…', true)}</span>
+    <button class="btn sm" ${(state.bulkAsg&&state.bulkAsg.length)?'':'disabled'} onclick="bulkAddTechs()">Assign${(state.bulkAsg&&state.bulkAsg.length)?' '+state.bulkAsg.length:''}</button>`:''}
     ${can('edit_props')?`<select onchange="bulkApply('st',this.value)"><option value="">Set state…</option>${aSTATES().filter(x=>!x.system).map(x=>`<option value="${x.id}">${x.label}</option>`).join('')}</select>
     <select onchange="bulkApply('prio',this.value)"><option value="">Set priority…</option>${aPRIOS().map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
     <button class="btn sm" onclick="bulkApply('tag', prompt('Tag to add:'))">+ tag</button>`:''}
@@ -354,37 +361,42 @@ function bulkApply(k, v){
         return;
       }
       if(k==='owner' && can('assign')){ setProp(id,'ownerId',v); n++; }
-      if(k==='assignee' && can('assign')){
-        /* ADDITIVE: adds the tech to each ticket's assignee set (owner
-           untouched); already-assigned or locked-project tickets skip.
-           PUTs the full set — the side table carries no version, no 409. */
-        if(projLocked(t)) return;
-        const cur = t.assigneeIds||[];
-        if(cur.includes(v)) return;
-        t.assigneeIds = [...cur, v];
-        t.articles.push(art('sys', me(), nowMs(), 'Assignees: '+t.assigneeIds.map(x=>agent(x)?.name||x).join(', ')));
-        n++;
-        $fetch('/api/tickets/'+id+'/assignees',{method:'PUT',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({assignees:t.assigneeIds.slice()})})
-          .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
-            if(d && Array.isArray(d.assignees)) t.assigneeIds = d.assignees; });
-      }
       if(k==='st' && (can('edit_props')||can('close'))){ setProp(id,'st',v); n++; }
       if(k==='prio' && can('edit_props')){ setProp(id,'prio',v); n++; }
     });
   } finally { window._bulkRun = false; }
   if(k==='tag' && n) log('Bulk tag added', `“${v}” on ${n} tickets`);
-  if(k==='assignee' && n) log('Bulk tech assigned', `${agent(v)?.name||v} added to ${n} ticket${n===1?'':'s'}`);
-  /* 'Add tech…' keeps the selection so several techs can be added in a row;
-     every other bulk action is one-and-done and clears */
-  if(k==='assignee'){
-    toast(n? `${agent(v)?.name||v} added to ${n} ticket${n===1?'':'s'} — pick another tech or Clear.`
-           : 'Already assigned to the selected tickets.');
-  } else {
-    state.bulk = [];
-    toast(`Applied to ${n} ticket${n===1?'':'s'} — each change audited individually.`);
-  }
+  state.bulk = [];
+  toast(`Applied to ${n} ticket${n===1?'':'s'} — each change audited individually.`);
+  render();
+}
+/* bulk "Assign to…" — adds every ticked tech (state.bulkAsg) to every selected
+   ticket, ADDITIVELY (owner untouched, existing assignees kept). One PUT per
+   ticket of the merged set (the side table carries no version → no 409);
+   reconciles to the server's returned set. Keeps the ticket selection, clears
+   the staged techs. Skips merged/locked-project tickets and no-op tickets. */
+function bulkAddTechs(){
+  if(!can('assign')) return;
+  const techs = (state.bulkAsg||[]).slice();
+  if(!techs.length){ toast('Tick one or more techs to assign.'); return; }
+  const ids = state.bulk.slice(); let n = 0;
+  ids.forEach(id=>{
+    const t = tk(id); if(!t || t.mergedInto || projLocked(t)) return;
+    const before = t.assigneeIds||[];
+    const merged = [...new Set([...before, ...techs])];
+    if(merged.length===before.length) return;        /* every tech already on it */
+    t.assigneeIds = merged; n++;
+    t.articles.push(art('sys', me(), nowMs(), 'Assignees: '+merged.map(x=>agent(x)?.name||x).join(', ')));
+    $fetch('/api/tickets/'+id+'/assignees',{method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({assignees:merged})})
+      .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+        if(d && Array.isArray(d.assignees)) t.assigneeIds = d.assignees; });
+  });
+  const names = techs.map(x=>agent(x)?.name||x).join(', ');
+  if(n) log('Bulk assigned', `${names} → ${n} ticket${n===1?'':'s'}`);
+  state.bulkAsg = [];                                 /* clear staged techs; keep the ticket selection */
+  toast(n? `Assigned ${names} to ${n} ticket${n===1?'':'s'}.` : 'Those techs are already on the selected tickets.');
   render();
 }
 

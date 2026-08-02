@@ -23,7 +23,7 @@ const state = {
   user:{ name:'', initials:'', role:'' },
   overview:'myopen', qf:{ group:[], prio:[], client:[], st:[], tag:[], scope:'', q:'' },   /* multi-selects: empty = all; scope ''=anyone */
   composer:{ kind:'reply', typeId:null, logTime:true },
-  notifs:[], bulk:[], searchQ:'',
+  notifs:[], bulk:[], bulkAsg:[], searchQ:'',   /* bulkAsg = techs staged for the bulk "Assign to…" multi-select */
   timer:null,          // { ticketId, startedReal }  — the native note timer
   verify:{},           // ticketId → { code, method, masked, attempts, expires }
   audit:[], tickets:[], nextId:0,
