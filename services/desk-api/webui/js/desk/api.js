@@ -110,13 +110,15 @@ function mapIn(d){
     if(d.biz.tz) BIZ.tz=d.biz.tz;
   }
   /* admin UI defaults — app_config key desk_ui rides the bootstrap top level
-     like sla/biz: {overviews:[OverviewDef,...], dashboardStates:[label,...]}.
-     Absent or empty = shipped defaults (DEFAULT_OVERVIEWS / all states). */
+     like sla/biz: {overviews:[OverviewDef,...], dashboardStates:[label,...],
+     defaultGroup:groupId}. Absent or empty = shipped defaults
+     (DEFAULT_OVERVIEWS / all states / first board). */
   Object.keys(DESK_UI).forEach(k=>delete DESK_UI[k]);
   const dui = d.deskUi || d.desk_ui;
   if(dui){
     if(Array.isArray(dui.overviews)) DESK_UI.overviews = dui.overviews;
     if(Array.isArray(dui.dashboardStates)) DESK_UI.dashboardStates = dui.dashboardStates;
+    if(typeof dui.defaultGroup==='string' && dui.defaultGroup) DESK_UI.defaultGroup = dui.defaultGroup;
   }
   if(d.notifs){ state.notifs.length=0; d.notifs.forEach(n=>state.notifs.push(n)); }
   d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });

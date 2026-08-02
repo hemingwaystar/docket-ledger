@@ -10,7 +10,7 @@
    stSwatches/stateColorSet/stateDescSet/stPalPick (state decor, 0027) ·
    prioModal/savePrio/archivePrio · prioSwatches/prioColorSet (priority
    decor, 0028) · deskUiCard/ovModal/saveOverview/moveOverview/hideOverview/
-   dashHiddenDefault/setDashHiddenDefault/deskUiPush (+ deskOvs/
+   dashHiddenDefault/setDashHiddenDefault/setDefaultGroup/deskUiPush (+ deskOvs/
    ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
    vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows.
    Endpoints: POST /api/directory/groups · PATCH /api/directory/groups/{id} ·
@@ -598,6 +598,14 @@ function setDashHiddenDefault(vals){
   render();
   deskUiPush();
 }
+function setDefaultGroup(v){
+  const cur = DESK_UI.defaultGroup || '';
+  if(v===cur) return;                                                  /* diff-guard */
+  if(v) DESK_UI.defaultGroup = v; else delete DESK_UI.defaultGroup;    /* absent key = first board */
+  log('Default ticket group changed', v?(grp(v)?.name||v):'first board');
+  render();
+  deskUiPush();
+}
 function ovModal(id){
   if(!can('manage_settings')) return;
   const o0 = id? deskOvs().find(x=>x.id===id) : { scope:'all' };
@@ -686,6 +694,13 @@ function deskUiCard(){
       <div class="card-head flush" style="margin-top:16px"><h3>Dashboard — queue by state</h3><span class="hint">shown by default · each person can override on the card</span></div>
       <div style="margin-top:6px;max-width:360px">${multiCombo('duiDashHide', aSTATES().map(s=>({v:s.label,label:s.label})), dashHiddenDefault(), 'setDashHiddenDefault', 'No states hidden', true)}</div>
       <div class="mini muted" style="margin-top:8px">Pick the states to <b>hide</b> from the dashboard’s Queue-by-state card by default; anyone who has set their own view on the card (⚙) is untouched. No selection = every active state shows, and new states show automatically.</div>
+      <div class="card-head flush" style="margin-top:16px"><h3>New tickets</h3><span class="hint">what the New-ticket form starts on</span></div>
+      <div class="field inline-sm" style="margin-top:6px"><label>Default ticket group</label>
+        <select onchange="setDefaultGroup(this.value)" style="max-width:360px">
+          <option value="">— first board —</option>
+          ${aGROUPS().map(g=>`<option value="${g.id}" ${DESK_UI.defaultGroup===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}
+          ${DESK_UI.defaultGroup&&!aGROUPS().some(g=>g.id===DESK_UI.defaultGroup)?`<option value="${esc(DESK_UI.defaultGroup)}" selected>${esc(grp(DESK_UI.defaultGroup)?.name||DESK_UI.defaultGroup)} (archived)</option>`:''}
+        </select></div>
     </div>`;
 }
 

@@ -28,7 +28,7 @@ function newTicketModal(preClient){
       <div class="grid g-2" style="gap:12px">
         <div class="field"><label>Client</label>${combo('ntClient', CLIENTS.filter(c=>c.status!=='archived').map(c=>({v:c.id, label:c.name, sub:c.domain!=='—'?c.domain:''})), preClient||'', ntContacts, 'Search clients…')}</div>
         <div class="field"><label>Contact${can('add_contacts')||can('manage_clients')?` <a href="#" style="float:right;text-transform:none;letter-spacing:0;font-weight:500;color:var(--brand)" onclick="addContactModal(document.getElementById('ntClient').value,true);return false">+ new caller</a>`:''}</label><span id="ntContactWrap">${combo('ntContact', [], '', null, 'Search contacts…')}</span></div>
-        <div class="field"><label>Group</label><select id="ntGroup">${aGROUPS().map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Group</label><select id="ntGroup">${aGROUPS().map(g=>`<option value="${g.id}" ${DESK_UI.defaultGroup===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Priority</label><select id="ntPrio">${aPRIOS().map(p=>`<option value="${p.id}" ${p.id===2?'selected':''}>${p.label}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>First entry (internal note)</label><textarea id="ntBody" rows="3" placeholder="What was reported / what you're starting"></textarea></div>
