@@ -39,17 +39,19 @@ function newTicketModal(preClient){
 }
 function ntContacts(sel){
   const c = client(document.getElementById('ntClient').value);
-  const opts = c.contacts.filter(p=>p.active!==false).map(p=>({v:p.id, label:p.name, sub:p.email}));
-  const pick = sel || (opts[0]?opts[0].v:'');
+  /* contact is optional — with none picked, no open email can go out (the
+     trigger engine skips when there is no recipient) */
+  const opts = [{v:'', label:'— no contact —', sub:'no open email goes out'},
+    ...c.contacts.filter(p=>p.active!==false).map(p=>({v:p.id, label:p.name, sub:p.email}))];
+  const pick = sel || (opts[1]?opts[1].v:'');
   document.getElementById('ntContactWrap').innerHTML = combo('ntContact', opts, pick, null, 'Search contacts…');
 }
 function createTicket(){
   const title = document.getElementById('ntTitle').value.trim() || 'Untitled ticket';
   const body = document.getElementById('ntBody').value.trim() || 'Ticket opened by agent.';
   if(!document.getElementById('ntClient').value){ toast('Pick a client first.'); return; }
-  if(!document.getElementById('ntContact').value){ toast('This client has no contacts yet — add a caller first (+ new caller).'); return; }
   const id = state.nextId++;
-  const t = mkTicket({ id, clientId:document.getElementById('ntClient').value, contactId:document.getElementById('ntContact').value,
+  const t = mkTicket({ id, clientId:document.getElementById('ntClient').value, contactId:document.getElementById('ntContact').value||null,
     groupId:document.getElementById('ntGroup').value, ownerId:state.meId, st:'open', prio:Number(document.getElementById('ntPrio').value),
     tags:[], articles:[ art('note', me(), nowMs(), body) ], time:[], slaFrMet:true });
   TITLES[id] = title;
