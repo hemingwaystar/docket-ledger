@@ -10,12 +10,18 @@
    ticketsCSVData/ticketsCSVRows/auditCSVRows/exportTicketsCSV/exportAuditCSV/copyRowsCSV/
    copyTicketsCSV/copyAuditCSV · viewTicket/renderArt · insertCanned/trigVars ·
    agentEmail · attachTime/editTimeEntry/removeTimeEntry · addAtts/rmAtt ·
+   renderNoteEditor/editNote/addEditAtts/rmEditAtt (build 17: in-place edit of a
+   sent internal NOTE — body + added attachments, optimistic then PATCH, audited) ·
    addTag/rmTag · checkPendingWakes · composerTimerStart/
    timerSeconds/timerStartMs/setTW/composerSpan/composerH/tickTimer (1 s
    interval)/timerReset · setComposer/renderComposer/sendArticle.
    Endpoints:
      POST  /api/tickets/{id}/articles   (sendArticle; staged files first via
                                          stageUploads → POST /api/uploads)
+     PATCH /api/tickets/{id}/articles/{articleId}  (editNote — note body + newly
+                                         staged attachments; audited before→after;
+                                         returns the ONE reconciled article; updates
+                                         desk.articles only, so no ticket.version → no 409)
      POST  /api/tickets/{id}/tags       (addTag / rmTag / bulk tag)
      POST  /api/tickets/{id}/time       (attachTime)
      PATCH /api/time/{id}               (editTimeEntry / removeTimeEntry-void)
@@ -25,8 +31,15 @@
    Title edits and bulk owner/state/priority go through saveTitle/setProp
    in views/props.js; bulk "Assign to…" (assigned techs) PUTs the assignee
    side table directly (bulkAddTechs) — no version, no 409.
-   Invariants: desk.articles are immutable by DB design — notes and replies
-   have no edit control. The ticket Cc list is server-owned (replies mail the
+   Invariants: only internal NOTES are editable after they're sent (body +
+   ADDED attachments) — replies, mail-in and sys articles stay immutable by DB
+   design (guard_article_immutability, 0001). The edit is refused (and the
+   affordance hidden) once the note's linked timesheet is approved or its
+   billing period is locked (a.time.approved||a.time.locked), on a locked
+   project, and for anyone who is neither the author nor a billing supervisor;
+   the SERVER re-checks all of it (PATCH 409/423) — the UI gate is a courtesy,
+   oops() covers a stale button. Every edit writes an audit line (before →
+   after). The ticket Cc list is server-owned (replies mail the
    stored list); nothing here edits it. SLA escalation notices are the server
    scanner's job — nothing here synthesizes them. Local mutation always lands
    before the mirroring fetch; a change that didn't happen never calls out.
@@ -508,9 +521,33 @@ function renderArt(t,a){
     : (a.time && can('log_time') ? `<div class="art-time"><span class="chip ledger"><span class="cdot"></span><span class="tape">${msTime(a.time.startedAt)}–${msTime(a.time.endedAt)} · ${fmtHours(a.time.h)} h</span> logged</span></div>` : '');
   const isMineOrSup = (a.author?.id===state.meId) || can('see_billing');
   const mayAttach = (a.kind==='note'||a.kind==='reply') && !a.auto && can('log_time') && isMineOrSup && !a.time;
-  const noteActions = mayAttach
-    ? `<span style="margin-left:auto;display:inline-flex;gap:6px">
-         <button class="rowbtn" onclick="attachTime(${t.id},'${a.id}')" title="Attach a time entry — starts as a 15-min span ending at this ${a.kind==='reply'?'email':'note'}'s timestamp; adjust it inline">+ time</button></span>`
+  /* note editing (build 17): ONLY internal notes, never auto-generated, by the
+     author OR a billing supervisor (the same isMineOrSup shape the +time gate
+     uses), never on a locked project, and NEVER once the linked timesheet is
+     approved or its billing period is locked — the note freezes with the money.
+     The server (PATCH .../articles/{id}) re-checks every clause; if this button
+     is stale (e.g. the timesheet was just approved) the 423/409 + oops() covers
+     it. Replies / mail-in / sys stay immutable. */
+  const mayEditNote = a.kind==='note' && !a.auto && isMineOrSup && !projLocked(t)
+    && !(a.time && (a.time.approved || a.time.locked));
+  const editing = mayEditNote && state.editNote===a.id;
+  const editBtn = (mayEditNote && !editing)
+    ? `<button class="rowbtn" onclick="state.editNote='${jsq(a.id)}';state.editAtts=[];render()" title="Edit this note — the change is audited (before → after)">Edit</button>`
+    : '';
+  const attachBtn = mayAttach
+    ? `<button class="rowbtn" onclick="attachTime(${t.id},'${jsq(a.id)}')" title="Attach a time entry — starts as a 15-min span ending at this ${a.kind==='reply'?'email':'note'}'s timestamp; adjust it inline">+ time</button>`
+    : '';
+  const noteActions = (editBtn||attachBtn)
+    ? `<span style="margin-left:auto;display:inline-flex;gap:6px">${editBtn}${attachBtn}</span>`
+    : '';
+  /* transparency: a muted "(edited …)" marker on ANY article the server marked
+     edited — editedAt/editedBy ride every article (mapIn defaults them to null
+     for a pre-0034 bootstrap, so the marker only lights when truly set) */
+  const editedMark = a.editedAt
+    ? `<span class="mini muted" title="Edited by ${esc(a.editedBy||'—')}" style="margin-left:2px">(edited ${esc(fmtDT(a.editedAt))})</span>`
+    : '';
+  const attsHtml = a.atts&&a.atts.length
+    ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${a.atts.map(f=>`<span class="chip" style="background:#eef2f1;cursor:pointer" onclick="attOpen('${f.id||''}')" title="${esc(f.type)}">📎 ${esc(f.name)} <span class="mini muted">${fmtKB(f.size)}</span></span>`).join('')}</div>`
     : '';
   const bodyHtml = a.kind==='mail-in' && a.bodyHtml && !state.plainMail?.[a.id]
     ? `<div class="art-body" style="padding:0">
@@ -522,12 +559,109 @@ function renderArt(t,a){
   return `<div class="art ${a.kind} ${isAgent?'agent':''}">
     <span class="avatar">${esc(av)}</span>
     <div class="art-main">
-      <div class="art-top" style="display:flex;align-items:center;gap:8px"><b>${esc(a.author.name)}</b>${kindLab}${noteActions}<span class="art-ts">${fmtDT(a.ts)}</span></div>
-      ${bodyHtml}
-      ${a.atts&&a.atts.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${a.atts.map(f=>`<span class="chip" style="background:#eef2f1;cursor:pointer" onclick="attOpen('${f.id||''}')" title="${esc(f.type)}">📎 ${esc(f.name)} <span class="mini muted">${fmtKB(f.size)}</span></span>`).join('')}</div>`:''}
+      <div class="art-top" style="display:flex;align-items:center;gap:8px"><b>${esc(a.author.name)}</b>${kindLab}${editedMark}${noteActions}<span class="art-ts">${fmtDT(a.ts)}</span></div>
+      ${editing ? renderNoteEditor(t,a) : `${bodyHtml}${attsHtml}`}
       ${timeChip}
     </div>
   </div>`;
+}
+
+/* ---- note editing (build 17): inline editor + the save control ------------
+   Mirrors the composer's staging mechanism EXACTLY — new files stage into
+   state.editAtts (each {name,size,type,_file}); on Save they upload via
+   stageUploads (→ their row ids) and the PATCH claims them, just like
+   sendArticle. Only the ONE note being edited shows the editor (its id ===
+   state.editNote), so the single global state.editAtts is unambiguous. Open
+   and Cancel are inline state sets (the same pattern as the title editor) —
+   the body reverts to a.body on Cancel because nothing mutated it until Save. */
+function renderNoteEditor(t, a){
+  const staged = state.editAtts || [];
+  return `<div class="note-edit" style="margin-top:6px">
+    <textarea id="editBody-${esc(a.id)}" style="width:100%;min-height:92px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;resize:vertical;box-sizing:border-box" placeholder="The note can't be emptied — write something or Cancel.">${esc(a.body)}</textarea>
+    ${(a.atts&&a.atts.length)?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center"><span class="mini muted">kept:</span>${a.atts.map(f=>`<span class="chip" style="background:#eef2f1" title="${esc(f.type||'')} — existing attachments stay; edits only ADD">📎 ${esc(f.name)} <span class="mini muted">${fmtKB(f.size)}</span></span>`).join('')}</div>`:''}
+    ${staged.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${staged.map((f,i)=>`<span class="chip" style="background:#eef2f1"><span>📎 ${esc(f.name)}</span> <span class="mini muted">${fmtKB(f.size)}</span><button class="rowbtn" style="padding:0 5px" onclick="rmEditAtt(${i})" title="Remove before saving">×</button></span>`).join('')}</div>`:''}
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+      <label class="rowbtn" style="cursor:pointer" title="Add files to this note — staged now, uploaded on Save">📎 attach<input type="file" multiple style="display:none" onchange="addEditAtts(this)"></label>
+      <span style="flex:1"></span>
+      <button class="btn sm primary" onclick="editNote(${t.id},'${jsq(a.id)}')">Save</button>
+      <button class="btn sm ghost" onclick="state.editNote=null;state.editAtts=[];render()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+/* the Save control (one function per control): optimistic body/attachment
+   update lands first + render, THEN stageUploads → PATCH; the returned article
+   reconciles the one row (body, editedAt/By, the authoritative attachment
+   list) without a full rehydrate — this endpoint touches desk.articles only,
+   so there is no ticket.version and it can't raise the 409 version-conflict.
+   Any server refusal (stale button after the timesheet was approved → 423,
+   permission → 403, guard → 409) routes through oops(): alert + rehydrate. */
+function editNote(tid, aid){
+  const t = tk(tid); if(!t) return;
+  const a = t.articles.find(x=>x.id===aid); if(!a) return;
+  /* re-assert the gate locally so a stale DOM handler can't skip it (the
+     server enforces regardless — this is the courtesy check) */
+  if(a.kind!=='note' || a.auto){ toast('Only internal notes can be edited.'); return; }
+  if(projLocked(t)){ toast('This project is approved & locked — an admin can unlock it from the checklist card.'); return; }
+  if(a.time && (a.time.approved || a.time.locked)){ toast('The linked timesheet is approved — the note is frozen with it.'); return; }
+  if(!((a.author?.id===state.meId) || can('see_billing'))) return;
+  const el = document.getElementById('editBody-'+aid);
+  const body = (el ? el.value : a.body).trim();
+  if(!body){ toast('A note can’t be emptied — write something or cancel.'); return; }
+  const staged = (state.editAtts||[]).slice();
+  const before = a.body;
+  if(body===before && !staged.length){ state.editNote=null; state.editAtts=[]; render(); return; }  /* no-op — nothing to mirror */
+  /* --- all checks passed; optimistic mutation --- */
+  a.body = body;
+  if(staged.length) a.atts = (a.atts||[]).concat(staged);
+  a.editedAt = nowMs(); a.editedBy = state.user.name;
+  state.editNote = null; state.editAtts = [];
+  /* an in-place note edit touches desk.articles only — the server never bumps
+     desk.tickets.updated_at, so neither the "Updated" column nor the board sort
+     should move for it (don't fabricate t.updatedAt here) */
+  log('Note edited', `#${t.id}${staged.length?` · +${staged.length} attachment${staged.length===1?'':'s'}`:''}`);
+  toast(`Note updated${staged.length?` · ${staged.length} attachment${staged.length===1?'':'s'} added`:''} — audited; the thread shows “(edited).”`);
+  render();
+  /* --- mirror: staged files first (each returns its row id), then PATCH the
+     note claiming them — the server links the rows, writes the audit line and
+     returns the reconciled article --- */
+  stageUploads(staged).then(ids=>{
+    const payload = { body };
+    if(ids.length) payload.attachment_ids = ids;
+    return $fetch('/api/tickets/'+tid+'/articles/'+aid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  }).then(async r=>{ const d=await r.json().catch(()=>0);
+    if(!r.ok) return oops(d);
+    const ra = d && d.article;                 /* the reconciled article the server returns */
+    if(ra){
+      if(typeof ra.body==='string') a.body = ra.body;
+      if('editedAt' in ra) a.editedAt = ra.editedAt;
+      if('editedBy' in ra) a.editedBy = ra.editedBy;
+      /* server returns the authoritative list in its OWN key shape
+         (filename/byteSize/mimeType) — map it to the UI's att shape */
+      if(Array.isArray(ra.attachments)) a.atts = ra.attachments.map(f=>({id:f.id, name:f.filename, size:f.byteSize, type:f.mimeType}));
+      render();
+    }
+  }).catch(d=>oops(d));
+}
+
+/* editor attachment controls — mirror addAtts/rmAtt but stage into
+   state.editAtts and preserve the in-progress textarea value across the
+   render (the editBody textarea is markup-prefilled from a.body, so a plain
+   render would otherwise discard whatever the editor typed) */
+function addEditAtts(inp){
+  state.editAtts = state.editAtts||[];
+  [...inp.files].forEach(f=>{ if(!state.editAtts.some(x=>x.name===f.name && x.size===f.size)) state.editAtts.push({ name:f.name, size:f.size, type:f.type||'application/octet-stream', _file:f }); });
+  inp.value='';
+  const aid = state.editNote;
+  const body = document.getElementById('editBody-'+aid)?.value; render();
+  const b2 = document.getElementById('editBody-'+aid); if(b2 && body!=null) b2.value = body;
+}
+function rmEditAtt(i){
+  const aid = state.editNote;
+  const body = document.getElementById('editBody-'+aid)?.value;
+  state.editAtts.splice(i,1); render();
+  const b2 = document.getElementById('editBody-'+aid); if(b2 && body!=null) b2.value = body;
 }
 
 /* ---- canned responses: a local text convenience — the insert renders the

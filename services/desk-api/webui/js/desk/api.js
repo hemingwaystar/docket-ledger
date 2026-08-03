@@ -6,7 +6,8 @@
    authCfg, secretMeta, outboundEnabled, mailboxes, groupSendas, roles (rows
    carry `active` since build 13 — archived roles ride too), rules,
    sla, biz, deskUi, tickets (rows carry assigneeIds since build 15 and
-   schedules since build 16), audit,
+   schedules since build 16; each article carries editedAt/editedBy since
+   build 17), audit,
    notifs) · hydrate() · oops() ·
    attOpen() · stageUploads() ·
    srvId/isUuid/iso/typeName · ME (session identity) · HYD (focus throttle).
@@ -59,6 +60,13 @@ function mapIn(d){
   state.tickets.length=0;
   d.tickets.forEach(t=>{
     t.tags=t.tags||[]; t.articles=t.articles||[]; t.time=t.time||[];
+    /* note edits (0034 / build 17): every article carries editedAt (ms|null)
+       and editedBy (str|null). Articles ride whole (state.tickets.push below),
+       so these keys arrive on each `a` untouched — default them to null here so
+       a pre-0034 bootstrap can't leave them undefined and renderArt's "(edited)"
+       marker only lights when the server actually set them. */
+    t.articles.forEach(a=>{ if(a.editedAt===undefined) a.editedAt=null;
+                            if(a.editedBy===undefined) a.editedBy=null; });
     /* assigned techs (build 15): a FIELD on every ticket row (like ownerId),
        always emitted as an array. Default [] so a pre-migration bootstrap
        that predates the field can't crash isMine() or the props multiCombo. */

@@ -1,10 +1,12 @@
 """Ticket writes: create, the optimistic-locked property patch (with the
 0025 parent/child bookkeeping), client moves, tags, the assignee-set
 full-replace (0032 membership join — additional techs beyond the single
-owner), and the per-tech schedule add/remove (0033 — each write keeps
+owner), the per-tech schedule add/remove (0033 — each write keeps
 desk.tickets.pending_until in sync as the MIN future scheduled start, which
-is what drives the existing worker/UI auto-resume). Locked projects refuse
-everything (423)."""
+is what drives the existing worker/UI auto-resume), and the note edit (0034 —
+correct a sent internal note's body + add attachments, guarded and audited;
+it touches desk.articles ONLY, never desk.tickets, so it neither reads nor
+bumps ticket.version and cannot 409). Locked projects refuse everything (423)."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from .. import auth, db, helpers
@@ -441,3 +443,127 @@ def remove_schedule(ticket_id: int, schedule_id: int, request: Request):
             auth.audit(conn, "desk", "Schedule removed", f"ticket:{ticket_id}",
                        f"#{ticket_id} · schedule {schedule_id} removed")
         return {"ok": True, "schedules": schedules, "pending_until": pending, "version": version}
+
+
+# --- Note editing (0034) ----------------------------------------------------
+# Edit a SENT internal note in place: correct its body and/or add attachments,
+# with hard server-authoritative guards and a full before→after audit line.
+# Notes are the ONLY editable article kind — 0001's guard_article_immutability
+# freezes reply/mail_in/sys bodies at the DB; this endpoint layers the business
+# rules on top. It updates desk.articles ONLY (never desk.tickets), so — unlike
+# patch_ticket/reclient — it neither reads nor bumps ticket.version and cannot
+# raise the optimistic-lock 409 (and deliberately does NOT UPDATE the tickets
+# row: doing so would bump version via the touch trigger and re-strand the
+# frontend's optimistic-lock token, the build-14b staleness bug).
+
+def _cap_body(s: str, cap: int = 4000) -> str:
+    """Bound a note body for the audit detail so a pathological paste can't mint
+    a monster audit row; note the truncation when it bites."""
+    s = s or ""
+    return s if len(s) <= cap else s[:cap] + f"… [+{len(s) - cap} more chars]"
+
+
+class EditNote(BaseModel):
+    body: str
+    attachment_ids: list[str] = []     # newly-staged uploads to link (optional)
+
+
+@router.patch("/tickets/{ticket_id}/articles/{article_id}")
+def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request):
+    """Edit an internal note (kind='note') — body + added attachments — with
+    server-authoritative guards and one full before→after audit line.
+
+    Refuses (never merely UI-hidden) when the note can't be edited by ANYONE:
+      * it isn't a note, or it's auto-generated                → 409
+      * the ticket is an approved-locked project (projLocked)  → 423
+      * its linked timesheet is frozen — the ledger entry is manager-approved
+        (ts_approved_at) OR in a locked/exported billing period → 423
+    The linked-timesheet check is the crux: this UPDATEs desk.articles, NOT
+    ledger.time_entries, so the ledger's own SECURITY DEFINER immutability guard
+    never fires — this endpoint IS the enforcer. It reads the period lock via
+    ledger.period_locked() (0034) so no billing_periods grant is needed.
+
+    Then refuses when THIS caller may not edit it (403): allowed only for the
+    note's own author or a see_billing supervisor (mirrors patch_time's
+    own-vs-see_billing split and the renderArt isMineOrSup gate); PATs pass as
+    all-scope service credentials.
+
+    Returns the reconciled article {id, body, editedAt (ms), editedBy,
+    attachments:[{id,filename,byteSize,mimeType}]} so the UI updates the one
+    article without a full rehydrate."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            # 1) ticket + article — both 404 if absent / not on this ticket.
+            trow = helpers.ticket_or_404(cur, ticket_id)
+            cur.execute("""SELECT kind, is_auto, author_id, body
+                             FROM desk.articles
+                            WHERE id = %s AND ticket_id = %s""",
+                        (article_id, ticket_id))
+            art = cur.fetchone()
+            if art is None:
+                raise HTTPException(404, "No such article on this ticket")
+            kind, is_auto, author_id, old_body = art
+            # 2) not-editable-by-ANYONE refusals.
+            if kind != "note":
+                raise HTTPException(409, "Only internal notes can be edited — "
+                                    "replies and system entries are immutable")
+            if is_auto:
+                raise HTTPException(409, "Auto-generated notes can't be edited")
+            helpers.refuse_if_locked_project(trow)     # 423 on an approved-locked project
+            # 3) the linked-timesheet freeze: ts-approved OR period-locked. One
+            #    read over ledger.time_entries (desk_api SELECTs it directly);
+            #    the period lock arrives through the definer function so desk_api
+            #    needs no billing_periods grant. A note can carry more than one
+            #    linked entry over its life — any frozen one freezes the note.
+            cur.execute("""SELECT e.ts_approved_at IS NOT NULL,
+                                  ledger.period_locked(e.period_id)
+                             FROM ledger.time_entries e
+                            WHERE e.article_id = %s AND e.status <> 'void'""",
+                        (article_id,))
+            for ts_approved, period_locked in cur.fetchall():
+                if ts_approved or period_locked:
+                    raise HTTPException(423, "The linked timesheet is approved — "
+                                        "the note is frozen with it")
+            # 4) permission: the author, or a see_billing supervisor; PATs pass.
+            if who["kind"] == "session" and author_id != who["agent_id"]:
+                auth.need(who, "see_billing")
+            actor = who.get("name") or who.get("label") or "API"
+            # 5) apply. The guard permits note-body edits + the 0034 columns
+            #    (it only blocks body changes on NON-note kinds).
+            cur.execute("""UPDATE desk.articles
+                              SET body = %s, edited_at = now(), edited_by = %s
+                            WHERE id = %s RETURNING edited_at""",
+                        (body.body, actor, article_id))
+            (edited_at,) = cur.fetchone()
+            # link newly-staged uploads — the SAME mechanism add_article uses:
+            # only rows still unlinked (article_id IS NULL) are claimed, so a
+            # stale/foreign id is silently skipped rather than stealing another
+            # article's attachment. RETURNING names the files actually linked.
+            added = []
+            if body.attachment_ids:
+                cur.execute("""UPDATE desk.attachments
+                                  SET article_id = %s, staged_by = NULL
+                                WHERE id = ANY(%s::uuid[]) AND article_id IS NULL
+                            RETURNING filename""",
+                            (article_id, body.attachment_ids))
+                added = [r[0] for r in cur.fetchall()]
+            # the article's full non-inline attachment set (same shape+filter as
+            # the bootstrap atts join) so the UI reconciles one article cleanly.
+            cur.execute("""SELECT id, filename, byte_size, mime_type
+                             FROM desk.attachments
+                            WHERE article_id = %s AND NOT is_inline
+                            ORDER BY created_at""", (article_id,))
+            atts = [{"id": str(r[0]), "filename": r[1], "byteSize": r[2],
+                     "mimeType": r[3]} for r in cur.fetchall()]
+        # 6) ONE audit line: before → after (each capped) + added files + actor.
+        detail = (f"#{ticket_id} · note {article_id} edited by {actor} · "
+                  f"before “{_cap_body(old_body)}” "
+                  f"→ after “{_cap_body(body.body)}”")
+        if added:
+            detail += " · +attachments: " + ", ".join(added)
+        auth.audit(conn, "desk", "Note edited", f"ticket:{ticket_id}", detail)
+        # 7) reconciled article — no ticket.version in play (see header).
+        return {"ok": True, "article": {
+            "id": str(article_id), "body": body.body,
+            "editedAt": _ms(edited_at), "editedBy": actor, "attachments": atts}}

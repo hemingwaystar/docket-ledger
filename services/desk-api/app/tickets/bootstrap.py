@@ -302,18 +302,26 @@ def bootstrap(request: Request, limit: int = 500):
                             tickets[r["src_id"]]["links"].append(r["dst_id"])
                         if r["dst_id"] in tickets:
                             tickets[r["dst_id"]]["links"].append(r["src_id"])
-                cur.execute("""SELECT ticket_id, id, kind, author, body, body_html,
-                                 is_auto, mail_from, mail_to, sent_at
+                # author_id (0001) rides as author.id so the note-edit UI can
+                # test authorship (a.author?.id===meId) for the Edit affordance;
+                # edited_at/edited_by (0034) carry the "(edited <when>)" marker —
+                # both null on every never-edited article. Articles ride WHOLE
+                # through mapIn, so these field names ARE what renderArt reads.
+                cur.execute("""SELECT ticket_id, id, kind, author, author_id, body, body_html,
+                                 is_auto, mail_from, mail_to, sent_at, edited_at, edited_by
                                  FROM desk.articles WHERE ticket_id = ANY(%s)
                                 ORDER BY sent_at""", (ids,))
                 art_index = {}
                 for r in cur.fetchall():
                     art = {"id": str(r["id"]),
                            "kind": "mail-in" if r["kind"] == "mail_in" else r["kind"],
-                           "author": {"name": r["author"]}, "ts": ms(r["sent_at"]),
+                           "author": {"name": r["author"],
+                                      "id": str(r["author_id"]) if r["author_id"] else None},
+                           "ts": ms(r["sent_at"]),
                            "body": r["body"], "bodyHtml": r["body_html"],
                            "auto": r["is_auto"],
-                           "mailFrom": r["mail_from"], "mailTo": r["mail_to"]}
+                           "mailFrom": r["mail_from"], "mailTo": r["mail_to"],
+                           "editedAt": ms(r["edited_at"]), "editedBy": r["edited_by"]}
                     art_index[str(r["id"])] = art
                     tickets[r["ticket_id"]]["articles"].append(art)
                 if art_index:
@@ -329,9 +337,18 @@ def bootstrap(request: Request, limit: int = 500):
                             a.setdefault("atts", []).append(
                                 {"id": str(r["id"]), "name": r["filename"],
                                  "size": r["byte_size"], "type": r["mime_type"]})
+                # locked (0034): the entry sits in an approved/exported billing
+                # period. Read via ledger.period_locked() (SECURITY DEFINER) so
+                # desk_api needs NO billing_periods grant. Distinct from approved
+                # (the manager timesheet sign-off, ts_approved_at) — a period can
+                # be locked while an entry is not yet ts_approved, so the UI needs
+                # BOTH flags to gate the note-Edit affordance the same way the
+                # server does. The article↔entry link (articleId) lets renderArt
+                # hang a.time on the note.
                 cur.execute("""SELECT e.ticket_id, e.id, e.tech_id, e.activity_type_id,
                                  e.task_id, e.hours, e.started_at, e.ended_at, e.status,
-                                 e.submitted_at, e.ts_approved_at, e.article_id, e.version
+                                 e.submitted_at, e.ts_approved_at, e.article_id, e.version,
+                                 ledger.period_locked(e.period_id) AS locked
                                  FROM ledger.time_entries e
                                 WHERE e.ticket_id = ANY(%s) AND e.status <> 'void'
                                 ORDER BY e.started_at""", (ids,))
@@ -345,6 +362,7 @@ def bootstrap(request: Request, limit: int = 500):
                         "void": r["status"] == "void",
                         "submitted": r["submitted_at"] is not None,
                         "approved": r["ts_approved_at"] is not None,
+                        "locked": r["locked"],
                         "articleId": str(r["article_id"]) if r["article_id"] else None,
                         "version": r["version"]})
                 cur.execute("""SELECT p.ticket_id, p.status, p.billing_model,
