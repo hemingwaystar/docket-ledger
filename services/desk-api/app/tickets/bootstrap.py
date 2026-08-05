@@ -274,7 +274,11 @@ def bootstrap(request: Request, limit: int = 500):
                 # same units as every other ticket timestamp, so the UI reuses
                 # fmtDT/dtLocalVal without translation; tickets with none keep
                 # the [] default seeded above (field ALWAYS present).
-                cur.execute("""SELECT ticket_id, id, agent_id, starts_at, ends_at, note
+                # completed_at/completed_by (0035): per-block completion stamp —
+                # NULL completedAt = not done. Drives the struck-through render in
+                # both the Schedules bar and the Schedule calendar (build 18/19).
+                cur.execute("""SELECT ticket_id, id, agent_id, starts_at, ends_at, note,
+                                      completed_at, completed_by
                                  FROM desk.ticket_schedules WHERE ticket_id = ANY(%s)
                                 ORDER BY ticket_id, starts_at""", (ids,))
                 for r in cur.fetchall():
@@ -284,7 +288,9 @@ def bootstrap(request: Request, limit: int = 500):
                                                "agentId": str(r["agent_id"]),
                                                "startsAt": ms(r["starts_at"]),
                                                "endsAt": ms(r["ends_at"]),
-                                               "note": r["note"]})
+                                               "note": r["note"],
+                                               "completedAt": ms(r["completed_at"]),
+                                               "completedBy": r["completed_by"]})
                 # ticket links — related both ways, child directed; a linked
                 # ticket outside the hydrate window still shows as a bare #id
                 cur.execute("""SELECT kind, src_id, dst_id FROM desk.ticket_links

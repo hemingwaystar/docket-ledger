@@ -350,6 +350,15 @@ def _span_label(starts_at: str, ends_at: str | None) -> str:
     return f"{fmt(starts_at)}–{fmt(ends_at)}" if ends_at else f"from {fmt(starts_at)}"
 
 
+def _span_label_dt(starts_at, ends_at) -> str:
+    """_span_label's sibling for datetimes already read from the DB (the
+    complete/reopen endpoint has the stored row, not the client's ISO strings).
+    strftime works directly on the aware datetimes; None end drops to 'from'."""
+    def fmt(v):
+        return v.strftime("%Y-%m-%d %H:%M") if v else None
+    return f"{fmt(starts_at)}–{fmt(ends_at)}" if ends_at else f"from {fmt(starts_at)}"
+
+
 def _sync_pending(cur, ticket_id: int):
     """Recompute desk.tickets.pending_until as MIN future scheduled start (NULL
     if none) and persist it with a VERSION-FREE update (this is a derived value,
@@ -361,17 +370,22 @@ def _sync_pending(cur, ticket_id: int):
     tickets `touch` trigger still bumps version on every UPDATE; we RETURN the
     new version so the UI can refresh its optimistic-lock token and a later
     property edit doesn't 409 on a stale version."""
+    # A COMPLETED block (0035) no longer drives auto-resume — a done task should
+    # not reopen the ticket at its start — so the MIN excludes completed rows.
     cur.execute("""SELECT min(starts_at) FROM desk.ticket_schedules
-                    WHERE ticket_id = %s AND starts_at > now()""", (ticket_id,))
+                    WHERE ticket_id = %s AND starts_at > now()
+                      AND completed_at IS NULL""", (ticket_id,))
     (pending,) = cur.fetchone()
     cur.execute("UPDATE desk.tickets SET pending_until = %s WHERE id = %s "
                 "RETURNING version", (pending, ticket_id))   # no version predicate — derived
     (version,) = cur.fetchone()
-    cur.execute("""SELECT id, agent_id, starts_at, ends_at, note
+    cur.execute("""SELECT id, agent_id, starts_at, ends_at, note,
+                          completed_at, completed_by
                      FROM desk.ticket_schedules
                     WHERE ticket_id = %s ORDER BY starts_at""", (ticket_id,))
     schedules = [{"id": str(r[0]), "agentId": str(r[1]),
-                  "startsAt": _ms(r[2]), "endsAt": _ms(r[3]), "note": r[4]}
+                  "startsAt": _ms(r[2]), "endsAt": _ms(r[3]), "note": r[4],
+                  "completedAt": _ms(r[5]), "completedBy": r[6]}
                  for r in cur.fetchall()]
     return schedules, _ms(pending), version
 
@@ -442,6 +456,63 @@ def remove_schedule(ticket_id: int, schedule_id: int, request: Request):
         if gone is not None:
             auth.audit(conn, "desk", "Schedule removed", f"ticket:{ticket_id}",
                        f"#{ticket_id} · schedule {schedule_id} removed")
+        return {"ok": True, "schedules": schedules, "pending_until": pending, "version": version}
+
+
+class ScheduleDone(BaseModel):
+    done: bool = True                  # true = mark complete, false = reopen
+
+
+@router.post("/tickets/{ticket_id}/schedules/{schedule_id}/complete")
+def complete_schedule(ticket_id: int, schedule_id: int, body: ScheduleDone, request: Request):
+    """Mark one schedule block complete (or reopen it), then re-derive
+    pending_until (a completed block no longer drives auto-resume — see
+    _sync_pending / 0035). WHO + WHEN are recorded three ways: the row stamps
+    completed_by/completed_at, a sys article narrates it on the ticket thread,
+    and auth.audit writes an audit.events row (actor + timestamp captured via
+    app.actor). PERMISSION: the block's OWN tech may check their task off;
+    anyone else needs 'assign' (the same gate add/remove use). Idempotent — a
+    no-op toggle (already in the requested state) returns ok with the current
+    list and writes no audit/article, so the optimistic UI reconciles cleanly."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        with conn.cursor() as cur:
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            cur.execute("""SELECT s.agent_id, a.name, s.starts_at, s.ends_at
+                             FROM desk.ticket_schedules s
+                             JOIN shared.agents a ON a.id = s.agent_id
+                            WHERE s.id = %s AND s.ticket_id = %s""",
+                        (schedule_id, ticket_id))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "Schedule block not found")
+            sched_agent, agent_name, starts_at, ends_at = str(row[0]), row[1], row[2], row[3]
+            # a block's own tech can check it off; otherwise it takes 'assign'
+            if not (who["kind"] == "pat"
+                    or ("assign" in who.get("perms", set()))
+                    or str(who.get("agent_id")) == sched_agent):
+                raise HTTPException(403, "Marking another tech's schedule needs the assign permission")
+            actor = who.get("name") or who.get("label") or "API"
+            if body.done:
+                cur.execute("""UPDATE desk.ticket_schedules SET completed_at = now(), completed_by = %s
+                                WHERE id = %s AND ticket_id = %s AND completed_at IS NULL""",
+                            (actor, schedule_id, ticket_id))
+            else:
+                cur.execute("""UPDATE desk.ticket_schedules SET completed_at = NULL, completed_by = NULL
+                                WHERE id = %s AND ticket_id = %s AND completed_at IS NOT NULL""",
+                            (schedule_id, ticket_id))
+            changed = cur.rowcount > 0
+            schedules, pending, version = _sync_pending(cur, ticket_id)
+            label = ""
+            if changed:
+                verb = "completed" if body.done else "reopened"
+                label = f"Schedule for {agent_name} {_span_label_dt(starts_at, ends_at)} {verb}"
+                cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
+                               VALUES (%s, 'sys', %s, %s, %s)""",
+                            (ticket_id, actor, who.get("agent_id"), label))
+        if changed:
+            auth.audit(conn, "desk", "Schedule " + ("completed" if body.done else "reopened"),
+                       f"ticket:{ticket_id}", f"#{ticket_id} · " + label)
         return {"ok": True, "schedules": schedules, "pending_until": pending, "version": version}
 
 

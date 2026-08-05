@@ -212,12 +212,19 @@ function renderSchedules(t){
       ${list.length? list.map(s=>{
         const nm = agent(s.agentId)?.name || '?';
         const a = schedMs(s.startsAt), b = schedMs(s.endsAt);
-        return `<div class="prop sched-row">
+        const done = s.completedAt!=null;
+        /* a block's own tech can check it off; anyone else needs 'assign' */
+        const canToggle = can('assign') || String(s.agentId)===String(state.meId);
+        return `<div class="prop sched-row${done?' sched-done':''}">
           <div style="display:flex;gap:8px;align-items:flex-start">
+            ${canToggle?`<input type="checkbox" class="sched-chk" ${done?'checked':''}
+                onclick="toggleScheduleDone(${t.id},'${jsq(s.id)}',this.checked)"
+                title="${done?('Completed'+(s.completedBy?' by '+esc(s.completedBy):'')+' — click to reopen'):'Mark this schedule complete'}">`:''}
             <div style="flex:1;min-width:0">
-              <div class="pv" style="font-weight:600">${esc(nm)}</div>
-              <div class="mini">${fmtDT(a)}${b?' – '+fmtDT(b):''}</div>
+              <div class="pv sched-nm" style="font-weight:600">${esc(nm)}</div>
+              <div class="mini sched-when">${fmtDT(a)}${b?' – '+fmtDT(b):''}</div>
               ${s.note?`<div class="mini muted" style="margin-top:2px;white-space:pre-wrap">${esc(s.note)}</div>`:''}
+              ${done&&s.completedBy?`<div class="mini muted" style="margin-top:2px">✓ ${esc(s.completedBy)}${s.completedAt?' · '+fmtDT(schedMs(s.completedAt)):''}</div>`:''}
             </div>
             ${asg?`<button class="rowbtn" style="padding:0 6px" onclick="removeSchedule(${t.id},'${jsq(s.id)}')" title="Remove this schedule">✕</button>`:''}
           </div></div>`;
@@ -289,6 +296,27 @@ function removeSchedule(tid, schedId){
   render();
   if(String(schedId).startsWith('sched-tmp-')) return;   /* never mirrored — nothing to DELETE */
   $fetch('/api/tickets/'+tid+'/schedules/'+encodeURIComponent(schedId),{method:'DELETE'})
+    .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      reconcileSched(t, d); });
+}
+/* mark a schedule block complete / reopen — strikes it through everywhere it
+   shows (this Schedules bar + the Schedule calendar). The block's own tech can
+   check it off; anyone else needs 'assign'. Optimistic like add/remove: stamp
+   locally + render, POST, reconcile from the authoritative payload; a temp
+   (un-mirrored) row toggles locally only (nothing on the server yet). */
+function toggleScheduleDone(tid, schedId, done){
+  const t = tk(tid); if(!t) return;
+  const s = (t.schedules||[]).find(x=>String(x.id)===String(schedId)); if(!s) return;
+  if(!(can('assign') || String(s.agentId)===String(state.meId))) return;
+  s.completedAt = done ? nowMs() : null;
+  s.completedBy = done ? (me()?.name || state.user.name) : null;
+  const nm = agent(s.agentId)?.name || s.agentId;
+  t.articles.push(art('sys', me(), nowMs(), `Schedule for ${nm} ${done?'completed':'reopened'}`));
+  log(`Schedule ${done?'completed':'reopened'}`, `#${t.id} · ${nm}`);
+  render();
+  if(String(schedId).startsWith('sched-tmp-')) return;   /* not yet mirrored — local only */
+  $fetch('/api/tickets/'+tid+'/schedules/'+encodeURIComponent(schedId)+'/complete',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({done:!!done})})
     .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
       reconcileSched(t, d); });
 }

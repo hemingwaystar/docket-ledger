@@ -444,3 +444,11 @@ input.ro:focus{border-color:var(--line);box-shadow:none}
 .sch-chip-t{font-variant-numeric:tabular-nums;font-weight:600}
 .sch-more{font-size:10px;color:var(--ink-3);padding-left:3px}
 @media(max-width:760px){.sch-title{width:100%;order:5}}
+/* completed schedule blocks (0035): struck through + dimmed, calendar-wide */
+.sch-ev.sch-done{opacity:.62}
+.sch-ev.sch-done .sch-ev-nm,.sch-ev.sch-done .sch-ev-ti{text-decoration:line-through}
+.sch-chip.sch-done{opacity:.62;text-decoration:line-through}
+
+/* completed schedule in the ticket case-file Schedules bar (props.js) */
+.sched-chk{width:15px;height:15px;accent-color:var(--brand);cursor:pointer;flex:0 0 auto;margin-top:3px}
+.sched-row.sched-done .sched-nm,.sched-row.sched-done .sched-when{text-decoration:line-through;color:var(--ink-3)}

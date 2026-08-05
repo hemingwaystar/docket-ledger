@@ -69,6 +69,7 @@ function schedEvents(){
       if(techSel.length && !techSel.includes(String(b.agentId))) return;
       out.push({ id:b.id, ticketId:t.id, agentId:b.agentId, start, end,
                  open:!(schedMs(b.endsAt)>start), note:b.note||'',
+                 completed:b.completedAt!=null, completedBy:b.completedBy||null,
                  title:(TITLES[t.id]||firstLine(t)||''), clientId:t.clientId });
     });
   });
@@ -144,8 +145,8 @@ function schedColBody(dayStart, evts, win){
     const w = 100/sg._cols, left = sg._col*w;
     const nm = agent(sg.agentId)?.name || 'Unassigned tech';
     const rng = msTime(sg.start) + (sg.open ? '' : '–'+msTime(sg.end));
-    const tip = `${nm} · #${sg.ticketId} ${sg.title}\n${rng}${sg.note? '\n'+sg.note : ''}`;
-    return `<div class="sch-ev" style="top:${top}px;height:${hgt}px;left:calc(${left}% + 1px);width:calc(${w}% - 3px);${schedEvStyle(sg.agentId)}"
+    const tip = `${nm} · #${sg.ticketId} ${sg.title}\n${rng}${sg.completed?'\n✓ Completed'+(sg.completedBy?' by '+sg.completedBy:''):''}${sg.note? '\n'+sg.note : ''}`;
+    return `<div class="sch-ev${sg.completed?' sch-done':''}" style="top:${top}px;height:${hgt}px;left:calc(${left}% + 1px);width:calc(${w}% - 3px);${schedEvStyle(sg.agentId)}"
         onclick="openTicket(${sg.ticketId})" title="${esc(tip)}">
       <div class="sch-ev-nm">${esc(nm)}</div>
       <div class="sch-ev-mt">${esc(rng)} · #${sg.ticketId}</div>
@@ -214,8 +215,8 @@ function schedMonthGrid(evts){
     const shown = day.slice(0,3);
     const chips = shown.map(e=>{
       const nm = (agent(e.agentId)?.name||'?').split(' ')[0];
-      return `<div class="sch-chip" style="${schedEvStyle(e.agentId)}" onclick="openTicket(${e.ticketId})"
-          title="${esc((agent(e.agentId)?.name||'?')+' · #'+e.ticketId+' '+e.title)}">
+      return `<div class="sch-chip${e.completed?' sch-done':''}" style="${schedEvStyle(e.agentId)}" onclick="openTicket(${e.ticketId})"
+          title="${esc((agent(e.agentId)?.name||'?')+' · #'+e.ticketId+' '+e.title+(e.completed?' · ✓ Completed'+(e.completedBy?' by '+e.completedBy:''):''))}">
         <span class="sch-chip-t">${msTime(e.start)}</span> ${esc(nm)}</div>`;
     }).join('');
     const more = day.length>shown.length ? `<div class="sch-more">+${day.length-shown.length} more</div>` : '';
