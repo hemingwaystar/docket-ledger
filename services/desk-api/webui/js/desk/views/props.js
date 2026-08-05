@@ -644,7 +644,7 @@ function renderProps(t){
         ${can('assign')&&!lk
           ? multiCombo('asg-'+t.id, AGENTS.filter(a=>!isArch(a)||(t.assigneeIds||[]).includes(a.id)).map(a=>({v:a.id,label:a.name,sub:a.email,archived:isArch(a)})), t.assigneeIds||[], 'setAssignees', 'Assign techs…')
           : `<div class="v mini">${(t.assigneeIds||[]).map(id=>esc(agent(id)?.name||'?')).join(', ')||'—'}</div>`}
-        <div class="mini muted" style="margin-top:4px">Extra techs beyond the owner — each also sees this ticket and it counts in their “Mine” / Assigned to me.</div></div>
+      </div>
       <div class="prop"><div class="pk">Group</div>
         <select onchange="setProp(${t.id},'groupId',this.value)" ${dis('assign')}>
           ${GROUPS.filter(g=>!isArch(g)||t.groupId===g.id).map(g=>`<option value="${g.id}" ${t.groupId===g.id?'selected':''}>${esc(g.name)}${isArch(g)?' (archived)':''}</option>`).join('')}</select></div>
