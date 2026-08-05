@@ -1031,6 +1031,16 @@ function sendArticle(tid){
     t.time.push(logged);
   }
   t.articles.push(a);
+  /* audit the ADDITION as its own ticket event (build 24) — mirrors the server;
+     the note/reply body is the article above, this is the compact who/what line
+     that shows in the Audit block (the thread already shows the content). Match
+     the server's sent-vs-recorded wording using the client's known outbound
+     state (MAILCFG.outboundEnabled + a connected outbound mailbox for this
+     ticket) so recorded-only replies — the default — don't briefly read "sent". */
+  const _om = outboundFor(t);
+  const _willSend = MAILCFG.outboundEnabled && !!_om && _om.outbound && _om.status==='connected';
+  const replyLbl = _willSend ? ('Public reply sent to '+to) : ('Public reply recorded (to '+to+')');
+  t.articles.push(art('sys', me(), nowMs(), cm.kind==='reply' ? replyLbl : 'Internal note added'));
   if(logged) bridgeSend('time-logged', { eid:logged.eid, ticket:t.id, title:TITLES[t.id]||firstLine(t), clientId:t.clientId, techId:logged.techId, typeId:logged.typeId, h:logged.h, startedAt:logged.startedAt, endedAt:logged.endedAt, note:body.slice(0,140), task: taskPayload(t, logged.taskId) });
   if(cm.kind==='reply'){ t.slaFrMet = true; }
   if(t.st==='new' && cm.kind==='reply'){

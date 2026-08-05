@@ -680,8 +680,8 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
             #     capped for the block) and _touches the ticket so it shows in the
             #     ticket's Audit block AND re-sorts the board as 'updated'. The
             #     version bump is returned so the client refreshes its lock token.
-            note_lbl = (f"Internal note edited — before “{_cap_body(old_body, 300)}” "
-                        f"→ after “{_cap_body(body.body, 300)}”")
+            note_lbl = (f"Internal note edited — before “{_cap_body(old_body, 160)}” "
+                        f"→ after “{_cap_body(body.body, 160)}”")
             if added:
                 note_lbl += " · +attachments: " + ", ".join(added)
             _sys(cur, ticket_id, who, note_lbl)

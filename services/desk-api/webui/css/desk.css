@@ -276,6 +276,11 @@ select:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:1000px){.tk-layout,.tk-layout.has-sched{grid-template-columns:1fr}}
 .audit .prop{padding:9px 16px}
 .audit-scroll{max-height:340px;overflow:auto}
+/* long unbroken strings (e.g. a note body echoed in an edit event) must wrap,
+   not overflow — and min-width:0 lets an auto-fit grid cell shrink to its track
+   instead of being forced wide (which overlapped neighbouring cells) */
+.audit-row{min-width:0}
+.audit-row .mini{overflow-wrap:anywhere;word-break:break-word}
 /* ticket case-file block stack (build 21): the case file is a full-width
    vertical stack of blocks (Properties, Conversation, Schedule, Audit) that
    each tech reorders to taste (moveTicketBlock, per-user pref). Each block is
@@ -315,7 +320,7 @@ select:disabled{opacity:.55;cursor:not-allowed}
 .art-kind.note{color:var(--warn)}
 .art-kind.mail{color:var(--open)}
 .art-ts{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);white-space:nowrap}
-.art-body{margin-top:6px;font-size:13px;color:var(--ink-2);line-height:1.6;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--line-2);border-radius:9px;padding:11px 13px}
+.art-body{margin-top:6px;font-size:13px;color:var(--ink-2);line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;background:var(--surface-2);border:1px solid var(--line-2);border-radius:9px;padding:11px 13px}
 .art.note .art-body{background:var(--warn-wash);border-color:#ecdcb6;color:#5d430e}
 .art.reply .art-body{background:var(--surface);border-color:var(--line)}
 .art-time{margin-top:7px}

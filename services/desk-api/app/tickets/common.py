@@ -39,6 +39,18 @@ def sys_note(cur, ticket_id: int, body: str):
                    VALUES (%s, 'sys', 'Automation', %s)""", (ticket_id, body))
 
 
+def sys_article(cur, ticket_id: int, who: dict, body: str):
+    """A ticket 'sys' article authored by the ACTING user (author_id NULL for
+    PATs) — the ticket-Audit-block sibling of auth.audit's audit.events line, so
+    every action lands in BOTH the ticket audit and the system Audit Log with the
+    actor attributed. (sys_note above is its automation-authored cousin; write.py
+    has a private twin used by the property/schedule endpoints.)"""
+    cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
+                   VALUES (%s, 'sys', %s, %s, %s)""",
+                (ticket_id, who.get("name") or who.get("label") or "API",
+                 who.get("agent_id"), body))
+
+
 def live_parent_of(cur, ticket_id: int):
     """The parent id if this ticket is a live child, else None."""
     cur.execute("""SELECT src_id FROM desk.ticket_links
