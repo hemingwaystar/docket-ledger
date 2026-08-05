@@ -388,12 +388,14 @@ function setProp(tid,k,v,noCascade){
     t.articles.push(art('sys', me(), nowMs(), 'State set to '+st8(v).label.toLowerCase())); t.st=v;
     log('State changed',`#${t.id} · ${from} → ${st8(v).label}`); }
   if(k==='prio'){ if(!can('edit_props')) return; const from=prio(t.prio)?.label||t.prio; t.prio=Number(v);
-    log('Priority changed',`#${t.id} · ${from} → ${prio(t.prio).label}`); }
+    log('Priority changed',`#${t.id} · ${from} → ${prio(t.prio).label}`);
+    t.articles.push(art('sys', me(), nowMs(), 'Priority set to '+prio(t.prio).label)); }
   if(k==='ownerId'){ if(!can('assign')) return; const from=t.ownerId?agent(t.ownerId).name:'unassigned'; t.ownerId=v||null;
     log('Owner changed',`#${t.id} · ${from} → ${v?agent(v).name:'unassigned'}`);
     t.articles.push(art('sys', me(), nowMs(), v?('Assigned to '+agent(v).name):'Owner cleared')); }
   if(k==='groupId'){ if(!can('assign')) return; const from=grp(t.groupId)?.name||t.groupId; t.groupId=v;
-    log('Group changed',`#${t.id} · ${from} → ${grp(v).name}`); }
+    log('Group changed',`#${t.id} · ${from} → ${grp(v).name}`);
+    t.articles.push(art('sys', me(), nowMs(), 'Group set to '+grp(v).name)); }
   t.updatedAt=nowMs(); render();
   let payload=null;
   if(t.st!==was.st)           payload={state:(st8(t.st)||{label:t.st}).label};
@@ -458,16 +460,21 @@ function setAssignees(sel, fkey){
   const names = t.assigneeIds.map(id=>agent(id)?.name||id).join(', ');
   log('Assignees changed', `#${t.id} · ${names||'none'}`);
   t.articles.push(art('sys', me(), nowMs(), names? 'Assignees: '+names : 'Assignees cleared'));
+  t.updatedAt = nowMs();                       /* build 22: an assignee change marks the ticket updated */
   render();
   $fetch('/api/tickets/'+t.id+'/assignees',{method:'PUT',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({assignees:t.assigneeIds.slice()})})
     .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
+      /* the endpoint now _touches the ticket — sync the fresh version + updated
+         time (no rehydrate here) so a following property edit can't 409 */
+      if(d && d.version) t.version = d.version;
+      if(d && typeof d.updatedAt==='number') t.updatedAt = d.updatedAt;
       /* reconcile against the authoritative applied set — the server skips any
          inactive/unknown id, so a stale selection can leave us ahead of it */
       if(d && Array.isArray(d.assignees) &&
          !(d.assignees.length===t.assigneeIds.length && d.assignees.every(id=>t.assigneeIds.includes(id)))){
-        t.assigneeIds = d.assignees; render();
-      } });
+        t.assigneeIds = d.assignees; }
+      render(); });
 }
 
 /* ---------------- client move & primary contact ---------------- */

@@ -73,7 +73,7 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
             sets, args, notes = [], [], []
             old_kind = new_kind = None
             if body.title is not None:
-                sets.append("title = %s"); args.append(body.title); notes.append("title")
+                sets.append("title = %s"); args.append(body.title); notes.append(f"title → {body.title}")
             if body.state is not None:
                 cur.execute("""SELECT id, kind, is_system FROM desk.ticket_states
                                 WHERE lower(label) = lower(%s) AND active""", (body.state,))
@@ -120,7 +120,7 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                 return {"ok": True, "changed": []}
             args += [ticket_id, body.version]
             cur.execute(f"UPDATE desk.tickets SET {', '.join(sets)} "
-                        "WHERE id = %s AND version = %s RETURNING version", args)
+                        "WHERE id = %s AND version = %s RETURNING version, updated_at", args)
             updated = cur.fetchone()
             if updated is None:
                 raise HTTPException(409, "Version conflict — re-read the ticket and retry")
@@ -157,9 +157,16 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                 emit_event(cur, "priority", ticket_id)
             if body.owner_email:                     # "" clears — no owner event
                 emit_event(cur, "owner", ticket_id)
+            # ticket-audit sibling (build 22): the same change auth.audit records
+            # to the system Audit Log now also lands on the ticket's Audit block,
+            # so a property change is visible in BOTH places (previously only the
+            # system log got it — the sys article was frontend-optimistic only and
+            # vanished on the next hydrate).
+            _sys(cur, ticket_id, who, "Ticket updated — " + " · ".join(notes))
         auth.audit(conn, "desk", "Ticket updated", f"ticket:{ticket_id}",
                    f"#{ticket_id} · " + " · ".join(notes))
-        return {"ok": True, "changed": notes, "version": updated[0]}
+        return {"ok": True, "changed": notes, "version": updated[0],
+                "updatedAt": _ms(updated[1])}
 
 
 class Reclient(BaseModel):
@@ -248,10 +255,22 @@ def tags(ticket_id: int, body: Tags, request: Request):
             for t in body.remove:
                 cur.execute("DELETE FROM desk.ticket_tags WHERE ticket_id = %s AND tag = %s",
                             (ticket_id, t))
+            version = updated_ms = None
+            if body.add or body.remove:
+                # ticket-audit sibling + 'updated' bump (build 22): a tag change
+                # now shows on the ticket's Audit block and re-sorts the board,
+                # not just the system Audit Log. Version returned so the client
+                # refreshes its lock token.
+                norm = lambda xs: [x.lower().strip().replace(" ", "-") for x in xs]
+                parts = []
+                if body.add:    parts.append("added " + ", ".join(norm(body.add)))
+                if body.remove: parts.append("removed " + ", ".join(norm(body.remove)))
+                _sys(cur, ticket_id, who, "Tags " + " · ".join(parts))
+                version, updated_ms = _touch(cur, ticket_id)
         if body.add or body.remove:
             auth.audit(conn, "desk", "Tags updated", f"ticket:{ticket_id}",
                        f"#{ticket_id} +[{', '.join(body.add)}] -[{', '.join(body.remove)}]")
-        return {"ok": True}
+        return {"ok": True, "version": version, "updatedAt": updated_ms}
 
 
 class Assignees(BaseModel):
@@ -267,10 +286,11 @@ def set_assignees(ticket_id: int, body: Assignees, request: Request):
     rows that fell out of the new set, INSERT ... ON CONFLICT DO NOTHING the
     survivors, one transaction.
 
-    This endpoint deliberately does NOT read or bump desk.tickets.version and
-    never touches the tickets row (assignees are in the side table), so it
-    cannot raise the optimistic-lock 409 that patch_ticket/reclient can. The
-    sys article that narrates the change is likewise version-independent."""
+    The membership write carries NO version predicate, so it never raises the
+    optimistic-lock 409 that patch_ticket/reclient can. It DOES (build 22) then
+    _touch the tickets row so the change marks the ticket 'updated' — that bump
+    is unconditional (no predicate) and its new version is returned so the client
+    refreshes its lock token (build 14b/16 F1)."""
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, 'assign')
@@ -313,13 +333,15 @@ def set_assignees(ticket_id: int, body: Assignees, request: Request):
             # same way an owner change is narrated on the ticket. Independent of
             # any version lock; author_id NULL for PAT callers (mirrors reclient).
             label = ("Assignees: " + ", ".join(names)) if names else "Assignees cleared"
-            cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
-                           VALUES (%s, 'sys', %s, %s, %s)""",
-                        (ticket_id, who.get("name") or who.get("label") or "API",
-                         who.get("agent_id"), label))
+            _sys(cur, ticket_id, who, label)
+            # mark the ticket 'updated' (build 22): an assignee change now bumps
+            # updated_at/version like any other change. The bump is returned so
+            # the client refreshes its optimistic-lock token (the side-table write
+            # itself still carries no version predicate — no 409 here).
+            version, updated_ms = _touch(cur, ticket_id)
         auth.audit(conn, "desk", "Assignees updated", f"ticket:{ticket_id}",
                    f"#{ticket_id} · " + label)
-        return {"ok": True, "assignees": wanted}
+        return {"ok": True, "assignees": wanted, "version": version, "updatedAt": updated_ms}
 
 
 # --- Schedules (0033) -------------------------------------------------------
@@ -336,6 +358,31 @@ def _ms(dt):
     """epoch ms | None — the same unit every ticket timestamp uses in bootstrap,
     so the UI reuses fmtDT/dtLocalVal/checkPendingWakes without translation."""
     return int(dt.timestamp() * 1000) if dt else None
+
+
+def _touch(cur, ticket_id: int):
+    """Bump desk.tickets.updated_at (and, via the 0001 touch trigger, version) so
+    ANY change marks the ticket 'updated' and re-sorts the board. Returns the new
+    (version, updated_at ms) so a SIDE-table endpoint (assignees/tags/note-edit)
+    can hand them back — a version bump the client never sees would 409 its next
+    property edit (build 14b / build 16 F1). Endpoints that already UPDATE
+    desk.tickets in the same txn (patch_ticket, reclient, schedules) inherit the
+    same bump directly and don't need this."""
+    cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s "
+                "RETURNING version, updated_at", (ticket_id,))
+    v, u = cur.fetchone()
+    return v, _ms(u)
+
+
+def _sys(cur, ticket_id: int, who: dict, body: str):
+    """A ticket 'sys' article authored by the acting user (author_id NULL for
+    PATs) — the ticket-audit-log sibling of auth.audit's audit.events line. Every
+    mutating endpoint writes BOTH so the ticket's Audit block and the system
+    Audit Log stay in lockstep (build 22)."""
+    cur.execute("""INSERT INTO desk.articles (ticket_id, kind, author, author_id, body)
+                   VALUES (%s, 'sys', %s, %s, %s)""",
+                (ticket_id, who.get("name") or who.get("label") or "API",
+                 who.get("agent_id"), body))
 
 
 def _span_label(starts_at: str, ends_at: str | None) -> str:
@@ -521,11 +568,11 @@ def complete_schedule(ticket_id: int, schedule_id: int, body: ScheduleDone, requ
 # with hard server-authoritative guards and a full before→after audit line.
 # Notes are the ONLY editable article kind — 0001's guard_article_immutability
 # freezes reply/mail_in/sys bodies at the DB; this endpoint layers the business
-# rules on top. It updates desk.articles ONLY (never desk.tickets), so — unlike
-# patch_ticket/reclient — it neither reads nor bumps ticket.version and cannot
-# raise the optimistic-lock 409 (and deliberately does NOT UPDATE the tickets
-# row: doing so would bump version via the touch trigger and re-strand the
-# frontend's optimistic-lock token, the build-14b staleness bug).
+# rules on top. The body/attachment write carries NO version predicate, so the
+# edit itself never 409s. Build 22 then writes a ticket sys article and _touches
+# the tickets row (updated_at + version) so the edit shows in the ticket's Audit
+# block and marks the ticket 'updated' — the version bump is RETURNED so the
+# client refreshes its lock token and the build-14b staleness bug is avoided.
 
 def _cap_body(s: str, cap: int = 4000) -> str:
     """Bound a note body for the audit detail so a pathological paste can't mint
@@ -627,14 +674,28 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
                             ORDER BY created_at""", (article_id,))
             atts = [{"id": str(r[0]), "filename": r[1], "byteSize": r[2],
                      "mimeType": r[3]} for r in cur.fetchall()]
-        # 6) ONE audit line: before → after (each capped) + added files + actor.
+            # 6a) ticket-audit sibling + 'updated' bump (build 22). Previously a
+            #     note edit hit ONLY the system Audit Log and deliberately left the
+            #     ticket untouched; now it also writes a sys article (before→after,
+            #     capped for the block) and _touches the ticket so it shows in the
+            #     ticket's Audit block AND re-sorts the board as 'updated'. The
+            #     version bump is returned so the client refreshes its lock token.
+            note_lbl = (f"Internal note edited — before “{_cap_body(old_body, 300)}” "
+                        f"→ after “{_cap_body(body.body, 300)}”")
+            if added:
+                note_lbl += " · +attachments: " + ", ".join(added)
+            _sys(cur, ticket_id, who, note_lbl)
+            version, updated_ms = _touch(cur, ticket_id)
+        # 6b) ONE system-log line: before → after (each capped) + added files + actor.
         detail = (f"#{ticket_id} · note {article_id} edited by {actor} · "
                   f"before “{_cap_body(old_body)}” "
                   f"→ after “{_cap_body(body.body)}”")
         if added:
             detail += " · +attachments: " + ", ".join(added)
         auth.audit(conn, "desk", "Note edited", f"ticket:{ticket_id}", detail)
-        # 7) reconciled article — no ticket.version in play (see header).
-        return {"ok": True, "article": {
+        # 7) reconciled article + the ticket's bumped version/updated_at so the
+        #    client syncs its lock token and the "Updated" column without a full
+        #    rehydrate.
+        return {"ok": True, "version": version, "updatedAt": updated_ms, "article": {
             "id": str(article_id), "body": body.body,
             "editedAt": _ms(edited_at), "editedBy": actor, "attachments": atts}}

@@ -634,9 +634,15 @@ function editNote(tid, aid){
   if(staged.length) a.atts = (a.atts||[]).concat(staged);
   a.editedAt = nowMs(); a.editedBy = state.user.name;
   state.editNote = null; state.editAtts = [];
-  /* an in-place note edit touches desk.articles only — the server never bumps
-     desk.tickets.updated_at, so neither the "Updated" column nor the board sort
-     should move for it (don't fabricate t.updatedAt here) */
+  /* build 22: a note edit is now a first-class ticket event — it lands on the
+     ticket's Audit block (sys article, before→after) AND marks the ticket
+     'updated' (the server _touches it; the reconcile below syncs the fresh
+     version + updated_at so the next property edit can't 409). */
+  const clip = s => { s=String(s||''); return s.length>120 ? s.slice(0,120)+'…' : s; };
+  t.articles.push(art('sys', me(), nowMs(),
+    `Internal note edited — before “${clip(before)}” → after “${clip(body)}”`
+    + (staged.length?` · +${staged.length} attachment${staged.length===1?'':'s'}`:'')));
+  t.updatedAt = nowMs();
   log('Note edited', `#${t.id}${staged.length?` · +${staged.length} attachment${staged.length===1?'':'s'}`:''}`);
   toast(`Note updated${staged.length?` · ${staged.length} attachment${staged.length===1?'':'s'} added`:''} — audited; the thread shows “(edited).”`);
   render();
@@ -650,6 +656,11 @@ function editNote(tid, aid){
       headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   }).then(async r=>{ const d=await r.json().catch(()=>0);
     if(!r.ok) return oops(d);
+    /* the note edit now bumps the ticket's version + updated_at server-side —
+       sync both (there is no rehydrate here) so a following property edit can't
+       409 and the board shows the fresh "Updated" time */
+    if(d && d.version) t.version = d.version;
+    if(d && typeof d.updatedAt==='number') t.updatedAt = d.updatedAt;
     const ra = d && d.article;                 /* the reconciled article the server returns */
     if(ra){
       if(typeof ra.body==='string') a.body = ra.body;
@@ -806,29 +817,40 @@ function rmAtt(i){
 }
 
 /* ---- tags ---- */
+/* build 22: a tag change is a first-class ticket event — optimistic sys article
+   on the ticket Audit block + 'updated' bump; the endpoint _touches the ticket
+   and returns the fresh version/updated time, synced here (no rehydrate) so a
+   following property edit can't 409. */
+function tagSynced(t){ return async r=>{ const d=await r.json().catch(()=>0);
+  if(!r.ok) return oops(d);
+  if(d && d.version) t.version=d.version;
+  if(d && typeof d.updatedAt==='number'){ t.updatedAt=d.updatedAt; render(); } }; }
 function addTag(tid){
   if(!can('edit_props')||projLocked(tk(tid))) return;
   const t=tk(tid); const v=prompt('Tag'); if(!v) return;
   const before=t.tags.slice();
   t.tags.push(v.toLowerCase().replace(/\s+/g,'-'));
-  log('Tag added',`#${t.id} · ${v}`); render();
   const add=t.tags.filter(x=>!before.includes(x));
-  if(!add.length) return;                        /* duplicate — nothing new to mirror */
+  if(!add.length){ render(); return; }           /* duplicate — nothing new to mirror */
+  t.articles.push(art('sys', me(), nowMs(), 'Tags added: '+add.join(', ')));
+  t.updatedAt=nowMs();
+  log('Tag added',`#${t.id} · ${v}`); render();
   $fetch('/api/tickets/'+tid+'/tags',{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({add,remove:[]})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    body:JSON.stringify({add,remove:[]})}).then(tagSynced(t));
 }
 function rmTag(tid,i){
   if(!can('edit_props')||projLocked(tk(tid))) return;
-  const t=tk(tid); const before=t.tags.slice();
-  log('Tag removed',`#${t.id} · ${t.tags[i]}`); t.tags.splice(i,1); render();
+  const t=tk(tid); const before=t.tags.slice(); const gone=t.tags[i];
+  t.tags.splice(i,1);
   const rem=before.filter(x=>!t.tags.includes(x));
-  if(!rem.length) return;                        /* a twin remains — nothing to mirror */
+  if(!rem.length){ render(); return; }           /* a twin remains — nothing to mirror */
+  t.articles.push(art('sys', me(), nowMs(), 'Tags removed: '+rem.join(', ')));
+  t.updatedAt=nowMs();
+  log('Tag removed',`#${t.id} · ${gone}`); render();
   $fetch('/api/tickets/'+tid+'/tags',{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({add:[],remove:rem})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    body:JSON.stringify({add:[],remove:rem})}).then(tagSynced(t));
 }
 
 
