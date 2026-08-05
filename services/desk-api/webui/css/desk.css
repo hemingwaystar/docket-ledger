@@ -392,3 +392,55 @@ input.ro:focus{border-color:var(--line);box-shadow:none}
 .field.inline-sm{margin-bottom:0}
 .field.inline-sm label{margin-bottom:4px;white-space:nowrap}
 .field.inline-sm input,.field.inline-sm select{width:auto}
+
+/* ============================ Schedule tab (calendar of tech schedule blocks) ============================
+   The Day/Week grids are a fixed-height time axis (.sch-axis) beside one or
+   seven day columns (.sch-col); blocks (.sch-ev) are absolutely positioned by
+   the view (top/height in px, left/width in %). The .sch-col hour-line gradient
+   is pinned to HP=44px in schedule.js — change one, change both. Month is a
+   plain CSS grid of day cells (.sch-mcell) with compact event chips. */
+.sch-nav{display:inline-flex;gap:4px}
+.sch-nav .rowbtn{padding:3px 10px;font-size:14px;line-height:1}
+.sch-title{font-weight:600;font-size:14.5px;color:var(--ink);min-width:150px}
+.sch-count{font-family:"IBM Plex Mono",monospace;font-size:11px;background:var(--brand-wash);color:var(--brand-ink);padding:2px 9px;border-radius:20px;white-space:nowrap}
+.sch-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-bottom:12px}
+.sch-leg{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2)}
+.sch-dot{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+
+/* day/week time grid */
+.sch-grid{display:flex;gap:0;min-width:640px}
+.sch-axis{flex:0 0 56px;position:relative;padding-top:34px}   /* 34px offsets the day header */
+.sch-hr{position:relative;border-top:1px solid transparent}
+.sch-hr span{position:absolute;top:-7px;right:8px;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.sch-cols{display:flex;flex:1;min-width:0}
+.sch-daycol{flex:1 1 0;min-width:0;border-left:1px solid var(--line)}
+.sch-daycol:last-child{border-right:1px solid var(--line)}
+.sch-dayhead{height:34px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+.sch-dayhead .sch-dow{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
+.sch-dayhead .sch-dnum{font-size:13px;font-weight:600;line-height:1.1}
+.sch-dayhead.is-today{background:var(--brand-wash)}
+.sch-dayhead.is-today .sch-dnum{color:var(--brand-ink)}
+.sch-col{position:relative;background:repeating-linear-gradient(to bottom,transparent 0,transparent 43px,var(--line-2) 43px,var(--line-2) 44px)}
+.sch-ev{position:absolute;border-radius:5px;padding:2px 5px;overflow:hidden;cursor:pointer;font-size:11px;line-height:1.25;box-shadow:0 1px 2px rgba(21,32,41,.10);transition:transform .08s,box-shadow .08s}
+.sch-ev:hover{box-shadow:0 3px 8px rgba(21,32,41,.18);z-index:5}
+.sch-ev-nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sch-ev-mt{font-size:10px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sch-ev-ti{font-size:10px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sch-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--void);z-index:4}
+.sch-now::before{content:"";position:absolute;left:-1px;top:-4px;width:7px;height:7px;border-radius:50%;background:var(--void)}
+
+/* month grid */
+.sch-month{min-width:640px}
+.sch-mdow{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;margin-bottom:1px}
+.sch-mdow div{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);text-align:center;padding:4px 0}
+.sch-mgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--line)}
+.sch-mcell{background:var(--surface);min-height:92px;padding:4px 5px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.sch-mcell.off{background:var(--surface-2)}
+.sch-mcell.off .sch-mnum{color:var(--ink-3);opacity:.6}
+.sch-mcell.is-today{box-shadow:inset 0 0 0 2px var(--brand)}
+.sch-mnum{font-size:11.5px;font-weight:600;color:var(--ink-2);align-self:flex-end;line-height:1}
+.sch-mcell.is-today .sch-mnum{color:var(--brand-ink)}
+.sch-chip{border-radius:4px;padding:1px 5px;font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.sch-chip-t{font-variant-numeric:tabular-nums;font-weight:600}
+.sch-more{font-size:10px;color:var(--ink-3);padding-left:3px}
+@media(max-width:760px){.sch-title{width:100%;order:5}}

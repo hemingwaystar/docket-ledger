@@ -405,6 +405,7 @@ function mkTicket(t){
 const NAV = [
   { id:'dashboard', label:'Dashboard',      ic:IC.dash,    show:()=>true },
   { id:'tickets',   label:'Tickets',        ic:IC.ticket,  show:()=>true },
+  { id:'schedule',  label:'Schedule',       ic:IC.calendar,show:()=>true },
   { id:'projects',  label:'Projects',       ic:IC.proj,    show:()=>can('view_projects') },
   { id:'clients',   label:'Clients',        ic:IC.client,  show:()=>can('view_clients') },
   { id:'reports',   label:'Reports',        ic:IC.report,  show:()=>can('view_all') },
@@ -420,6 +421,7 @@ const NAV = [
 const PAGES = {
   dashboard:{ t:'Dashboard', s:()=>fmtDT(nowMs()) },
   tickets:{ t:'Tickets', s:()=>'' },
+  schedule:{ t:'Schedule', s:()=>'' },
   projects:{ t:'Projects', s:()=>'' },
   ticket:{ t:'Ticket', s:()=>{ const t=tk(state.ticketId); return t? `${esc(client(t.clientId).name)} · opened ${fmtAgo(t.createdAt)}` : ''; } },
   clients:{ t:'Clients', s:()=>'' },

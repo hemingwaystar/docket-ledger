@@ -59,7 +59,7 @@ function render(){
   { const sub = pg.s(), se = document.getElementById('pgSub');
     se.innerHTML = sub; se.style.display = sub ? '' : 'none'; }
   document.getElementById('content').innerHTML = ({
-    dashboard:viewDashboard, tickets:viewTickets, projects:viewProjects, ticket:viewTicket, clients:viewClients,
+    dashboard:viewDashboard, tickets:viewTickets, schedule:viewSchedule, projects:viewProjects, ticket:viewTicket, clients:viewClients,
     clientv:viewClient, reports:viewReports, automations:viewAutomations, directory:viewDirectory, settings:viewSettings, audit:viewAudit
   })[state.view]();
   const bb = document.getElementById('bellBadge');
