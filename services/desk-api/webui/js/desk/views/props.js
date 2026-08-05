@@ -321,6 +321,29 @@ function toggleScheduleDone(tid, schedId, done){
       reconcileSched(t, d); });
 }
 
+/* ---------------- ticket audit block ----------------
+   The automatic events on a ticket — schedules, assignments, triggers,
+   state/owner/title changes, merges — used to interleave with the human
+   conversation in the thread. They live here instead, in their own sidebar
+   card (newest first), so the thread stays a clean back-and-forth. These ARE
+   the ticket's 'sys' articles; viewTicket now renders only mail-in/reply/note
+   in the thread and hands the 'sys' ones to this card. Read-only — the events
+   are written by the actions that cause them (and to the audit log). */
+function renderAudit(t){
+  const events = (t.articles||[]).filter(a=>a.kind==='sys').slice().reverse();
+  return `<div class="card props audit">
+    <div class="prop"><div class="pk">Audit</div>
+      <div class="mini muted">Automatic events on this ticket — schedules, assignments, triggers and state changes.</div></div>
+    ${events.length
+      ? `<div class="audit-scroll">${events.map(a=>`
+          <div class="prop audit-row">
+            <div class="mini" style="color:var(--ink-2);line-height:1.5">${esc(a.body)}</div>
+            <div class="mini muted" style="margin-top:2px">${fmtDT(a.ts)}</div>
+          </div>`).join('')}</div>`
+      : `<div class="prop"><div class="mini muted">No events yet.</div></div>`}
+  </div>`;
+}
+
 function saveTitle(tid){
   const t = tk(tid); if(!t || projLocked(t)) return;
   if(!(can('edit_props') || t.ownerId===state.meId)) return;

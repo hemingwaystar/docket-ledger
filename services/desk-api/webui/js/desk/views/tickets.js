@@ -488,13 +488,15 @@ function viewTicket(){
     <div>
       ${isProj(t)? projChecklistCard(t) : ''}
       <div class="card" style="padding:4px 18px">
-        <div class="thread">${t.articles.map(a=>renderArt(t,a)).join('')}</div>
+        <div class="thread">${(()=>{ const conv=t.articles.filter(a=>a.kind!=='sys');
+          return conv.length ? conv.map(a=>renderArt(t,a)).join('')
+            : `<div class="mini muted" style="padding:12px 0">No conversation yet — automatic events are in the Audit panel.</div>`; })()}</div>
       </div>
       ${projLocked(t)? `<div class="notice lock" style="margin-top:14px">${icon(IC.seal)}<div><b>Approved &amp; locked.</b> This project ticket is immutable — no notes, replies, time or property changes.${can('approve_projects')?' Use <b>Unlock (admin)</b> on the checklist card if something genuinely needs fixing.':' An admin can unlock it if something genuinely needs fixing.'}</div></div>`
         : canWork? renderComposer(t) : `<div class="notice lock" style="margin-top:14px">${icon(IC.shield)}<div>Your role can view this ticket but not respond. Ask a dispatcher or admin if that looks wrong.</div></div>`}
     </div>
     ${renderProps(t)}
-    ${renderSchedules(t)}
+    <div class="tk-side">${renderSchedules(t)}${renderAudit(t)}</div>
   </div>`;
 }
 

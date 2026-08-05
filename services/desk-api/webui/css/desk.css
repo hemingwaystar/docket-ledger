@@ -274,6 +274,11 @@ select:disabled{opacity:.55;cursor:not-allowed}
    is main | schedules | props, so the props panel stays rightmost */
 .tk-layout.has-sched{grid-template-columns:minmax(0,1fr) 300px 300px}
 @media(max-width:1000px){.tk-layout,.tk-layout.has-sched{grid-template-columns:1fr}}
+/* the rightmost column stacks the Schedules card and the Audit card (the
+   ticket's system events, moved out of the thread) */
+.tk-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+.audit .prop{padding:9px 16px}
+.audit-scroll{max-height:340px;overflow:auto}
 .tk-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .tk-head h2{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;line-height:1.35}
 .tk-num{font-family:"IBM Plex Mono",monospace;color:var(--ink-3);font-size:13px;font-weight:500}
