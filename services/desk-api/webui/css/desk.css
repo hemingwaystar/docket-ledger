@@ -274,11 +274,30 @@ select:disabled{opacity:.55;cursor:not-allowed}
    is main | schedules | props, so the props panel stays rightmost */
 .tk-layout.has-sched{grid-template-columns:minmax(0,1fr) 300px 300px}
 @media(max-width:1000px){.tk-layout,.tk-layout.has-sched{grid-template-columns:1fr}}
-/* the rightmost column stacks the Schedules card and the Audit card (the
-   ticket's system events, moved out of the thread) */
-.tk-side{display:flex;flex-direction:column;gap:16px;min-width:0}
 .audit .prop{padding:9px 16px}
 .audit-scroll{max-height:340px;overflow:auto}
+/* ticket case-file block stack (build 21): the case file is a full-width
+   vertical stack of blocks (Properties, Conversation, Schedule, Audit) that
+   each tech reorders to taste (moveTicketBlock, per-user pref). Each block is
+   its existing card under a slim bar (label + up/down). */
+.tk-stack{display:flex;flex-direction:column;gap:20px}
+.tk-block{min-width:0}
+.tk-block-bar{display:flex;align-items:center;gap:8px;margin-bottom:7px;padding:0 2px}
+.tk-block-lbl{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+.tk-block-bar .rowbtn{padding:1px 9px;font-size:13px;line-height:1.35}
+.tk-block-bar .rowbtn:disabled{opacity:.35;cursor:default}
+/* full width lets the field/list blocks read HORIZONTALLY: their rows flow into
+   responsive auto-fit columns instead of a single tall stack. Header + add-form
+   rows span the whole width so they stay legible. */
+.tk-block[data-block="props"] .props{display:grid;grid-template-columns:repeat(auto-fit,minmax(236px,1fr));align-items:start}
+.tk-block[data-block="schedule"] .sched{display:grid;grid-template-columns:repeat(auto-fit,minmax(236px,1fr));align-items:start}
+.tk-block[data-block="schedule"] .sched>.prop:not(.sched-row){grid-column:1/-1}
+.tk-block[data-block="audit"] .audit-scroll{display:grid;grid-template-columns:repeat(auto-fit,minmax(236px,1fr));gap:0 2px;max-height:420px}
+@media(max-width:640px){
+  .tk-block[data-block="props"] .props,
+  .tk-block[data-block="schedule"] .sched,
+  .tk-block[data-block="audit"] .audit-scroll{grid-template-columns:1fr}
+}
 .tk-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .tk-head h2{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;line-height:1.35}
 .tk-num{font-family:"IBM Plex Mono",monospace;color:var(--ink-3);font-size:13px;font-weight:500}

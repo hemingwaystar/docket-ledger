@@ -326,6 +326,29 @@ function savePrefs(part){
     .catch(()=>oops());
 }
 
+/* ---- ticket case-file block order (per-user) ----
+   The ticket view is a full-width vertical stack of blocks the tech reorders to
+   taste; the chosen order persists in prefs.ticketBlocks (savePrefs → server).
+   TK_BLOCKS is the canonical set + shipped default order; ticketBlockOrder()
+   reconciles the saved list against it so a stale/partial pref (or a block id
+   added in a later build) can never drop or duplicate a block. */
+const TK_BLOCKS = ['props','thread','schedule','audit'];
+const TK_BLOCK_LABEL = { props:'Properties', thread:'Conversation', schedule:'Schedule', audit:'Audit' };
+function ticketBlockOrder(){
+  const saved = state.prefs.ticketBlocks;
+  const order = Array.isArray(saved) ? saved.filter(id=>TK_BLOCKS.includes(id)) : [];
+  TK_BLOCKS.forEach(id=>{ if(!order.includes(id)) order.push(id); });   /* append any missing/new block */
+  return order;
+}
+function moveTicketBlock(id, dir){
+  const order = ticketBlockOrder();
+  const i = order.indexOf(id), j = i + dir;
+  if(i < 0 || j < 0 || j >= order.length) return;
+  const next = order.slice();
+  [next[i], next[j]] = [next[j], next[i]];               /* adjacent swap (dir = ±1) */
+  savePrefs({ ticketBlocks: next });                     /* per-user persist + re-render */
+}
+
 /* ---- SLA: first-response due until an agent replies; then resolution due.
    SLA hours only tick inside working time; the walk is 15-min steps
    (fast enough at SLA scale). ---- */

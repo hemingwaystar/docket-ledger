@@ -449,15 +449,44 @@ function copyAuditCSV(){ if(!can('export_csv')) return; copyRowsCSV(auditCSVRows
 /* ==========================================================================
    TICKET — the case file: thread + native note timer + properties
    ========================================================================== */
+/* one reorderable block in the ticket stack: a slim bar (label + up/down) above
+   the block's existing card markup. Up is disabled on the first block, down on
+   the last; moveTicketBlock persists the new order per user (state.js). */
+function tkBlockWrap(id, content, isFirst, isLast){
+  return `<div class="tk-block" data-block="${id}">
+    <div class="tk-block-bar">
+      <span class="tk-block-lbl">${esc(TK_BLOCK_LABEL[id]||id)}</span>
+      <span class="spacer"></span>
+      <button class="rowbtn" ${isFirst?'disabled':''} onclick="moveTicketBlock('${id}',-1)" title="Move up">↑</button>
+      <button class="rowbtn" ${isLast?'disabled':''} onclick="moveTicketBlock('${id}',1)" title="Move down">↓</button>
+    </div>
+    ${content}
+  </div>`;
+}
+
 function viewTicket(){
   const t = tk(state.ticketId);
   if(!t || !ticketVisible(t)) return `<div class="empty">${icon(IC.ticket)}<div>Ticket not found in your scope.</div></div>`;
   const c = client(t.clientId), p = contact(t.contactId);
   const canWork = can('reply')||can('note');
-  /* the Schedules bar (build 16) is PERSISTENT (build 16a) — always shown as a
-     third column on the RIGHT of the props panel; schedules drive pending_until,
-     which only reopens the ticket once it is actually on hold */
   const closedNote = t.st==='closed' ? `<div class="notice lock" style="margin-bottom:14px">${icon(IC.audit)}<div><b>Closed.</b> A customer reply re-opens it automatically; its logged time is already priced in Ledger${can('see_billing')?' and locks with the billing period':''}.</div></div>` : '';
+
+  /* Ticket blocks (build 21): the case file is a full-width vertical STACK of
+     blocks — Properties, Conversation, Schedule, Audit — that each tech orders
+     to their own taste (ticketBlockOrder, persisted in prefs). The thread
+     carries only human articles; 'sys' events live in Audit (build 20). */
+  const conv = t.articles.filter(a=>a.kind!=='sys');
+  const threadBlock =
+      `${isProj(t)? projChecklistCard(t) : ''}
+      <div class="card" style="padding:4px 18px">
+        <div class="thread">${conv.length ? conv.map(a=>renderArt(t,a)).join('')
+          : `<div class="mini muted" style="padding:12px 0">No conversation yet — automatic events are in the Audit panel.</div>`}</div>
+      </div>
+      ${projLocked(t)? `<div class="notice lock" style="margin-top:14px">${icon(IC.seal)}<div><b>Approved &amp; locked.</b> This project ticket is immutable — no notes, replies, time or property changes.${can('approve_projects')?' Use <b>Unlock (admin)</b> on the checklist card if something genuinely needs fixing.':' An admin can unlock it if something genuinely needs fixing.'}</div></div>`
+        : canWork? renderComposer(t) : `<div class="notice lock" style="margin-top:14px">${icon(IC.shield)}<div>Your role can view this ticket but not respond. Ask a dispatcher or admin if that looks wrong.</div></div>`}`;
+  const blocks = { props: renderProps(t), thread: threadBlock, schedule: renderSchedules(t), audit: renderAudit(t) };
+  const order = ticketBlockOrder();
+  const stack = order.map((id,i)=>tkBlockWrap(id, blocks[id], i===0, i===order.length-1)).join('');
 
   return `
   <div class="tk-head">
@@ -484,20 +513,7 @@ function viewTicket(){
     ${slaInfo(t)? `<div style="padding-top:6px">${slaCell(t)}</div>`:''}
   </div>
   ${closedNote}
-  <div class="tk-layout has-sched">
-    <div>
-      ${isProj(t)? projChecklistCard(t) : ''}
-      <div class="card" style="padding:4px 18px">
-        <div class="thread">${(()=>{ const conv=t.articles.filter(a=>a.kind!=='sys');
-          return conv.length ? conv.map(a=>renderArt(t,a)).join('')
-            : `<div class="mini muted" style="padding:12px 0">No conversation yet — automatic events are in the Audit panel.</div>`; })()}</div>
-      </div>
-      ${projLocked(t)? `<div class="notice lock" style="margin-top:14px">${icon(IC.seal)}<div><b>Approved &amp; locked.</b> This project ticket is immutable — no notes, replies, time or property changes.${can('approve_projects')?' Use <b>Unlock (admin)</b> on the checklist card if something genuinely needs fixing.':' An admin can unlock it if something genuinely needs fixing.'}</div></div>`
-        : canWork? renderComposer(t) : `<div class="notice lock" style="margin-top:14px">${icon(IC.shield)}<div>Your role can view this ticket but not respond. Ask a dispatcher or admin if that looks wrong.</div></div>`}
-    </div>
-    ${renderProps(t)}
-    <div class="tk-side">${renderSchedules(t)}${renderAudit(t)}</div>
-  </div>`;
+  <div class="tk-stack">${stack}</div>`;
 }
 
 function renderArt(t,a){
