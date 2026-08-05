@@ -518,6 +518,15 @@ function viewTicket(){
 
 function renderArt(t,a){
   if(a.kind==='sys') return `<div class="art sys"><div class="art-sysline"><span class="sdot"></span><span>${esc(a.body)}</span><span class="sts">${fmtDT(a.ts)}</span></div></div>`;
+  /* deleted note/reply (build 26): a muted TOMBSTONE in place — no body, no
+     time chip, no actions. The content, actor and voided time live in the
+     Audit block + global Audit Log (the server ships the body stripped). */
+  if(a.deletedAt){
+    const kl = a.kind==='note' ? 'Internal note' : 'Public reply';
+    return `<div class="art deleted"><div class="art-sysline"><span class="sdot"></span>
+      <span>🗑 <b>${kl}</b> deleted by ${esc(a.deletedBy||'—')}<span class="mini muted"> — content is in the Audit log</span></span>
+      <span class="sts">${fmtDT(a.deletedAt)}</span></div></div>`;
+  }
   const isAgent = a.kind!=='mail-in';
   const kindLab = a.kind==='mail-in' ? `<span class="art-kind mail">Email received</span>`
                : a.kind==='note'    ? `<span class="art-kind note">Internal note</span>`
@@ -555,8 +564,21 @@ function renderArt(t,a){
   const attachBtn = mayAttach
     ? `<button class="rowbtn" onclick="attachTime(${t.id},'${jsq(a.id)}')" title="Attach a time entry — starts as a 15-min span ending at this ${a.kind==='reply'?'email':'note'}'s timestamp; adjust it inline">+ time</button>`
     : '';
-  const noteActions = (editBtn||attachBtn)
-    ? `<span style="margin-left:auto;display:inline-flex;gap:6px">${editBtn}${attachBtn}</span>`
+  /* delete (build 26): a note OR public reply, never auto-generated, on any
+     ticket the tech can reach (no extra permission — a product choice), never
+     on a locked project, and NEVER once the linked timesheet is approved or its
+     billing period is locked (it freezes with the money — same clause the Edit
+     affordance uses). The server (DELETE .../articles/{id}) re-checks every
+     clause; a stale button routes through oops(). mail-in / sys stay
+     undeletable. Confirmation + the linked-time void happen in deleteArticle. */
+  const mayDelete = (a.kind==='note'||a.kind==='reply') && !a.auto && !projLocked(t)
+    && !(a.time && (a.time.approved || a.time.locked))
+    && srvId(a.id);   /* only a server-persisted article can be deleted — a just-composed one has a local id until the next hydrate reconciles it */
+  const delBtn = mayDelete
+    ? `<button class="rowbtn danger" onclick="deleteArticle(${t.id},'${jsq(a.id)}')" title="Delete this ${a.kind==='reply'?'public reply':'internal note'}${a.time?' and void its linked time entry':''} — you'll confirm; it's audited (who, content, when)">Delete</button>`
+    : '';
+  const noteActions = (editBtn||attachBtn||delBtn)
+    ? `<span style="margin-left:auto;display:inline-flex;gap:6px">${editBtn}${attachBtn}${delBtn}</span>`
     : '';
   /* transparency: a muted "(edited …)" marker on ANY article the server marked
      edited — editedAt/editedBy ride every article (mapIn defaults them to null
@@ -672,6 +694,59 @@ function editNote(tid, aid){
       render();
     }
   }).catch(d=>oops(d));
+}
+
+/* delete a note or public reply (build 26): confirm → optimistic tombstone +
+   void the linked time entry → DELETE mirror. Re-asserts every gate locally so
+   a stale DOM handler can't skip it (the server enforces regardless — DELETE
+   .../articles/{id} re-checks and 423s a just-approved timesheet / 409s the
+   guard, both routed through oops()). The article stays in t.articles as a
+   tombstone (deletedAt/deletedBy set, body cleared); its linked entry is voided
+   (Ledger keeps the voided row); a sys article lands on the Audit block and
+   log() mirrors the global Audit Log — both differentiate note vs reply. */
+function deleteArticle(tid, aid){
+  const t = tk(tid); if(!t) return;
+  const a = t.articles.find(x=>x.id===aid); if(!a) return;
+  if(a.deletedAt) return;                                   /* already a tombstone */
+  if(a.kind!=='note' && a.kind!=='reply'){ toast('Only internal notes and public replies can be deleted.'); return; }
+  if(a.auto){ toast('Auto-generated entries can’t be deleted.'); return; }
+  if(projLocked(t)){ toast('This project is approved & locked — an admin can unlock it from the checklist card.'); return; }
+  if(a.time && (a.time.approved || a.time.locked)){ toast('The linked timesheet is approved or its billing period is locked — this can’t be deleted.'); return; }
+  /* the article must be server-persisted before we can delete it: a just-composed
+     note/reply keeps its local id until the next hydrate reconciles it, and a
+     DELETE on that id would 404. Guard BEFORE any optimistic mutation/toast so we
+     never claim "deleted — audited" for an action that never reached the server.
+     (renderArt also hides the Delete button while the id is local — this is the
+     defensive twin for a stale handler.) */
+  if(!srvId(aid)){ toast('This note is still saving — give it a moment, then try again.'); return; }
+  const kindLab = a.kind==='reply' ? 'public reply' : 'internal note';
+  const kl2 = a.kind==='reply' ? 'Public reply' : 'Internal note';
+  const voidedH = a.time ? a.time.h : 0;
+  const timeLine = a.time ? `\n\nIts linked time entry (${fmtHours(a.time.h)} h) will be voided — Ledger keeps a voided row.` : '';
+  if(!confirm(`Delete this ${kindLab}?${timeLine}\n\nThe content, who deleted it, and when are recorded in the ticket Audit block and the global Audit Log. It’s replaced by a tombstone in the thread and can’t be restored from the app.`)) return;
+  /* --- all checks passed; optimistic mutation --- */
+  const before = a.body;
+  if(a.time){                                               /* void + unlink the entry locally */
+    const i = t.time.indexOf(a.time); if(i>=0) t.time.splice(i,1);
+    delete a.time;
+  }
+  a.deletedAt = nowMs(); a.deletedBy = state.user.name; a.body = ''; a.bodyHtml = null; a.atts = [];
+  const clip = s => { s=String(s||''); return s.length>120 ? s.slice(0,120)+'…' : s; };
+  const detail = `${kl2} deleted — “${clip(before)}”` + (voidedH?` · ${fmtHours(voidedH)} h voided`:'');
+  t.articles.push(art('sys', me(), nowMs(), detail));       /* Audit block sibling */
+  t.updatedAt = nowMs();
+  log(`${kl2} deleted`, `#${t.id} · “${clip(before)}”` + (voidedH?` · ${fmtHours(voidedH)} h voided`:''));  /* global Audit Log */
+  toast(`${kl2} deleted — audited.` + (voidedH?' Linked time voided in Ledger.':''));
+  render();
+  $fetch('/api/tickets/'+tid+'/articles/'+aid,{method:'DELETE'})
+    .then(async r=>{ const d=await r.json().catch(()=>0);
+      if(!r.ok) return oops(d);
+      /* the delete bumps the ticket's version + updated_at server-side — sync
+         both (no rehydrate here) so a following property edit can't 409 and the
+         board shows the fresh "Updated" time */
+      if(d && d.version) t.version = d.version;
+      if(d && typeof d.updatedAt==='number') t.updatedAt = d.updatedAt;
+    }).catch(d=>oops(d));
 }
 
 /* editor attachment controls — mirror addAtts/rmAtt but stage into

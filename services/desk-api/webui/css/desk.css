@@ -342,6 +342,14 @@ td.audit-detail{overflow-wrap:anywhere}
 .art-sysline{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);width:100%}
 .art-sysline .sdot{width:5px;height:5px;border-radius:50%;background:var(--ink-3);flex:0 0 auto;margin-left:11px}
 .art-sysline .sts{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px}
+/* deleted note/reply tombstone (build 26) — a muted, void-tinted sys-style row */
+.art.deleted{padding:7px 0;border-bottom:1px solid var(--line-2);font-style:italic}
+.art.deleted .art-sysline{color:var(--ink-3)}
+.art.deleted .art-sysline .sdot{background:var(--void)}
+.art.deleted .art-sysline b{font-weight:600;font-style:normal}
+/* destructive row action (build 26) — matches .btn.danger's void palette */
+.rowbtn.danger{color:var(--void);border-color:#e6cccc}
+.rowbtn.danger:hover{background:var(--void-wash);color:var(--void)}
 
 /* composer with the built-in note timer (replaces the extension) */
 .composer{margin-top:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}

@@ -313,8 +313,15 @@ def bootstrap(request: Request, limit: int = 500):
                 # edited_at/edited_by (0034) carry the "(edited <when>)" marker —
                 # both null on every never-edited article. Articles ride WHOLE
                 # through mapIn, so these field names ARE what renderArt reads.
-                cur.execute("""SELECT ticket_id, id, kind, author, author_id, body, body_html,
-                                 is_auto, mail_from, mail_to, sent_at, edited_at, edited_by
+                # deleted_at/deleted_by (0036) carry the tombstone: a deleted
+                # note/reply ships with deletedAt set and its BODY STRIPPED — the
+                # content is NOT sent to the thread (it lives only in the audit
+                # sys article + audit.events); renderArt shows a muted tombstone.
+                cur.execute("""SELECT ticket_id, id, kind, author, author_id,
+                                 CASE WHEN deleted_at IS NULL THEN body      ELSE '' END   AS body,
+                                 CASE WHEN deleted_at IS NULL THEN body_html ELSE NULL END AS body_html,
+                                 is_auto, mail_from, mail_to, sent_at, edited_at, edited_by,
+                                 deleted_at, deleted_by
                                  FROM desk.articles WHERE ticket_id = ANY(%s)
                                 ORDER BY sent_at""", (ids,))
                 art_index = {}
@@ -327,7 +334,8 @@ def bootstrap(request: Request, limit: int = 500):
                            "body": r["body"], "bodyHtml": r["body_html"],
                            "auto": r["is_auto"],
                            "mailFrom": r["mail_from"], "mailTo": r["mail_to"],
-                           "editedAt": ms(r["edited_at"]), "editedBy": r["edited_by"]}
+                           "editedAt": ms(r["edited_at"]), "editedBy": r["edited_by"],
+                           "deletedAt": ms(r["deleted_at"]), "deletedBy": r["deleted_by"]}
                     art_index[str(r["id"])] = art
                     tickets[r["ticket_id"]]["articles"].append(art)
                 if art_index:
@@ -336,6 +344,7 @@ def bootstrap(request: Request, limit: int = 500):
                                      FROM desk.attachments at
                                      JOIN desk.articles ar ON ar.id = at.article_id
                                     WHERE ar.ticket_id = ANY(%s) AND NOT at.is_inline
+                                      AND ar.deleted_at IS NULL
                                     ORDER BY at.created_at""", (ids,))
                     for r in cur.fetchall():
                         a = art_index.get(str(r["article_id"]))

@@ -67,6 +67,13 @@ function mapIn(d){
        marker only lights when the server actually set them. */
     t.articles.forEach(a=>{ if(a.editedAt===undefined) a.editedAt=null;
                             if(a.editedBy===undefined) a.editedBy=null; });
+    /* soft-delete tombstone (0036 / build 26): a deleted note/reply carries
+       deletedAt (ms|null) + deletedBy (str|null) and arrives with its body
+       already stripped by the server. Default them to null so a pre-0036
+       bootstrap can't leave them undefined and renderArt only renders the
+       tombstone when the server actually set deletedAt. */
+    t.articles.forEach(a=>{ if(a.deletedAt===undefined) a.deletedAt=null;
+                            if(a.deletedBy===undefined) a.deletedBy=null; });
     /* assigned techs (build 15): a FIELD on every ticket row (like ownerId),
        always emitted as an array. Default [] so a pre-migration bootstrap
        that predates the field can't crash isMine() or the props multiCombo. */

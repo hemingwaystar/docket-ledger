@@ -6,8 +6,12 @@ desk.tickets.pending_until in sync as the MIN future scheduled start, which
 is what drives the existing worker/UI auto-resume), and the note edit (0034 —
 correct a sent internal note's body + add attachments, guarded and audited;
 it touches desk.articles ONLY, never desk.tickets, so it neither reads nor
-bumps ticket.version and cannot 409). Locked projects refuse everything (423)."""
+bumps ticket.version and cannot 409), and the note/reply delete (0036 —
+soft-delete a note OR public reply as a tombstone + void its linked time entry,
+guarded and audited, differentiated note-vs-reply in BOTH audit logs). Locked
+projects refuse everything (423)."""
 from fastapi import APIRouter, HTTPException, Request
+from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from .. import auth, db, helpers
 from .common import _sane_span, emit_event, live_parent_of, sys_note
@@ -699,3 +703,141 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
         return {"ok": True, "version": version, "updatedAt": updated_ms, "article": {
             "id": str(article_id), "body": body.body,
             "editedAt": _ms(edited_at), "editedBy": actor, "attachments": atts}}
+
+
+# --- Note / public-reply deletion (0036) ------------------------------------
+# Delete a sent internal NOTE or a PUBLIC REPLY: soft-delete it (tombstone —
+# deleted_at/deleted_by, never a row DELETE) and VOID any time entry it carries.
+# The tombstone shows in the thread; the article's original content, the actor,
+# and the voided hours land in BOTH the ticket Audit block (a sys article) and
+# the global Audit Log (an audit.events row), the action named so note vs reply
+# is differentiated. Same server-authoritative freeze gate as the note edit:
+# refuse (423) if ANY linked entry is manager-approved OR sits in a locked
+# billing period — "notes on immutable/locked time approvals" can't be deleted.
+#
+# PERMISSION: anyone who can access the ticket (any authenticated session; PATs
+# pass as service credentials). This is a deliberate product choice — no extra
+# RBAC gate beyond a valid session — so we do NOT auth.need() anything here. The
+# hard invariants still hold regardless of who calls: an approved/period-locked
+# entry (423), a locked project (423), and mail_in/sys/auto articles (409) are
+# all refused, and the void goes through ledger.guard_entry_immutability, which
+# would itself RAISE on a frozen entry even if the pre-check were somehow raced.
+
+@router.delete("/tickets/{ticket_id}/articles/{article_id}")
+def delete_article(ticket_id: int, article_id: str, request: Request):
+    """Soft-delete a note or public reply and void its linked time.
+
+    Refuses (server-authoritative, never merely UI-hidden):
+      * article not on this ticket                              → 404
+      * not a note/reply, or auto-generated                     → 409
+      * the ticket is an approved-locked project (projLocked)   → 423
+      * ANY linked non-void entry is manager-approved
+        (ts_approved_at) OR in a locked/exported billing period → 423
+    Already-deleted is idempotent (double-click / stale UI): returns ok with
+    already=true and changes nothing — no second audit row, mirroring the
+    remove_schedule idempotency.
+
+    On success: every linked non-void entry is voided (status='void' — the ONLY
+    legal removal; the row survives for the billing audit), the article is
+    tombstoned (deleted_at/deleted_by), one sys article + one audit.events row
+    record who/what/when (content capped, note-vs-reply named), and the ticket
+    is _touched so the tombstone shows in the Audit block and re-sorts the board.
+    Returns {article:{id, deletedAt, deletedBy}, version, updatedAt} so the
+    client reconciles the one article + its lock token without a full rehydrate.
+    """
+    with db.connect() as conn:
+        who = auth.require(conn, request)   # any ticket-accessing session; PATs pass
+        with conn.cursor() as cur:
+            # 1) ticket + article — both 404 if absent / not on this ticket.
+            trow = helpers.ticket_or_404(cur, ticket_id)
+            cur.execute("""SELECT kind, is_auto, body, deleted_at
+                             FROM desk.articles
+                            WHERE id = %s AND ticket_id = %s""",
+                        (article_id, ticket_id))
+            art = cur.fetchone()
+            if art is None:
+                raise HTTPException(404, "No such article on this ticket")
+            kind, is_auto, old_body, already = art
+            # 2) not-deletable-by-ANYONE refusals.
+            if kind not in ("note", "reply"):
+                raise HTTPException(409, "Only internal notes and public replies can be "
+                                    "deleted — email received and system entries can't")
+            if is_auto:
+                raise HTTPException(409, "Auto-generated entries can't be deleted")
+            if already is not None:
+                # idempotent — already a tombstone; no second void/audit.
+                return {"ok": True, "already": True}
+            helpers.refuse_if_locked_project(trow)     # 423 on an approved-locked project
+            # 3) the linked-timesheet freeze: ts-approved OR period-locked freezes
+            #    the whole delete (the note is "on immutable/locked time"). One
+            #    read over ledger.time_entries (desk_api SELECTs it directly); the
+            #    period lock arrives through ledger.period_locked() (0034) so
+            #    desk_api needs no billing_periods grant. Any frozen linked entry
+            #    freezes the delete. Non-void only — a prior void doesn't block.
+            cur.execute("""SELECT e.id, e.ts_approved_at IS NOT NULL,
+                                  ledger.period_locked(e.period_id)
+                             FROM ledger.time_entries e
+                            WHERE e.article_id = %s AND e.status <> 'void'""",
+                        (article_id,))
+            linked = cur.fetchall()
+            for _eid, ts_approved, period_locked in linked:
+                if ts_approved or period_locked:
+                    raise HTTPException(423, "A linked timesheet is approved or its billing "
+                                        "period is locked — this can't be deleted")
+            actor = who.get("name") or who.get("label") or "API"
+            # 4) void every linked non-void entry — the ONLY legal removal (the
+            #    DB guard forbids DELETE outright). We already refused frozen
+            #    entries in step 3, so each UPDATE normally matches. Two races are
+            #    still guarded (mirrors patch_time's own None-check on the same
+            #    predicate): a period-lock committed after step 3 makes
+            #    guard_entry_immutability RAISE (caught → 423); a ts_approval
+            #    committed after step 3 is excluded by `ts_approved_at IS NULL`
+            #    (0 rows, no RAISE) → the None-check below refuses. Either race
+            #    rolls the whole txn back and writes NO tombstone, so frozen time
+            #    always freezes the delete.
+            voided_h = 0.0
+            for eid, _ta, _pl in linked:
+                try:
+                    cur.execute("""UPDATE ledger.time_entries
+                                      SET status = 'void', voided_at = now(),
+                                          void_reason = %s
+                                    WHERE id = %s AND ts_approved_at IS NULL
+                                RETURNING hours""",
+                                (f"{kind} deleted", eid))
+                except pg_errors.RaiseException as e:   # period-lock race: guard RAISEd
+                    raise HTTPException(423, e.diag.message_primary
+                                        or "A linked entry is frozen — this can't be deleted")
+                r = cur.fetchone()
+                if r is None:
+                    # ts_approval race — approved AFTER our freeze read, so the
+                    # `ts_approved_at IS NULL` predicate excluded the row and the
+                    # guard never fired. Refuse the whole delete rather than
+                    # tombstone a note whose now-approved billable time survives.
+                    raise HTTPException(423, "A linked timesheet was just approved — "
+                                        "this can't be deleted")
+                voided_h += float(r[0])
+            # 5) tombstone the article. The guard permits this for BOTH kinds: a
+            #    note is never guarded; a reply's body is left untouched, so
+            #    guard_article_immutability's body-change test is false.
+            cur.execute("""UPDATE desk.articles
+                              SET deleted_at = now(), deleted_by = %s
+                            WHERE id = %s RETURNING deleted_at""",
+                        (actor, article_id))
+            (deleted_at,) = cur.fetchone()
+            # 6a) ticket-audit sibling + 'updated' bump (build 22 dual-write). The
+            #     action is named per kind so note vs reply is differentiated in
+            #     BOTH logs; the deleted CONTENT is preserved here (capped) since
+            #     the tombstone itself carries none.
+            kind_lbl = "Internal note" if kind == "note" else "Public reply"
+            hrs = f" · {voided_h:g} h voided" if voided_h else ""
+            _sys(cur, ticket_id, who,
+                 f"{kind_lbl} deleted — “{_cap_body(old_body)}”{hrs}")
+            version, updated_ms = _touch(cur, ticket_id)
+        # 6b) ONE system-log line: kind, content (capped), voided hours + actor.
+        auth.audit(conn, "desk", f"{kind_lbl} deleted", f"ticket:{ticket_id}",
+                   f"#{ticket_id} · {kind_lbl.lower()} {article_id} deleted by {actor} · "
+                   f"content “{_cap_body(old_body)}”{hrs}")
+        # 7) reconciled tombstone + the ticket's bumped version/updated_at so the
+        #    client syncs its lock token and "Updated" column without a rehydrate.
+        return {"ok": True, "version": version, "updatedAt": updated_ms, "article": {
+            "id": str(article_id), "deletedAt": _ms(deleted_at), "deletedBy": actor}}
