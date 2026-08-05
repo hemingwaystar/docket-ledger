@@ -74,6 +74,7 @@ function render(){
         BACKWARDS. Reassigning the value walks the caret to the end. */
         try{ const v=el.value; el.value=''; el.value=v; }catch(e){} }
       window.__fk_restoring=false; } }
+  reflowAudit();   /* re-open expanded audit disclosures + drop no-op arrows */
   if(window.__fk_view!==state.view){ window.__fk_view=state.view; window.scrollTo(0,0); }
 }
 
@@ -88,6 +89,33 @@ function slaCell(t){
   return `<span class="sla-line ${cls}"><span class="sdot"></span>${s.kind} · ${fmtIn(s.due)}</span>`;
 }
 const timeTotal = t => t.time.reduce((a,e)=>a+e.h,0);
+
+/* collapsible audit text (build 25): a short line renders plain; a long one
+   collapses behind a native disclosure arrow (<details>) that expands to the
+   whole text — used by BOTH the ticket Audit block (props.js) and the Audit Log
+   view (audit.js). The CSS clamps the collapsed summary to 2 lines and every
+   branch wraps long unbroken strings. */
+function auditBody(text, key){
+  const s = String(text ?? '');
+  if(s.length <= 100) return `<span class="audit-txt">${esc(s)}</span>`;
+  return `<details class="audit-ev"${key?` data-akey="${esc(key)}"`:''}><summary class="audit-txt">${esc(s)}</summary></details>`;
+}
+/* post-render upkeep for the audit disclosures (called from render()): the
+   innerHTML rebuild recreates every <details> collapsed, so (1) re-open the ones
+   the user had expanded (tracked by data-akey in __auditOpen), and (2) flatten a
+   <details> whose text does NOT actually overflow its 2-line clamp — so a
+   non-truncated entry shows no pointless expand arrow (the char threshold in
+   auditBody can't know the real column width; this measures it). */
+function reflowAudit(){
+  const open = window.__auditOpen || (window.__auditOpen = new Set());
+  document.querySelectorAll('details.audit-ev').forEach(d=>{
+    const key = d.getAttribute('data-akey');
+    if(key && open.has(key)) d.open = true;
+    d.addEventListener('toggle', ()=>{ if(key){ d.open ? open.add(key) : open.delete(key); } });
+    const s = d.firstElementChild;                 /* the <summary> */
+    if(!d.open && s && s.scrollHeight <= s.clientHeight + 1) d.classList.add('audit-flat');
+  });
+}
 
 /* segmented inputs (time / datetime-local / number spinners) fire change
    while still focused; re-rendering then destroys the field mid-typing.

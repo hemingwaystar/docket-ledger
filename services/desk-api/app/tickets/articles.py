@@ -4,7 +4,7 @@ outbound switch allow — otherwise recorded only."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from .. import auth, db, helpers, mailer
-from .common import _sane_span, sys_article
+from .common import _sane_span, sys_article, cap_text
 
 router = APIRouter(prefix="/api")
 
@@ -126,16 +126,16 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                             (ticket_id, t.task_id, client_id, tech_id, type_id,
                              t.started_at, t.ended_at, body.body[:140], article_id))
                 entry_id, hours = cur.fetchone()
-            # ticket-audit sibling (build 24): the ADDITION of a note/reply is a
-            # ticket event too — it now shows in the ticket's Audit block with the
-            # actor, not just the system Audit Log. The note/reply body itself
-            # still lives in the thread; this is the compact "who did what" line.
+            # ticket-audit sibling (build 24/25): the ADDITION of a note/reply is
+            # a ticket event too, and now carries the CONTENT (capped) so the
+            # audit shows WHAT was added, not just that something was — the UI
+            # collapses long bodies behind a disclosure arrow.
+            snippet = cap_text(body.body)
             if body.kind == "note":
-                sys_article(cur, ticket_id, who, "Internal note added")
+                sys_article(cur, ticket_id, who, f"Internal note added — “{snippet}”")
             else:
-                sys_article(cur, ticket_id, who,
-                            f"Public reply sent to {mail_to}" if sent
-                            else f"Public reply recorded (to {mail_to})")
+                head = f"Public reply sent to {mail_to}" if sent else f"Public reply recorded (to {mail_to})"
+                sys_article(cur, ticket_id, who, f"{head} — “{snippet}”")
             cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
         detail = f"#{ticket_id} · {body.kind} by {author_name}"
         if body.kind == "reply":
@@ -144,6 +144,7 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                             f"({'sender mailbox is receive-only' if not mb_outbound else 'outbound disabled'})")
         if entry_id:
             detail += f" · {hours} h → Ledger"
+        detail += f" — “{snippet}”"          # the content itself (capped) — build 25
         auth.audit(conn, "desk",
                    ("Reply sent" if sent else "Reply recorded") if body.kind == "reply"
                    else "Note added",

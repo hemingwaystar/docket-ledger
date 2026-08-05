@@ -400,9 +400,16 @@ def bootstrap(request: Request, limit: int = 500):
                             "rate": (r["rate_cents"] / 100) if r["rate_cents"] is not None else None,
                             "flat": (r["flat_cents"] / 100) if r["flat_cents"] is not None else None})
             out["tickets"] = list(tickets.values())
-            cur.execute("""SELECT at, actor, action, detail FROM audit.events
-                            ORDER BY at DESC LIMIT 120""")
-            out["audit"] = [{"ts": ms(r["at"]), "who": r["actor"], "action": r["action"],
+            # actor is stored as the app.actor tag ("agent:<uuid>" for sessions;
+            # "pat:…"/other for service/automation). Resolve the agent uuid to the
+            # person's display name so the Audit Log shows "Ada Lovelace", not
+            # "agent:<uuid>"; non-agent actors fall through unchanged (build 25).
+            cur.execute("""SELECT e.at, COALESCE(a.name, e.actor) AS who,
+                                  e.action, e.detail
+                             FROM audit.events e
+                             LEFT JOIN shared.agents a ON e.actor = 'agent:' || a.id::text
+                            ORDER BY e.at DESC LIMIT 120""")
+            out["audit"] = [{"ts": ms(r["at"]), "who": r["who"], "action": r["action"],
                              "detail": r["detail"] or ""} for r in cur.fetchall()]
         with conn.cursor() as plain:
             out["notifs"] = automations._notifs(plain, who)

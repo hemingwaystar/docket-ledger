@@ -337,7 +337,7 @@ function renderAudit(t){
     ${events.length
       ? `<div class="audit-scroll">${events.map(a=>`
           <div class="prop audit-row">
-            <div class="mini" style="color:var(--ink-2);line-height:1.5">${esc(a.body)}</div>
+            <div class="mini" style="color:var(--ink-2);line-height:1.5">${auditBody(a.body, 'tk'+t.id+':'+a.id)}</div>
             <div class="mini muted" style="margin-top:2px">${esc(a.author?.name||'System')} · ${fmtDT(a.ts)}</div>
           </div>`).join('')}</div>`
       : `<div class="prop"><div class="mini muted">No events yet.</div></div>`}

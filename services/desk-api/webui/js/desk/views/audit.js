@@ -70,7 +70,7 @@ function viewAudit(){
         <td class="time-cell">${fmtDT(a.ts)}</td>
         <td class="mini" style="padding-top:12px">${esc(a.who)}</td>
         <td><span class="cell-title">${esc(a.action)}</span></td>
-        <td class="mini" style="padding-top:12px">${esc(a.detail)}</td>
+        <td class="mini audit-detail" style="padding-top:12px">${auditBody(a.detail, 'al:'+a.ts+':'+a.action)}</td>
       </tr>`).join('') : `<tr><td colspan="4" class="mini muted" style="padding:18px 16px">Nothing matches these filters.</td></tr>`}</tbody>
     </table>
     ${pagerBar(pg)}

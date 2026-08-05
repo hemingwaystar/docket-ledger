@@ -39,6 +39,14 @@ def sys_note(cur, ticket_id: int, body: str):
                    VALUES (%s, 'sys', 'Automation', %s)""", (ticket_id, body))
 
 
+def cap_text(s: str, cap: int = 4000) -> str:
+    """Bound a body for an audit detail / sys-article so a pathological paste
+    can't mint a monster row; note the truncation when it bites. (write.py has a
+    private twin _cap_body used by the note-edit endpoint.)"""
+    s = s or ""
+    return s if len(s) <= cap else s[:cap] + f"… [+{len(s) - cap} more chars]"
+
+
 def sys_article(cur, ticket_id: int, who: dict, body: str):
     """A ticket 'sys' article authored by the ACTING user (author_id NULL for
     PATs) — the ticket-Audit-block sibling of auth.audit's audit.events line, so

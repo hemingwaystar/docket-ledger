@@ -281,6 +281,20 @@ select:disabled{opacity:.55;cursor:not-allowed}
    instead of being forced wide (which overlapped neighbouring cells) */
 .audit-row{min-width:0}
 .audit-row .mini{overflow-wrap:anywhere;word-break:break-word}
+/* collapsible audit text (build 25): plain text wraps; a long entry collapses
+   behind a disclosure arrow (native <details>) clamped to 2 lines, expanding to
+   the whole text. Shared by the ticket Audit block and the Audit Log table. */
+.audit-txt{overflow-wrap:anywhere;word-break:break-word}
+td.audit-detail{overflow-wrap:anywhere}
+.audit-ev>summary{list-style:none;cursor:pointer;position:relative;padding-left:15px;color:inherit;overflow-wrap:anywhere;word-break:break-word}
+.audit-ev>summary::-webkit-details-marker{display:none}
+.audit-ev>summary::before{content:"";position:absolute;left:3px;top:.42em;border:4px solid transparent;border-left-color:var(--ink-3);transition:transform .12s}
+.audit-ev[open]>summary::before{transform:rotate(90deg)}
+.audit-ev:not([open])>summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* reflowAudit() adds .audit-flat when the text fits in 2 lines: no arrow, no
+   indent, no pointer — it reads as plain text (nothing to expand) */
+.audit-ev.audit-flat>summary{padding-left:0;cursor:default}
+.audit-ev.audit-flat>summary::before{display:none}
 /* ticket case-file block stack (build 21): the case file is a full-width
    vertical stack of blocks (Properties, Conversation, Schedule, Audit) that
    each tech reorders to taste (moveTicketBlock, per-user pref). Each block is

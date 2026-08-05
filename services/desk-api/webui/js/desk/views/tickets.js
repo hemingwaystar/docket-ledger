@@ -1039,8 +1039,11 @@ function sendArticle(tid){
      ticket) so recorded-only replies — the default — don't briefly read "sent". */
   const _om = outboundFor(t);
   const _willSend = MAILCFG.outboundEnabled && !!_om && _om.outbound && _om.status==='connected';
-  const replyLbl = _willSend ? ('Public reply sent to '+to) : ('Public reply recorded (to '+to+')');
-  t.articles.push(art('sys', me(), nowMs(), cm.kind==='reply' ? replyLbl : 'Internal note added'));
+  /* include the content (capped, matching the server's cap_text) so the audit
+     shows WHAT was added and the optimistic line matches the server's wording */
+  const _snip = a.body.length>4000 ? a.body.slice(0,4000)+`… [+${a.body.length-4000} more chars]` : a.body;
+  const replyLbl = (_willSend ? ('Public reply sent to '+to) : ('Public reply recorded (to '+to+')')) + ` — “${_snip}”`;
+  t.articles.push(art('sys', me(), nowMs(), cm.kind==='reply' ? replyLbl : `Internal note added — “${_snip}”`));
   if(logged) bridgeSend('time-logged', { eid:logged.eid, ticket:t.id, title:TITLES[t.id]||firstLine(t), clientId:t.clientId, techId:logged.techId, typeId:logged.typeId, h:logged.h, startedAt:logged.startedAt, endedAt:logged.endedAt, note:body.slice(0,140), task: taskPayload(t, logged.taskId) });
   if(cm.kind==='reply'){ t.slaFrMet = true; }
   if(t.st==='new' && cm.kind==='reply'){
