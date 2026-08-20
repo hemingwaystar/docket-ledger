@@ -7,27 +7,57 @@
    ========================================================================== */
 
 function assetRows(){
-  const f=state.af.status, q=(state.af.q||'').toLowerCase();
-  let rows = f==='archived' ? state.assets.filter(a=>a.archived)
-           : liveAssets().filter(a=> f==='all'||a.status===f);
+  const f=state.af, q=(f.q||'').toLowerCase();
+  let rows = f.status==='archived' ? state.assets.filter(a=>a.archived)
+           : liveAssets().filter(a=> f.status==='all'||a.status===f.status);
+  if(f.client.length) rows=rows.filter(a=>f.client.includes(a.clientId));
+  if(f.type.length)   rows=rows.filter(a=>f.type.includes(a.atype));
+  if(f.cov!=='all')   rows=rows.filter(a=> f.cov==='none' ? !a.warrantyUntil
+                                         : (!!a.warrantyUntil && covClass(a.warrantyUntil)===f.cov));
+  if(f.from||f.to)    rows=rows.filter(a=>inDateRange(a.purchasedOn, f.from, f.to));
   if(q) rows=rows.filter(a=>(a.ciTag+' '+a.name+' '+a.assignedTo+' '+clientName(a.clientId)+' '+a.serial+' '+a.vendor).toLowerCase().includes(q));
   return rows;
 }
 
+function afClear(){ state.af={status:state.af.status, q:state.af.q, client:[], type:[], cov:'all', from:'', to:''}; render(); }
+
 function viewAssetsPage(){
+  const f=state.af;
   const counts={all:liveAssets().length, archived:state.assets.filter(a=>a.archived).length};
   Object.keys(ASSET_STATUS).forEach(k=>counts[k]=liveAssets().filter(a=>a.status===k).length);
   const seg=[['all','All'],['inuse','In use'],['stock','In stock'],['repair','In repair'],['retired','Retired'],['archived','Archived']]
-    .map(([k,l])=>`<button class="${state.af.status===k?'on':''}" onclick="state.af.status='${k}';render()">${l}<span class="pip">${counts[k]||0}</span></button>`).join('');
+    .map(([k,l])=>`<button class="${f.status===k?'on':''}" onclick="state.af.status='${k}';render()">${l}<span class="pip">${counts[k]||0}</span></button>`).join('');
   const money=canSeeCosts();
+  /* filter options: archived clients ride along so their assets stay findable
+     (row-37 doctrine: keep them out only when nothing references them) */
+  const cOpts=state.clients.filter(c=>!c.sentinel).map(c=>({v:c.id,label:c.name+(c.archived?' (archived)':'')}));
+  const tOpts=ATYPES.map(t=>({v:t,label:t}));
+  const filtered = f.client.length||f.type.length||f.cov!=='all'||f.from||f.to;
   const pg=paginate('assetsList', assetRows());
   return `
   <div class="toolbar">
     <div class="seg">${seg}</div>
-    <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="assets-q" placeholder="Search assets…" value="${esc(state.af.q)}" oninput="state.af.q=this.value;render()"></div>
+    <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="assets-q" placeholder="Search assets…" value="${esc(f.q)}" oninput="state.af.q=this.value;render()"></div>
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportAssetsCSV()">Export CSV</button>`:''}
     ${can('a_manage_assets')?`<button class="btn primary" onclick="assetModal('')">${icon(IC.plus)} Add asset</button>`:''}
+  </div>
+  <div class="toolbar" style="margin-top:-4px">
+    <span style="display:inline-block;min-width:190px;vertical-align:middle">${multiCombo('aft-client', cOpts, f.client, v=>mfToggle('af','client',v), 'All clients')}</span>
+    <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('aft-type', tOpts, f.type, v=>mfToggle('af','type',v), 'All types')}</span>
+    <select data-fkey="af-cov" onchange="state.af.cov=this.value;render()" title="Warranty health">
+      <option value="all" ${f.cov==='all'?'selected':''}>Warranty: any</option>
+      <option value="ok" ${f.cov==='ok'?'selected':''}>Active (beyond ${leadDays()}d)</option>
+      <option value="due" ${f.cov==='due'?'selected':''}>Expiring ≤ ${leadDays()}d</option>
+      <option value="breach" ${f.cov==='breach'?'selected':''}>Expired</option>
+      <option value="none" ${f.cov==='none'?'selected':''}>No warranty on record</option>
+    </select>
+    <span class="mini muted">purchased</span>
+    <input type="date" data-fkey="af-from" value="${esc(f.from)}" onchange="state.af.from=this.value;render()" title="Purchased from">
+    <span class="mini muted">–</span>
+    <input type="date" data-fkey="af-to" value="${esc(f.to)}" onchange="state.af.to=this.value;render()" title="Purchased to">
+    ${filtered?`<button class="btn sm ghost" onclick="afClear()">✕ Clear filters</button>`:''}
+    <span class="mini muted" style="margin-left:auto">${pg.total} match${pg.total===1?'':'es'}</span>
   </div>
   <div class="card">
     <table class="tbl">

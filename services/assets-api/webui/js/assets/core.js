@@ -77,13 +77,20 @@ function daysTo(d){
   return Math.round((new Date(d+'T00:00:00') - mid)/86400000);
 }
 function leadDays(){ return (state.cfg && state.cfg.lapse_lead_days) || 60; }
-function covClass(d){ if(!d) return 'ok'; const n=daysTo(d); return n<0?'breach':(n<=leadDays()?'due':'ok'); }
+function covClass(d){ if(!d) return 'none'; const n=daysTo(d); return n<0?'breach':(n<=leadDays()?'due':'ok'); }
 function covText(d){
   if(!d) return '—';
   const n=daysTo(d);
   return n<0?('expired '+fmtDate(d)):(n<=leadDays()?('in '+n+'d · '+fmtDate(d)):fmtDate(d));
 }
 function hdot(d){ return `<span class="hdot ${covClass(d)}"><span class="sdot"></span>${covText(d)}</span>`; }
+/* term-end cell: a recurring term never "expires" — it renews (the server
+   rolls endsOn to the CURRENT term already; Build 30 advances the anchor) */
+function endCell(d, recurring){
+  if(!d) return '—';
+  if(recurring) return `<span class="hdot ok"><span class="sdot"></span>renews ${fmtDate(d)}</span>`;
+  return hdot(d);
+}
 
 const ASSET_STATUS = {inuse:['green','In use'], stock:['blue','In stock'], repair:['brass','In repair'], retired:['grey','Retired']};
 function statusChip(s){ const c=ASSET_STATUS[s]||['grey',s]; return `<span class="chip ${c[0]} slim"><span class="cdot"></span>${c[1]}</span>`; }
@@ -91,6 +98,24 @@ function kindChip(k){ return `<span class="chip grey slim"><span class="cdot"></
 
 /* who inventory can belong to: real, live clients only (never the sentinel) */
 function pickableClients(){ return state.clients.filter(c=>!c.sentinel && !c.archived); }
+
+/* ISO-date window test (dates compare lexicographically). Once a window is
+   set, undated rows drop out — an unknown date can't be proven inside it. */
+function inDateRange(d, from, to){
+  if(!d) return !(from||to);
+  if(from && d < from) return false;
+  if(to && d > to) return false;
+  return true;
+}
+
+/* multi-select filter toggle — one shape for every view's filter bag:
+   toggle(null) clears the whole selection (the combo's "All" row) */
+function mfToggle(bag, key, v){
+  const arr=state[bag][key];
+  if(v===null) arr.length=0;
+  else { const i=arr.indexOf(v); if(i>=0) arr.splice(i,1); else arr.push(v); }
+  render();
+}
 
 /* live (non-archived) slices — every view starts from these */
 function liveAssets(){ return state.assets.filter(a=>!a.archived); }

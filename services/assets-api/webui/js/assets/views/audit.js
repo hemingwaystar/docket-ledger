@@ -23,8 +23,8 @@ function viewAudit(){
     <div>Every change is recorded here and can't be edited — the append-only system log (app <b>assets</b> + sign-ins). Each asset, licence and contract also carries its own attributed change feed on its detail page.</div></div>
   <div class="toolbar">
     <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="audit-q" placeholder="Search events…" value="${esc(state.auf.q)}" oninput="state.auf.q=this.value;render()"></div>
-    <input type="date" value="${esc(state.auf.from)}" onchange="state.auf.from=this.value;render()" title="From">
-    <input type="date" value="${esc(state.auf.to)}" onchange="state.auf.to=this.value;render()" title="To">
+    <input type="date" data-fkey="auf-from" value="${esc(state.auf.from)}" onchange="state.auf.from=this.value;render()" title="From">
+    <input type="date" data-fkey="auf-to" value="${esc(state.auf.to)}" onchange="state.auf.to=this.value;render()" title="To">
     ${state.auf.q||state.auf.from||state.auf.to?`<button class="btn sm ghost" onclick="state.auf={q:'',from:'',to:''};render()">Clear</button>`:''}
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportAuditCSV()">Export CSV</button>`:''}

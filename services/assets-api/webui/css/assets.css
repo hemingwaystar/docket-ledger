@@ -127,6 +127,7 @@ a{color:inherit}
 .hdot.ok{color:var(--ink-2)} .hdot.ok .sdot{background:var(--billable)}
 .hdot.due{color:var(--warn)} .hdot.due .sdot{background:var(--warn)}
 .hdot.breach{color:var(--void);font-weight:600} .hdot.breach .sdot{background:var(--void)}
+.hdot.none{color:var(--ink-3)} .hdot.none .sdot{background:#c6ced2}
 
 /* ---- tables ------------------------------------------------------------------ */
 .tbl{width:100%;border-collapse:collapse;font-size:13px}

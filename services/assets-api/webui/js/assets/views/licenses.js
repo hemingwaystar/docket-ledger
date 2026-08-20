@@ -40,7 +40,7 @@ function viewLicenses(){
           ${can('a_manage_licenses')?`<span style="white-space:nowrap"><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',-1)">−</button><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',1)">+</button></span>`:''}</td>
         <td><div class="bar" title="${pct}%"><i class="${cls}" style="width:${pct}%"></i></div><div class="mini" style="margin-top:3px">${l.seatsUsed>=l.seatsTotal?'<span style="color:var(--void)">at capacity</span>':pct+'% used'}</div></td>
         <td>${termLabel(l.termMonths,l.recurring)}</td>
-        <td>${hdot(l.endsOn)}</td>
+        <td>${endCell(l.endsOn,l.recurring)}</td>
         ${money?`<td class="num money">${fmtMoney(l.costCents)}</td>
         <td class="num money">${fmtMoney(annualizedCents(l.costCents,l.termMonths))}<span class="muted">/yr</span></td>`:''}</tr>`;}).join('')
       :`<tr><td colspan="${money?8:6}"><div class="empty">${icon(IC.license)}<div>No licences match.</div></div></td></tr>`}
@@ -83,7 +83,7 @@ function openLicense(id){
         <div><div class="k">Seats</div><div class="v mono">${l.seatsUsed}/${l.seatsTotal}${l.seatsUsed>=l.seatsTotal?' <span class="chip red slim"><span class="cdot"></span>true-up</span>':''}</div></div>
         <div><div class="k">Term</div><div class="v">${termLabel(l.termMonths,l.recurring)}</div></div>
         <div><div class="k">Term started</div><div class="v">${l.termStartedOn?fmtDate(l.termStartedOn):'—'}</div></div>
-        <div><div class="k">Term ends</div><div class="v">${hdot(l.endsOn)}</div></div>
+        <div><div class="k">Term ends</div><div class="v">${endCell(l.endsOn,l.recurring)}</div></div>
         ${canSeeCosts()?`<div><div class="k">Cost / term</div><div class="v money">${fmtMoney(l.costCents)}</div></div>
         <div><div class="k">Annualised</div><div class="v money">${fmtMoney(annualizedCents(l.costCents,l.termMonths))}/yr</div></div>`:''}
       </div>

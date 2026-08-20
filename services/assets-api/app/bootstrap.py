@@ -43,9 +43,19 @@ def bootstrap(request: Request):
                               "version": r["version"], "createdAt": ms(r["created_at"]),
                               "updatedAt": ms(r["updated_at"])}
                              for r in cur.fetchall()]
+            # ends_on is the CURRENT term's end: recurring terms roll forward
+            # by however many whole terms have elapsed (a recurring item never
+            # "expires" — Build 30's worker advances the anchor authoritatively
+            # when it posts each renewal; until then the roll is derived here)
             cur.execute("""SELECT id, product, vendor, client_id, seats_total, seats_used,
                                   term_months, recurring, term_started_on,
-                                  (term_started_on + make_interval(months => term_months))::date AS ends_on,
+                                  (term_started_on + make_interval(months => term_months *
+                                     (CASE WHEN recurring
+                                                AND term_started_on + make_interval(months => term_months) <= current_date
+                                           THEN floor((extract(year from age(current_date, term_started_on)) * 12
+                                                     + extract(month from age(current_date, term_started_on)))
+                                                    / term_months)::int + 1
+                                           ELSE 1 END)))::date AS ends_on,
                                   cost_cents, note, archived_at, version, updated_at
                              FROM assets.licenses ORDER BY product""")
             out["licenses"] = [{"id": str(r["id"]), "product": r["product"], "vendor": r["vendor"],
@@ -60,7 +70,13 @@ def bootstrap(request: Request):
                                for r in cur.fetchall()]
             cur.execute("""SELECT c.id, c.vendor, c.kind, c.client_id, c.scope_note,
                                   c.term_months, c.recurring, c.term_started_on,
-                                  (c.term_started_on + make_interval(months => c.term_months))::date AS ends_on,
+                                  (c.term_started_on + make_interval(months => c.term_months *
+                                     (CASE WHEN c.recurring
+                                                AND c.term_started_on + make_interval(months => c.term_months) <= current_date
+                                           THEN floor((extract(year from age(current_date, c.term_started_on)) * 12
+                                                     + extract(month from age(current_date, c.term_started_on)))
+                                                    / c.term_months)::int + 1
+                                           ELSE 1 END)))::date AS ends_on,
                                   c.cost_cents, c.archived_at, c.version, c.updated_at,
                                   COALESCE((SELECT array_agg(ca.asset_id)
                                              FROM assets.contract_assets ca

@@ -88,16 +88,21 @@ function combo(id, opts, val, onpick, placeholder){
     <input type="hidden" id="${id}" value="${esc(val||'')}">
     <input type="text" id="${id}-q" autocomplete="off" placeholder="${esc(placeholder||'Type to search…')}" value="${esc(cur?cur.label:'')}"
       onfocus="comboOpen('${id}')" oninput="comboFilter('${id}')"
-      onkeydown="if(event.key==='Enter'){event.preventDefault();comboPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');}">
+      onkeydown="if(event.key==='Enter'){event.preventDefault();comboPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');event.stopPropagation();}">
     <div id="${id}-list" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);z-index:80"></div>
   </div>`;
 }
 function comboData(id){ return (_combos[id]||{}).opts || []; }
-function comboOpen(id){ const q=document.getElementById(id+'-q'); if(q) q.select(); comboFilter(id); }
-function comboFilter(id){
-  const q = document.getElementById(id+'-q').value.trim().toLowerCase();
+/* opening shows the FULL list — the input still holds the current pick's
+   label, and filtering against it hid every other option (the licence
+   modal's client picker looked empty). Filtering starts when you TYPE. */
+function comboOpen(id){ const q=document.getElementById(id+'-q'); if(q) q.select(); comboRender(id, ''); }
+function comboFilter(id){ comboRender(id, document.getElementById(id+'-q').value.trim().toLowerCase()); }
+function comboRender(id, q){
+  if(_combos[id]) _combos[id].lastQ = q;   /* Enter picks what the list SHOWS */
   const opts = comboData(id).filter(o=>!q || o.label.toLowerCase().includes(q) || (o.sub||'').toLowerCase().includes(q));
   const box = document.getElementById(id+'-list');
+  if(!box) return;
   box.innerHTML = opts.slice(0,50).map(o=>`<div style="padding:7px 11px;cursor:pointer;font-size:13px" onmousedown="comboPick('${id}','${jsq(String(o.v))}')"><b>${esc(o.label)}</b>${o.sub?` <span class="mini muted">${esc(o.sub)}</span>`:''}</div>`).join('')
     || `<div class="mini muted" style="padding:9px 11px">No matches.</div>`;
   box.style.display='block';
@@ -111,7 +116,16 @@ function comboPick(id, v){
   if(f){ try{ f(); }catch(e){} }
 }
 function comboPickFirst(id){
-  const q = document.getElementById(id+'-q').value.trim().toLowerCase();
+  const reg=_combos[id]||{};
+  const q = reg.lastQ!=null ? reg.lastQ
+          : document.getElementById(id+'-q').value.trim().toLowerCase();
+  if(!q){
+    /* fresh-open Enter keeps the CURRENT pick — never silently switches to
+       the alphabetically-first option */
+    const cur=document.getElementById(id);
+    if(cur&&cur.value){ const o=comboData(id).find(x=>String(x.v)===String(cur.value));
+      if(o){ comboPick(id,o.v); return; } }
+  }
   const o = comboData(id).find(x=>!q || x.label.toLowerCase().includes(q) || (x.sub||'').toLowerCase().includes(q));
   if(o) comboPick(id, o.v);
 }
@@ -134,7 +148,7 @@ function multiCombo(id, opts, vals, ontoggle, placeholder, noAll){
     <input type="text" id="${id}-q" autocomplete="off" placeholder="${esc(vals.length?'':(placeholder||'All'))}" value="${esc(q)}"
       style="border:0;outline:none;flex:1;min-width:60px;font-size:13px;background:transparent"
       onfocus="multiOpen('${id}')" oninput="multiFilter('${id}')"
-      onkeydown="if(event.key==='Enter'){event.preventDefault();multiPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');}">
+      onkeydown="if(event.key==='Enter'){event.preventDefault();multiPickFirst('${id}');} if(event.key==='Escape'){comboClose('${id}');event.stopPropagation();}">
     <div id="${id}-list" style="display:none;position:absolute;top:100%;left:0;right:0;min-width:220px;max-height:240px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 24px rgba(21,32,41,.14);z-index:80"></div>
   </div>`;
 }

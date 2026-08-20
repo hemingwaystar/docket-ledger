@@ -14,8 +14,8 @@ function viewOverview(){
   const byType={};
   live.forEach(a=>{byType[a.atype]=(byType[a.atype]||0)+1;});
   const maxType=Math.max(1,...Object.values(byType));
-  const soonest=[...liveContracts().filter(c=>c.endsOn).map(c=>({name:c.vendor, sub:clientName(c.clientId)+' · '+termLabel(c.termMonths,c.recurring), end:c.endsOn, go:"go('contracts')"})),
-                 ...liveLicenses().filter(l=>l.endsOn).map(l=>({name:l.product, sub:clientName(l.clientId)+' · '+termLabel(l.termMonths,l.recurring), end:l.endsOn, go:"go('licenses')"}))]
+  const soonest=[...liveContracts().filter(c=>c.endsOn&&!c.recurring).map(c=>({name:c.vendor, sub:clientName(c.clientId)+' · '+termLabel(c.termMonths,c.recurring), end:c.endsOn, go:"go('contracts')"})),
+                 ...liveLicenses().filter(l=>l.endsOn&&!l.recurring).map(l=>({name:l.product, sub:clientName(l.clientId)+' · '+termLabel(l.termMonths,l.recurring), end:l.endsOn, go:"go('licenses')"}))]
     .sort((a,b)=>daysTo(a.end)-daysTo(b.end)).slice(0,6);
 
   return `

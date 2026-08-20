@@ -24,8 +24,10 @@ const state = {
   cfg:{ lapse_lead_days:60, lapse_group:'Alerts',
         lapse_kinds:{warranty:true, license:true, contract:true} },
 
-  /* per-view filter bags */
-  af:{status:'all', q:''},       // assets
+  /* per-view filter bags — arrays are multi-selects, empty = no filter
+     (the Docket/Ledger filter-bar contract) */
+  af:{status:'all', q:'', client:[], type:[], cov:'all', from:'', to:''},  // assets
+  rf:{client:[], type:[], status:[], from:'', to:''},                      // reports
   lf:{q:''},                     // licenses
   cf:{q:''},                     // contracts
   auf:{q:'', from:'', to:''},    // audit

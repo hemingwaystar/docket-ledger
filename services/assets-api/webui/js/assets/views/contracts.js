@@ -39,7 +39,7 @@ function viewContracts(){
         <td>${esc(clientName(c.clientId))}</td>
         <td class="mini" style="font-size:12.5px;color:var(--ink-2)">${(c.assetIds||[]).length?esc((c.assetIds||[]).slice(0,3).map(id=>{const a=assetById(id);return a?a.ciTag:'?';}).join(', ')+((c.assetIds||[]).length>3?' +'+((c.assetIds||[]).length-3):'')):esc(c.scopeNote||'—')}</td>
         <td>${termLabel(c.termMonths,c.recurring)}</td>
-        <td>${hdot(c.endsOn)}</td>
+        <td>${endCell(c.endsOn,c.recurring)}</td>
         ${money?`<td class="num money">${fmtMoney(c.costCents)}</td>
         <td class="num money">${fmtMoney(annualizedCents(c.costCents,c.termMonths))}<span class="muted">/yr</span></td>`:''}</tr>`).join('')
       :`<tr><td colspan="${money?8:6}"><div class="empty">${icon(IC.contracts)}<div>No contracts match.</div></div></td></tr>`}
@@ -70,7 +70,7 @@ function openContract(id){
     <div class="modal-body">
       <div class="detail-grid">
         <div><div class="k">Term</div><div class="v">${termLabel(c.termMonths,c.recurring)}</div></div>
-        <div><div class="k">Term ends</div><div class="v">${hdot(c.endsOn)}</div></div>
+        <div><div class="k">Term ends</div><div class="v">${endCell(c.endsOn,c.recurring)}</div></div>
         <div><div class="k">Term started</div><div class="v">${c.termStartedOn?fmtDate(c.termStartedOn):'—'}</div></div>
         ${canSeeCosts()?`<div><div class="k">Cost / term</div><div class="v money">${fmtMoney(c.costCents)} <span class="mini muted">(${fmtMoney(annualizedCents(c.costCents,c.termMonths))}/yr)</span></div></div>`:''}
       </div>
