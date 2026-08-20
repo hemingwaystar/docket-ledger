@@ -41,7 +41,7 @@ services:
       PGDATABASE: hemingway
       PGUSER: postgres
       PGPASSFILE_SOURCE: /run/secrets/pg_superuser_password
-    secrets: [pg_superuser_password, pg_desk_api_password, pg_ledger_api_password, pg_mail_worker_password]
+    secrets: [pg_superuser_password, pg_desk_api_password, pg_ledger_api_password, pg_mail_worker_password, pg_assets_api_password]
     volumes:
       - ./db:/db:ro
     entrypoint: ["/bin/sh", "/db/migrate.sh"]
@@ -90,6 +90,27 @@ services:
       timeout: 5s
       retries: 5
 
+  assets-api:
+    build: ./services/assets-api
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_NAME: hemingway
+      DATABASE_USER: assets_api
+      DATABASE_PASSWORD_FILE: /run/secrets/pg_assets_api_password
+      # no KEK: Assets seals no secrets of its own (grant-of-KEK is per-service)
+    secrets: [pg_assets_api_password]
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:8083:8000"
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   mail-worker:
     build: ./services/mail-worker
     restart: unless-stopped
@@ -128,6 +149,7 @@ secrets:
   pg_desk_api_password:   { file: ./secrets/pg_desk_api_password }
   pg_ledger_api_password: { file: ./secrets/pg_ledger_api_password }
   pg_mail_worker_password: { file: ./secrets/pg_mail_worker_password }
+  pg_assets_api_password: { file: ./secrets/pg_assets_api_password }
   kek:                    { file: ./secrets/kek }
 
 networks:

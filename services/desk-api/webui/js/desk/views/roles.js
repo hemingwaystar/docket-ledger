@@ -41,8 +41,23 @@ const LEDGER_CATALOG = [
   {id:'l_view_audit',     label:'View the Ledger audit log',            group:'Billing & admin'},
   {id:'l_manage_settings',label:'Manage Ledger settings',               group:'Billing & admin'},
 ];
+
+/* Assets' permission catalog (a_*-prefixed, migration 0037) — same
+   one-PATCH-path management as the Ledger block. */
+const ASSETS_CATALOG = [
+  {id:'a_view',            label:'View the Assets app',                 group:'Visibility'},
+  {id:'a_see_costs',       label:'See purchase & contract costs',       group:'Visibility'},
+  {id:'a_manage_assets',   label:'Add & edit assets',                   group:'Inventory'},
+  {id:'a_manage_licenses', label:'Manage software & licenses',          group:'Inventory'},
+  {id:'a_manage_contracts',label:'Manage contracts & warranties',       group:'Inventory'},
+  {id:'a_post_charges',    label:'Post charges to Ledger',              group:'Billing'},
+  {id:'a_export_csv',      label:'Export & copy CSV data',              group:'Admin'},
+  {id:'a_view_audit',      label:'View the Assets audit log',           group:'Admin'},
+  {id:'a_manage_settings', label:'Manage Assets settings',              group:'Admin'},
+];
 function permLabel(pid){
-  const p = PERM_CATALOG.find(x=>x.id===pid) || LEDGER_CATALOG.find(x=>x.id===pid);
+  const p = PERM_CATALOG.find(x=>x.id===pid) || LEDGER_CATALOG.find(x=>x.id===pid)
+    || ASSETS_CATALOG.find(x=>x.id===pid);
   return p? p.label : pid;
 }
 
@@ -59,13 +74,13 @@ function togglePerm(name, pid){
     .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
 }
 
-/* Presets cover the Docket matrix; l_* grants ride untouched. The whole
-   diff lands in ONE PATCH — add[]/remove[] batched. */
+/* Presets cover the Docket matrix; l_* AND a_* grants ride untouched. The
+   whole diff lands in ONE PATCH — add[]/remove[] batched. */
 function applyPreset(name, preset){
   const r = state.roleDefs.find(x=>x.name===name); if(!r) return;
   const target = new Set(PRESETS[preset]);
   const add    = [...target].filter(p=>!r.perms.has(p));
-  const remove = [...r.perms].filter(p=>!p.startsWith('l_') && !target.has(p));
+  const remove = [...r.perms].filter(p=>!p.startsWith('l_') && !p.startsWith('a_') && !target.has(p));
   if(!add.length && !remove.length) return;             /* diff-guard (row 21) */
   remove.forEach(p=>r.perms.delete(p));
   add.forEach(p=>r.perms.add(p));
@@ -176,9 +191,10 @@ function entraSet(role, v, srcEl){
 function rolesSection(){
   const groups  = [...new Set(PERM_CATALOG.map(p=>p.group))];
   const lgroups = [...new Set(LEDGER_CATALOG.map(p=>p.group))];
-  const total   = ALL_PERMS.length + LEDGER_CATALOG.length;
+  const agroups = [...new Set(ASSETS_CATALOG.map(p=>p.group))];
+  const total   = ALL_PERMS.length + LEDGER_CATALOG.length + ASSETS_CATALOG.length;
   return `
-  <div class="notice info" style="margin-bottom:14px">${icon(IC.shield)}<div><b>All RBAC lives here.</b> One role list, two permission matrices — what each role can do in <b>Docket</b> and in <b>Ledger</b> — managed in one place and mapped from the same Entra security groups. Changes apply at each agent’s next sign-in; Ledger’s Settings page points back here.</div></div>
+  <div class="notice info" style="margin-bottom:14px">${icon(IC.shield)}<div><b>All RBAC lives here.</b> One role list, three permission matrices — what each role can do in <b>Docket</b>, in <b>Ledger</b> and in <b>Assets</b> — managed in one place and mapped from the same Entra security groups. Changes apply at each agent’s next sign-in; the other apps’ Settings pages point back here.</div></div>
   ${state.roleDefs.map(r=>{
     const open = state.openRole===r.name;
     const arch = r.active===false;
@@ -209,6 +225,13 @@ function rolesSection(){
       <div class="perm-grid" style="padding-top:4px">
         ${lgroups.map(g=>`<div class="perm-col"><div class="perm-group">${g}</div>
           ${LEDGER_CATALOG.filter(p=>p.group===g).map(p=>`
+            <label class="perm ${r.perms.has(p.id)?'on':''}"><input type="checkbox" ${r.perms.has(p.id)?'checked':''} onchange="togglePerm('${jsq(r.name)}','${p.id}')">${esc(p.label)}</label>`).join('')}
+        </div>`).join('')}
+      </div>
+      <div style="border-top:1px dashed var(--line);margin:0 16px;padding:12px 0 4px"><span class="mini muted" style="text-transform:uppercase;letter-spacing:.07em;font-weight:600">Assets permissions</span></div>
+      <div class="perm-grid" style="padding-top:4px">
+        ${agroups.map(g=>`<div class="perm-col"><div class="perm-group">${g}</div>
+          ${ASSETS_CATALOG.filter(p=>p.group===g).map(p=>`
             <label class="perm ${r.perms.has(p.id)?'on':''}"><input type="checkbox" ${r.perms.has(p.id)?'checked':''} onchange="togglePerm('${jsq(r.name)}','${p.id}')">${esc(p.label)}</label>`).join('')}
         </div>`).join('')}
       </div>

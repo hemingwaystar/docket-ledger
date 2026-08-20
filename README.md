@@ -16,22 +16,22 @@ Everything below the proxy is loopback-only.
 | Layer | Boundary |
 |---|---|
 | Schemas | `shared` (directory/auth/config) · `desk` · `ledger` · `audit` (append-only) |
-| DB roles | `desk_api`, `ledger_api`, `mail_worker` — least-privilege grants in `0001_init.sql`; **DELETE granted nowhere** |
-| Services | one container each; only the two APIs publish ports, loopback-only |
-| Secrets | app credentials envelope-encrypted in `shared.secrets`, unwrapped by the file-mounted KEK (`secrets/README.md`); ledger-api never mounts the KEK |
+| DB roles | `desk_api`, `ledger_api`, `mail_worker`, `assets_api` — least-privilege grants in `0001_init.sql` + `0037_assets_init.sql`; **DELETE granted nowhere** |
+| Services | one container each; only the three APIs publish ports, loopback-only |
+| Secrets | app credentials envelope-encrypted in `shared.secrets`, unwrapped by the file-mounted KEK (`secrets/README.md`); desk-api, ledger-api (Odoo secret) and mail-worker mount it — assets-api never does |
 | Invariants | immutability, sentinels, state machines = **database triggers**, not API convention |
 
 ## First boot
 
 ```sh
 cd secrets
-for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password kek; do
+for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password pg_assets_api_password kek; do
   openssl rand -base64 32 | tr -d '\n' > "$f"
   chmod 600 "$f"
 done
 cd .. && docker compose up -d --build
 docker compose logs migrate      # expect "apply 0001..., apply 0002..., migrations complete"
-curl http://127.0.0.1:8081/readyz && curl http://127.0.0.1:8082/readyz
+curl http://127.0.0.1:8081/readyz && curl http://127.0.0.1:8082/readyz && curl http://127.0.0.1:8083/readyz
 ```
 
 Then install `nginx/hemingway.conf.example` on the host and reload nginx.

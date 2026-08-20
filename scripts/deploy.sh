@@ -11,5 +11,5 @@ cd "$(dirname "$0")/.."
 git restore .
 git pull
 sudo docker compose run --rm migrate
-sudo docker compose up -d --build desk-api ledger-api mail-worker
+sudo docker compose up -d --build desk-api ledger-api assets-api mail-worker
 sudo docker compose ps

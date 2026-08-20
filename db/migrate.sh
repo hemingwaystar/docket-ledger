@@ -24,7 +24,7 @@ for f in /db/migrations/*.sql; do
 done
 
 # runtime role passwords come from files, never from SQL in the repo
-for role in desk_api ledger_api mail_worker; do
+for role in desk_api ledger_api mail_worker assets_api; do
   pw="$(cat /run/secrets/pg_${role}_password)"
   psql -v ON_ERROR_STOP=1 -q -c "ALTER ROLE ${role} WITH PASSWORD '$(printf %s "$pw" | sed "s/'/''/g")'"
 done
