@@ -39,6 +39,15 @@
 -- ============================================================================
 BEGIN;
 
+-- ---- 0. finish bug #24 (found by this migration's own prod deploy) ----------
+-- 0017 dropped client_rates' PK and added the two partial unique indexes so
+-- the NULL-typed client-wide row shape could exist — but DROPPING A PRIMARY
+-- KEY DOES NOT DROP THE IMPLICIT NOT NULL it created (attnotnull survives).
+-- No code path ever INSERTED a wide row until the seed below, so the half-fix
+-- sat latent for 21 migrations: put_client_rate's wide branch has been broken
+-- in prod this whole time (bug ledger row 49). Idempotent no-op once nullable.
+ALTER TABLE ledger.client_rates ALTER COLUMN activity_type_id DROP NOT NULL;
+
 -- ---- 1. seed dated wide-lane rows for clients already unticked -------------
 -- (includes the intake sentinel, seeded false in 0002 — unassigned-intake
 -- time should never invoice anyway; entries re-price when reclient'ed)
