@@ -13,15 +13,15 @@ function pgTitle(){ return PAGES[state.view].t; }
 
 function needsAttention(){
   /* the overview's worklist, shared with the nav pip: expiring warranties,
-     full pools, ending NON-recurring terms (recurring ones renew) */
+     ending NON-recurring terms (recurring ones renew). Full licence pools
+     are deliberately NOT alerts (user decision 2026-08-20: MS seats are
+     bought as needed, so full = normal) — capacity stays visible in the
+     Licenses table, the at-capacity filter and the stat card instead. */
   const out=[];
   liveAssets().filter(a=>a.status!=='retired' && a.warrantyUntil && daysTo(a.warrantyUntil)<=leadDays())
     .forEach(a=>out.push({cid:a.clientId, sev:daysTo(a.warrantyUntil)<0?'red':'brass',
       t:'Warranty '+(daysTo(a.warrantyUntil)<0?'expired':'expiring')+' — '+a.ciTag+' '+a.name,
       s:clientName(a.clientId)+' · '+covText(a.warrantyUntil), go:"go('assets')"}));
-  liveLicenses().filter(l=>l.seatsUsed>=l.seatsTotal)
-    .forEach(l=>out.push({cid:l.clientId, sev:'red', t:'Licence pool full — '+l.product,
-      s:clientName(l.clientId)+' · '+l.seatsUsed+'/'+l.seatsTotal+' seats', go:"go('licenses')"}));
   liveLicenses().filter(l=>!l.recurring && l.endsOn && daysTo(l.endsOn)<=leadDays())
     .forEach(l=>out.push({cid:l.clientId, sev:daysTo(l.endsOn)<0?'red':'brass',
       t:(daysTo(l.endsOn)<0?'Licence term lapsed':'Licence term ending')+' — '+l.product,
