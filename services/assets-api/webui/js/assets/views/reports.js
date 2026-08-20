@@ -84,7 +84,7 @@ function viewReports(){
       ${Object.keys(byType).length?Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`
         <div style="margin-bottom:11px">
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span class="type-badge"><span class="tibox">${icon(TYPEIC[t]||IC.assets)}</span>${t}</span><span class="mono">${n}</span></div>
-          <div class="bar"><i style="width:${Math.round(n/Math.max(1,...Object.values(byType))*100)}%"></i></div>
+          <div class="bar" title="${Math.round(n/Math.max(1,rows.length)*100)}% of fleet"><i style="width:${Math.round(n/Math.max(1,rows.length)*100)}%"></i></div>
         </div>`).join(''):'<div class="mini muted">Nothing matches the filters.</div>'}
     </div>
   </div>`;

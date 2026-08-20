@@ -13,7 +13,6 @@ function viewOverview(){
   const fullPools = liveLicenses().filter(l=>l.seatsUsed>=l.seatsTotal);
   const byType={};
   live.forEach(a=>{byType[a.atype]=(byType[a.atype]||0)+1;});
-  const maxType=Math.max(1,...Object.values(byType));
   const soonest=[...liveContracts().filter(c=>c.endsOn&&!c.recurring).map(c=>({name:c.vendor, sub:clientName(c.clientId)+' · '+termLabel(c.termMonths,c.recurring), end:c.endsOn, go:"go('contracts')"})),
                  ...liveLicenses().filter(l=>l.endsOn&&!l.recurring).map(l=>({name:l.product, sub:clientName(l.clientId)+' · '+termLabel(l.termMonths,l.recurring), end:l.endsOn, go:"go('licenses')"}))]
     .sort((a,b)=>daysTo(a.end)-daysTo(b.end)).slice(0,6);
@@ -50,7 +49,7 @@ function viewOverview(){
       ${Object.keys(byType).length?Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`
         <div style="margin-bottom:11px">
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><span class="type-badge"><span class="tibox">${icon(TYPEIC[t]||IC.assets)}</span>${t}</span><span class="mono">${n}</span></div>
-          <div class="bar"><i style="width:${Math.round(n/maxType*100)}%"></i></div>
+          <div class="bar" title="${Math.round(n/live.length*100)}% of fleet"><i style="width:${Math.round(n/live.length*100)}%"></i></div>
         </div>`).join(''):'<div class="mini muted">No assets yet — add the first one on the Assets page.</div>'}
     </div>
   </div>

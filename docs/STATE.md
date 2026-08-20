@@ -604,6 +604,7 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **Build 27g — type bars mean share-of-fleet:** Overview "Assets by type" and Reports "Fleet by type" bars are now the type's share of ALL live assets (tooltip "N% of fleet"), not scaled to the largest type — the biggest category no longer draws a full bar regardless of count.
 - [ ] **BUILD 27f — no migration.** assets-api rebuilds (webui only). RELOAD APP TABS.
 - [ ] **Build 27f — verify:** (1) A FULL licence pool no longer appears in Overview's Needs-attention list, the nav pip, or a client's needs-attention chip (user decision: MS seats are bought as needed — full is normal); capacity stays visible in the Licenses table ("at capacity"), the ≥90%/at-capacity filter, the stat card sub-line and the true-up chip. (2) Settings-page checkboxes (Raise tickets for…) and the modals' ↻ recurring tick sit at intrinsic size next to their labels — no more full-row-wide checkbox with the label at the far edge.
 - [ ] **BUILD 27e — no migration.** assets-api rebuilds (ships licenses.py/contracts.py + webui). RELOAD APP TABS. **SEMANTICS NOTE: licence cost_cents is now PER SEAT per term** — if any licence was entered as a whole-pool figure, re-enter it as the per-seat unit (or set seats to 1 for lump pricing).
