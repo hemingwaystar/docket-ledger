@@ -38,7 +38,7 @@ function viewReports(){
   const bookByClient={};
   rows.forEach(a=>{ if(a.costCents!=null) bookByClient[a.clientId]=(bookByClient[a.clientId]||0)+a.costCents; });
   const totalBook=Object.values(bookByClient).reduce((s,n)=>s+n,0);
-  const licSpend=lics.reduce((s,l)=>s+annualizedCents(l.costCents,l.termMonths),0);
+  const licSpend=lics.reduce((s,l)=>s+annualizedCents(licPoolCents(l),l.termMonths),0);
   const ctSpend=cts.reduce((s,c)=>s+annualizedCents(c.costCents,c.termMonths),0);
   const byType={};
   rows.forEach(a=>{byType[a.atype]=(byType[a.atype]||0)+1;});
@@ -95,12 +95,12 @@ function reportClientRows(rows,lics,cts){
   const ids=[...new Set([...rows.map(a=>a.clientId), ...lics.filter(l=>l.clientId).map(l=>l.clientId), ...cts.map(c=>c.clientId)])];
   const msp=lics.filter(l=>!l.clientId);
   const mspRow=msp.length?[{cid:null, name:'All clients (MSP-wide)', n:0, book:0,
-    lic:msp.reduce((s,l)=>s+annualizedCents(l.costCents,l.termMonths),0), ct:0}]:[];
+    lic:msp.reduce((s,l)=>s+annualizedCents(licPoolCents(l),l.termMonths),0), ct:0}]:[];
   return mspRow.concat(ids.map(cid=>({
     cid, name:clientName(cid),
     n:rows.filter(a=>a.clientId===cid).length,
     book:rows.filter(a=>a.clientId===cid).reduce((s,a)=>s+(a.costCents||0),0),
-    lic:lics.filter(l=>l.clientId===cid).reduce((s,l)=>s+annualizedCents(l.costCents,l.termMonths),0),
+    lic:lics.filter(l=>l.clientId===cid).reduce((s,l)=>s+annualizedCents(licPoolCents(l),l.termMonths),0),
     ct:cts.filter(c=>c.clientId===cid).reduce((s,c)=>s+annualizedCents(c.costCents,c.termMonths),0),
   }))).sort((a,b)=>(b.book+b.lic+b.ct)-(a.book+a.lic+a.ct) || b.n-a.n);
 }

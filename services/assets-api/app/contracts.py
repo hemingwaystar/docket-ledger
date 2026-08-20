@@ -138,18 +138,21 @@ def set_covered_assets(contract_id: str, body: CoveredAssets, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "a_manage_contracts")
         with conn.cursor() as cur:
-            cur.execute("SELECT vendor FROM assets.contracts WHERE id::text = %s", (contract_id,))
+            cur.execute("SELECT vendor, client_id FROM assets.contracts WHERE id::text = %s",
+                        (contract_id,))
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(404, "No such contract")
-            vendor = row[0]
-            # validate against live assets; unknown/archived ids are skipped,
-            # exactly how set_assignees skips inactive agents
+            vendor, ct_client = row
+            # validate against live assets OF THE CONTRACT'S CLIENT; unknown/
+            # archived/other-client ids are skipped, exactly how set_assignees
+            # skips inactive agents — coverage never silently spans clients
             keep = []
             if body.asset_ids:
                 cur.execute("""SELECT id, ci_tag FROM assets.assets
-                                WHERE id::text = ANY(%s) AND archived_at IS NULL""",
-                            (body.asset_ids,))
+                                WHERE id::text = ANY(%s) AND archived_at IS NULL
+                                  AND client_id = %s""",
+                            (body.asset_ids, ct_client))
                 keep = cur.fetchall()
             cur.execute("DELETE FROM assets.contract_assets WHERE contract_id::text = %s",
                         (contract_id,))

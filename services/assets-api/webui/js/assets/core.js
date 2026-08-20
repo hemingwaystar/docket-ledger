@@ -36,6 +36,7 @@ const IC = {
   printer:  _st('<path d="M6 9V3h12v6M6 18H4v-6h16v6h-2M8 14h8v6H8z"/>'),
   desktop:  _st('<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>'),
   box:      _st('<path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>'),
+  client:   _st('<path d="M3 21V7l7-4 7 4v14M9 21v-5h4v5M21 21H3M14 9h.01M6 9h.01M6 13h.01"/>'),
 };
 function icon(p,cls){return `<svg class="${cls||''}" viewBox="0 0 24 24" fill="currentColor">${p}</svg>`}
 const TYPEIC = {Laptop:IC.laptop, Desktop:IC.desktop, Server:IC.server, Network:IC.network,
@@ -63,6 +64,10 @@ function termLabel(m, recurring){
   return base + (recurring ? ' · ↻ recurring' : '');
 }
 function annualizedCents(costCents, m){ return Math.round(costCents*12/m); }
+/* licence cost_cents is PER SEAT per term (user decision 2026-08-20 — the
+   $4.80/seat M365 case); the POOL pays unit x purchased seats. A lump-priced
+   licence is just 1 seat x the lump. Contracts stay whole-agreement. */
+function licPoolCents(l){ return l.costCents * l.seatsTotal; }
 
 /* ------------ coverage health ------------
    due-window follows the lapse-scan setting so "needs attention" and the

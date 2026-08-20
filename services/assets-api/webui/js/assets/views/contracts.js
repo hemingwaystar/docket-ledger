@@ -8,11 +8,17 @@
    ========================================================================== */
 
 function contractRows(){
-  const q=(state.cf.q||'').toLowerCase();
+  const f=state.cf, q=(f.q||'').toLowerCase();
   let rows=liveContracts();
+  if(f.client.length) rows=rows.filter(c=>f.client.includes(c.clientId));
+  if(f.kind.length)   rows=rows.filter(c=>f.kind.includes(c.kind));
+  if(f.rec!=='all')   rows=rows.filter(c=> f.rec==='rec' ? c.recurring : !c.recurring);
+  if(f.from||f.to)    rows=rows.filter(c=>inDateRange(c.endsOn, f.from, f.to));
   if(q) rows=rows.filter(c=>(c.vendor+' '+CT_KIND_LABEL[c.kind]+' '+clientName(c.clientId)+' '+c.scopeNote).toLowerCase().includes(q));
   return rows;
 }
+
+function cfClear(){ state.cf={q:state.cf.q, client:[], kind:[], rec:'all', from:'', to:''}; render(); }
 
 function viewContracts(){
   const money=canSeeCosts();
@@ -28,6 +34,21 @@ function viewContracts(){
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportContractsCSV()">Export CSV</button>`:''}
     ${can('a_manage_contracts')?`<button class="btn primary" onclick="contractModal('')">${icon(IC.plus)} Add contract</button>`:''}
+  </div>
+  <div class="toolbar" style="margin-top:-4px">
+    <span style="display:inline-block;min-width:190px;vertical-align:middle">${multiCombo('cft-client', state.clients.filter(c=>!c.sentinel).map(c=>({v:c.id,label:c.name+(c.archived?' (archived)':'')})), state.cf.client, v=>mfToggle('cf','client',v), 'All clients')}</span>
+    <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('cft-kind', CT_KINDS.map(k=>({v:k,label:CT_KIND_LABEL[k]})), state.cf.kind, v=>mfToggle('cf','kind',v), 'All kinds')}</span>
+    <select data-fkey="cf-rec" onchange="state.cf.rec=this.value;render()" title="Renewal">
+      <option value="all" ${state.cf.rec==='all'?'selected':''}>Any renewal</option>
+      <option value="rec" ${state.cf.rec==='rec'?'selected':''}>&#8635; Recurring</option>
+      <option value="once" ${state.cf.rec==='once'?'selected':''}>One-off term</option>
+    </select>
+    <span class="mini muted">term ends</span>
+    <input type="date" data-fkey="cf-from" value="${esc(state.cf.from)}" onchange="state.cf.from=this.value;render()" title="Term ends from">
+    <span class="mini muted">&#8211;</span>
+    <input type="date" data-fkey="cf-to" value="${esc(state.cf.to)}" onchange="state.cf.to=this.value;render()" title="Term ends to">
+    ${state.cf.client.length||state.cf.kind.length||state.cf.rec!=='all'||state.cf.from||state.cf.to?`<button class="btn sm ghost" onclick="cfClear()">&#10005; Clear filters</button>`:''}
+    <span class="mini muted" style="margin-left:auto">${pg.total} match${pg.total===1?'':'es'}</span>
   </div>
   <div class="card">
     <table class="tbl">
@@ -100,23 +121,27 @@ function archiveContract(id){
 }
 
 /* ---- add / edit (coverage picker lives in the modal) ---- */
-function ctCoverageCombo(){
-  const clientId=document.getElementById('cf-client')?document.getElementById('cf-client').value:'';
+function ctCoverageCombo(clientId){
+  /* client comes in as a PARAM — reading #cf-client at template-build time
+     found nothing on first open (modal not in the DOM yet) and the PREVIOUS
+     modal's stale value on later opens, so the list scoped to the wrong
+     client (review finding: cross-client coverage could save silently) */
   const opts=liveAssets().filter(a=>!clientId||a.clientId===clientId)
     .map(a=>({v:a.id,label:a.ciTag+' · '+a.name,sub:clientName(a.clientId)}));
   return multiCombo('cf-assets', opts, window._ctSel, v=>{
     if(v===null) window._ctSel.length=0;
     else { const i=window._ctSel.indexOf(v); if(i>=0) window._ctSel.splice(i,1); else window._ctSel.push(v); }
     const w=document.getElementById('cf-assets-wrap');
-    if(w){ w.innerHTML=ctCoverageCombo(); const q=document.getElementById('cf-assets-q'); if(q){ q.focus(); multiOpen('cf-assets'); } }
+    if(w){ w.innerHTML=ctCoverageCombo(clientId); const q=document.getElementById('cf-assets-q'); if(q){ q.focus(); multiOpen('cf-assets'); } }
   }, 'No linked CIs', true);
 }
 
-function contractModal(id){
+function contractModal(id, presetClient){
   if(!can('a_manage_contracts')) return;
   const c=id?state.contracts.find(x=>x.id===id):null;
   window._ctSel=(c?(c.assetIds||[]).slice():[]);
   const cOpts=pickableClients().map(x=>({v:x.id,label:x.name}));
+  if(c && !cOpts.some(o=>o.v===c.clientId)) cOpts.unshift({v:c.clientId, label:clientName(c.clientId)+' (archived)'});
   openModal(`
     <div class="modal-head"><div><h3>${c?'Edit contract — '+esc(c.vendor):'Add contract'}</h3>
       <p>Type the term as sold (monthly, 1–5 yr…); link the CIs it covers so asset pages show their coverage.</p></div>
@@ -125,19 +150,19 @@ function contractModal(id){
       <div class="field"><label>Vendor / agreement</label><input type="text" id="cf-vendor" value="${esc(c?c.vendor:'')}" placeholder="Dell ProSupport Plus"></div>
       <div class="detail-grid">
         <div class="field"><label>Kind</label><select id="cf-kind">${CT_KINDS.map(k=>`<option value="${k}" ${c&&c.kind===k?'selected':''}>${CT_KIND_LABEL[k]}</option>`).join('')}</select></div>
-        <div class="field"><label>Client</label>${combo('cf-client', cOpts, c?c.clientId:'', function(){
+        <div class="field"><label>Client</label>${combo('cf-client', cOpts, c?c.clientId:(presetClient||''), function(){
           /* switching client prunes stale selections — coverage must never
              silently span clients (raw-uuid chips were the symptom) */
           const picked=document.getElementById('cf-client').value;
           window._ctSel=window._ctSel.filter(id=>{ const a=assetById(id); return a && (!picked||a.clientId===picked); });
-          const w=document.getElementById('cf-assets-wrap'); if(w) w.innerHTML=ctCoverageCombo(); }, 'Pick a client…')}</div>
+          const w=document.getElementById('cf-assets-wrap'); if(w) w.innerHTML=ctCoverageCombo(picked); }, 'Pick a client…')}</div>
       </div>
       ${termFields('cf', c?c.termMonths:12, c?c.recurring:false)}
       <div class="detail-grid">
         <div class="field"><label>Term started</label><input type="date" id="cf-start" value="${c&&c.termStartedOn?c.termStartedOn:localISODate()}"></div>
         ${canSeeCosts()?`<div class="field"><label>Cost per term ($)</label><input type="number" id="cf-cost" min="0" step="0.01" value="${c?(c.costCents/100):''}" placeholder="0.00"></div>`:''}
       </div>
-      <div class="field"><label>Covered assets</label><div id="cf-assets-wrap">${ctCoverageCombo()}</div></div>
+      <div class="field"><label>Covered assets</label><div id="cf-assets-wrap">${ctCoverageCombo(c?c.clientId:(presetClient||''))}</div></div>
       <div class="field"><label>Coverage note</label><input type="text" id="cf-scope" value="${esc(c?c.scopeNote:'')}" placeholder="e.g. All Barrett &amp; Cole servers"></div>
     </div>
     <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button>

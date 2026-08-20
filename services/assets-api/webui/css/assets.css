@@ -152,8 +152,11 @@ a{color:inherit}
 .seg button .pip{font-family:"IBM Plex Mono",monospace;font-size:10.5px;background:var(--line-2);color:var(--ink-2);padding:0 6px;border-radius:20px}
 .seg button.on .pip{background:rgba(255,255,255,.22);color:#fff}
 .search{position:relative}
-.search input{padding-left:31px;min-width:220px}
-.search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--ink-3)}
+/* attribute-qualified so this OUTRANKS the generic input[type=search] form
+   rule below — equal specificity let source order strip the padding and the
+   magnifier sat on the text (user-reported) */
+.search input[type=search],.search input[type=text]{padding-left:31px;min-width:220px}
+.search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--ink-3);pointer-events:none}
 
 /* ---- forms -------------------------------------------------------------------- */
 select,input[type=text],input[type=number],input[type=date],input[type=search],textarea{

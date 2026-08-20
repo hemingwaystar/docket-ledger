@@ -16,18 +16,18 @@ function needsAttention(){
      full pools, ending NON-recurring terms (recurring ones renew) */
   const out=[];
   liveAssets().filter(a=>a.status!=='retired' && a.warrantyUntil && daysTo(a.warrantyUntil)<=leadDays())
-    .forEach(a=>out.push({sev:daysTo(a.warrantyUntil)<0?'red':'brass',
+    .forEach(a=>out.push({cid:a.clientId, sev:daysTo(a.warrantyUntil)<0?'red':'brass',
       t:'Warranty '+(daysTo(a.warrantyUntil)<0?'expired':'expiring')+' — '+a.ciTag+' '+a.name,
       s:clientName(a.clientId)+' · '+covText(a.warrantyUntil), go:"go('assets')"}));
   liveLicenses().filter(l=>l.seatsUsed>=l.seatsTotal)
-    .forEach(l=>out.push({sev:'red', t:'Licence pool full — '+l.product,
+    .forEach(l=>out.push({cid:l.clientId, sev:'red', t:'Licence pool full — '+l.product,
       s:clientName(l.clientId)+' · '+l.seatsUsed+'/'+l.seatsTotal+' seats', go:"go('licenses')"}));
   liveLicenses().filter(l=>!l.recurring && l.endsOn && daysTo(l.endsOn)<=leadDays())
-    .forEach(l=>out.push({sev:daysTo(l.endsOn)<0?'red':'brass',
+    .forEach(l=>out.push({cid:l.clientId, sev:daysTo(l.endsOn)<0?'red':'brass',
       t:(daysTo(l.endsOn)<0?'Licence term lapsed':'Licence term ending')+' — '+l.product,
       s:clientName(l.clientId)+' · '+termLabel(l.termMonths,false)+' · '+covText(l.endsOn), go:"go('licenses')"}));
   liveContracts().filter(c=>!c.recurring && c.endsOn && daysTo(c.endsOn)<=leadDays())
-    .forEach(c=>out.push({sev:daysTo(c.endsOn)<0?'red':'brass',
+    .forEach(c=>out.push({cid:c.clientId, sev:daysTo(c.endsOn)<0?'red':'brass',
       t:(daysTo(c.endsOn)<0?'Coverage lapsed':'Coverage ending')+' — '+c.vendor,
       s:clientName(c.clientId)+' · '+termLabel(c.termMonths,false)+' · '+covText(c.endsOn), go:"go('contracts')"}));
   return out;
@@ -65,7 +65,8 @@ function render(){
     return;
   }
   c.innerHTML = ({
-    overview:viewOverview, assets:viewAssetsPage, licenses:viewLicenses,
+    overview:viewOverview, clients:viewClientsPage, client:viewClientPage,
+    assets:viewAssetsPage, licenses:viewLicenses,
     contracts:viewContracts, reports:viewReports, audit:viewAudit, settings:viewSettings
   })[state.view]();
   const __ae=window.__fk_ae, __sel=window.__fk_sel;

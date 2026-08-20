@@ -1,7 +1,9 @@
 """Software & licence pool writes. Terms are TYPED (term_months 1–120 +
-recurring flag, user decision 2026-08-20); cost_cents is per TERM, billed up
-front — Build 29 posts it, Build 30 advances recurring terms. seats_used may
-exceed seats_total: over-allocation is a true-up flag, not an input error."""
+recurring flag, user decision 2026-08-20); cost_cents is PER SEAT per term
+(the $4.80-seat M365 case, 27e) — the pool pays cost_cents × seats_total,
+billed up front. Build 29 must post the POOL (unit × seats_total); Build 30
+advances recurring terms. seats_used may exceed seats_total: over-allocation
+is a true-up flag, not an input error."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from . import auth, db, helpers
@@ -122,7 +124,7 @@ def patch_license(license_id: str, body: PatchLicense, request: Request):
             if body.cost_cents is not None:
                 helpers.cents_ok(body.cost_cents)
                 sets.append("cost_cents = %s"); args.append(body.cost_cents)
-                notes.append(f"cost → {body.cost_cents}c/term")
+                notes.append(f"cost → {body.cost_cents}c/seat/term")
             if body.note is not None:
                 sets.append("note = %s"); args.append(body.note.strip()); notes.append("note edited")
             if body.archived is not None:

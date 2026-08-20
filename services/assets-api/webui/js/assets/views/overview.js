@@ -8,7 +8,7 @@
 function viewOverview(){
   const live = liveAssets();
   const expiring = needsAttention();
-  const licSpend = liveLicenses().reduce((s,l)=>s+annualizedCents(l.costCents,l.termMonths),0);
+  const licSpend = liveLicenses().reduce((s,l)=>s+annualizedCents(licPoolCents(l),l.termMonths),0);
   const ctSpend  = liveContracts().reduce((s,c)=>s+annualizedCents(c.costCents,c.termMonths),0);
   const fullPools = liveLicenses().filter(l=>l.seatsUsed>=l.seatsTotal);
   const byType={};

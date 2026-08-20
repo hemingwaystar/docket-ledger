@@ -12,6 +12,7 @@ function auditFilteredRows(){
   const to=f.to?new Date(f.to+'T23:59:59').getTime():Infinity;
   return state.audit.filter(a=>
     a.ts>=from && a.ts<=to &&
+    (!f.actor.length || f.actor.includes(a.actor)) &&
     (!q || ((a.action||'')+' '+(a.detail||'')+' '+(a.actor||'')+' '+(a.entityId||'')).toLowerCase().includes(q)));
 }
 
@@ -23,9 +24,10 @@ function viewAudit(){
     <div>Every change is recorded here and can't be edited — the append-only system log (app <b>assets</b> + sign-ins). Each asset, licence and contract also carries its own attributed change feed on its detail page.</div></div>
   <div class="toolbar">
     <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="audit-q" placeholder="Search events…" value="${esc(state.auf.q)}" oninput="state.auf.q=this.value;render()"></div>
+    <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('auft-actor', [...new Set(state.audit.map(a=>a.actor||''))].filter(Boolean).sort().map(x=>({v:x,label:x})), state.auf.actor, v=>mfToggle('auf','actor',v), 'All actors')}</span>
     <input type="date" data-fkey="auf-from" value="${esc(state.auf.from)}" onchange="state.auf.from=this.value;render()" title="From">
     <input type="date" data-fkey="auf-to" value="${esc(state.auf.to)}" onchange="state.auf.to=this.value;render()" title="To">
-    ${state.auf.q||state.auf.from||state.auf.to?`<button class="btn sm ghost" onclick="state.auf={q:'',from:'',to:''};render()">Clear</button>`:''}
+    ${state.auf.q||state.auf.actor.length||state.auf.from||state.auf.to?`<button class="btn sm ghost" onclick="state.auf={q:'',actor:[],from:'',to:''};render()">Clear</button>`:''}
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportAuditCSV()">Export CSV</button>`:''}
   </div>

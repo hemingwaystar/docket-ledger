@@ -11,6 +11,8 @@ Scope decisions locked with the user (2026-08-20, from the prototype sessions):
   36/48/60, anything 1–120) plus a `recurring` flag for auto-renewing
   agreements. Cost is **per term, billed up front at term start** — no
   amortization; a "monthly" charge is just a 1-month recurring term.
+  LICENCE cost_cents is **per seat** per term (27e, the $4.80-seat M365
+  case): the pool pays unit × seats_total. Contracts stay whole-agreement.
 * **Lapse tickets (Build 30):** 60 days (configurable) before an asset's
   warranty ends or a NON-recurring license/contract term ends, a Docket ticket
   is raised — no owner, no contact, client = the record's client, filed to a
@@ -145,8 +147,10 @@ strip Assets grants — caught in design).
 
 ## Billing/term semantics for Builds 29/30 (locked with user)
 
-* Charge = full cost_cents at each term start (purchase/renewal date), landing
-  in the period containing that date. No amortization ever.
+* Charge at each term start (purchase/renewal date), landing in the period
+  containing that date; no amortization ever. CONTRACTS: full cost_cents.
+  LICENCES: cost_cents × seats_total (per-seat unit, 27e) — posting the bare
+  unit underbills by the seat count.
 * recurring=true: at term end the term advances (term_started_on += term) and
   a new charge posts. recurring=false: the item lapses at term end → lapse
   ticket 60d before (warranty dates on assets behave the same).

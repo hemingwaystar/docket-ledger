@@ -132,10 +132,13 @@ function toggleArchiveAsset(id){
 }
 
 /* ---- add / edit modal ---- */
-function assetModal(id){
+function assetModal(id, presetClient){
   if(!can('a_manage_assets')) return;
   const a=id?assetById(id):null;
   const cOpts=pickableClients().map(c=>({v:c.id,label:c.name}));
+  /* an edited record whose client was archived must still SHOW its client
+     (a blank picker misread as unset — review finding) */
+  if(a && !cOpts.some(o=>o.v===a.clientId)) cOpts.unshift({v:a.clientId, label:clientName(a.clientId)+' (archived)'});
   openModal(`
     <div class="modal-head"><div><h3>${a?'Edit asset — '+esc(a.ciTag):'Add asset'}</h3>
       <p>${a?'Version-locked: if someone else edited this asset first, the save is refused — reopen and retry.':'A CI tag is the asset’s handle across the suite (e.g. LT-0451).'}</p></div>
@@ -147,7 +150,7 @@ function assetModal(id){
       </div>
       <div class="field"><label>Name</label><input type="text" id="af-name" value="${esc(a?a.name:'')}" placeholder="Dell Latitude 7440"></div>
       <div class="detail-grid">
-        <div class="field"><label>Client</label>${combo('af-client', cOpts, a?a.clientId:'', null, 'Pick a client…')}</div>
+        <div class="field"><label>Client</label>${combo('af-client', cOpts, a?a.clientId:(presetClient||''), null, 'Pick a client…')}</div>
         <div class="field"><label>Assigned to</label><input type="text" id="af-user" value="${esc(a?a.assignedTo:'')}" placeholder="Person, rack, room…"></div>
         <div class="field"><label>Status</label><select id="af-status">${Object.entries(ASSET_STATUS).map(([k,v])=>`<option value="${k}" ${a&&a.status===k?'selected':''}>${v[1]}</option>`).join('')}</select></div>
         <div class="field"><label>Serial</label><input type="text" id="af-serial" value="${esc(a?a.serial:'')}"></div>

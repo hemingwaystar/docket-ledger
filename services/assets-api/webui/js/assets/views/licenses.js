@@ -2,29 +2,56 @@
    views/licenses.js — software & licence pools and their action functions.
    Endpoints: POST /api/licenses · PATCH /api/licenses/{id} (version-locked).
    Terms are TYPED (number + months/years unit + recurring checkbox — the
-   user's 2026-08-20 decision); cost is per TERM, billed up front. Seat
+   user's 2026-08-20 decision); cost is per SEAT per term — the pool pays
+   unit × seats_total (licPoolCents), billed up front. Seat
    quick-adjust (+/−) rides the same PATCH. Over-allocation (used > total)
    renders as a true-up flag, never an input error.
    ========================================================================== */
 
 function licenseRows(){
-  const q=(state.lf.q||'').toLowerCase();
+  const f=state.lf, q=(f.q||'').toLowerCase();
   let rows=liveLicenses();
+  if(f.client.length) rows=rows.filter(l=>f.client.includes(l.clientId||''));   /* '' = the MSP-wide option */
+  if(f.rec!=='all')   rows=rows.filter(l=> f.rec==='rec' ? l.recurring : !l.recurring);
+  if(f.cap!=='all')   rows=rows.filter(l=> f.cap==='full' ? l.seatsUsed>=l.seatsTotal
+                                          : l.seatsUsed<l.seatsTotal && l.seatsUsed/l.seatsTotal>=0.9);
+  if(f.from||f.to)    rows=rows.filter(l=>inDateRange(l.endsOn, f.from, f.to));
   if(q) rows=rows.filter(l=>(l.product+' '+l.vendor+' '+clientName(l.clientId)).toLowerCase().includes(q));
   return rows;
 }
+
+function lfClear(){ state.lf={q:state.lf.q, client:[], rec:'all', cap:'all', from:'', to:''}; render(); }
 
 function viewLicenses(){
   const money=canSeeCosts();
   const rows=licenseRows();
   const pg=paginate('licList', rows);
-  const total=rows.reduce((s,l)=>s+annualizedCents(l.costCents,l.termMonths),0);
+  const total=rows.reduce((s,l)=>s+annualizedCents(licPoolCents(l),l.termMonths),0);
   return `
   <div class="toolbar">
     <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="lic-q" placeholder="Search licences…" value="${esc(state.lf.q)}" oninput="state.lf.q=this.value;render()"></div>
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportLicensesCSV()">Export CSV</button>`:''}
     ${can('a_manage_licenses')?`<button class="btn primary" onclick="licenseModal('')">${icon(IC.plus)} Add licence</button>`:''}
+  </div>
+  <div class="toolbar" style="margin-top:-4px">
+    <span style="display:inline-block;min-width:190px;vertical-align:middle">${multiCombo('lft-client', [{v:'',label:'All clients (MSP-wide)'},...state.clients.filter(c=>!c.sentinel).map(c=>({v:c.id,label:c.name+(c.archived?' (archived)':'')}))], state.lf.client, v=>mfToggle('lf','client',v), 'All clients')}</span>
+    <select data-fkey="lf-rec" onchange="state.lf.rec=this.value;render()" title="Renewal">
+      <option value="all" ${state.lf.rec==='all'?'selected':''}>Any renewal</option>
+      <option value="rec" ${state.lf.rec==='rec'?'selected':''}>&#8635; Recurring</option>
+      <option value="once" ${state.lf.rec==='once'?'selected':''}>One-off term</option>
+    </select>
+    <select data-fkey="lf-cap" onchange="state.lf.cap=this.value;render()" title="Seat pressure">
+      <option value="all" ${state.lf.cap==='all'?'selected':''}>Any utilisation</option>
+      <option value="full" ${state.lf.cap==='full'?'selected':''}>At capacity</option>
+      <option value="warn" ${state.lf.cap==='warn'?'selected':''}>&#8805; 90% used</option>
+    </select>
+    <span class="mini muted">term ends</span>
+    <input type="date" data-fkey="lf-from" value="${esc(state.lf.from)}" onchange="state.lf.from=this.value;render()" title="Term ends from">
+    <span class="mini muted">&#8211;</span>
+    <input type="date" data-fkey="lf-to" value="${esc(state.lf.to)}" onchange="state.lf.to=this.value;render()" title="Term ends to">
+    ${state.lf.client.length||state.lf.rec!=='all'||state.lf.cap!=='all'||state.lf.from||state.lf.to?`<button class="btn sm ghost" onclick="lfClear()">&#10005; Clear filters</button>`:''}
+    <span class="mini muted" style="margin-left:auto">${pg.total} match${pg.total===1?'':'es'}</span>
   </div>
   <div class="card">
     <table class="tbl">
@@ -41,8 +68,8 @@ function viewLicenses(){
         <td><div class="bar" title="${pct}%"><i class="${cls}" style="width:${pct}%"></i></div><div class="mini" style="margin-top:3px">${l.seatsUsed>=l.seatsTotal?'<span style="color:var(--void)">at capacity</span>':pct+'% used'}</div></td>
         <td>${termLabel(l.termMonths,l.recurring)}</td>
         <td>${endCell(l.endsOn,l.recurring)}</td>
-        ${money?`<td class="num money">${fmtMoney(l.costCents)}</td>
-        <td class="num money">${fmtMoney(annualizedCents(l.costCents,l.termMonths))}<span class="muted">/yr</span></td>`:''}</tr>`;}).join('')
+        ${money?`<td class="num money">${fmtMoney(licPoolCents(l))}${l.seatsTotal>1?`<div class="mini muted">${l.seatsTotal} &#215; ${fmtMoney(l.costCents)}/seat</div>`:''}</td>
+        <td class="num money">${fmtMoney(annualizedCents(licPoolCents(l),l.termMonths))}<span class="muted">/yr</span></td>`:''}</tr>`;}).join('')
       :`<tr><td colspan="${money?8:6}"><div class="empty">${icon(IC.license)}<div>No licences match.</div></div></td></tr>`}
       ${money&&rows.length?`<tr style="border-top:2px solid var(--ink-3)"><td colspan="6" style="font-weight:600">Annualised licence spend</td><td></td><td class="num money" style="font-weight:600">${fmtMoney(total)}<span class="muted">/yr</span></td></tr>`:''}
       </tbody>
@@ -53,10 +80,10 @@ function viewLicenses(){
 
 function exportLicensesCSV(){
   if(!can('a_export_csv')) return;
-  const rows=[['Product','Vendor','Client','Seats used','Seats total','Term (months)','Recurring','Term started','Term ends','Cost/term','Note']];
+  const rows=[['Product','Vendor','Client','Seats used','Seats total','Term (months)','Recurring','Term started','Term ends','Cost/seat/term','Pool cost/term','Note']];
   licenseRows().forEach(l=>rows.push([l.product,l.vendor,clientName(l.clientId),l.seatsUsed,l.seatsTotal,
     l.termMonths,l.recurring?'yes':'no',l.termStartedOn||'',l.endsOn||'',
-    canSeeCosts()?(l.costCents/100).toFixed(2):'',l.note]));
+    canSeeCosts()?(l.costCents/100).toFixed(2):'',canSeeCosts()?(licPoolCents(l)/100).toFixed(2):'',l.note]));
   csvDownload('licenses.csv', rows);
   toast(rows.length-1+' licences exported.');
 }
@@ -84,8 +111,8 @@ function openLicense(id){
         <div><div class="k">Term</div><div class="v">${termLabel(l.termMonths,l.recurring)}</div></div>
         <div><div class="k">Term started</div><div class="v">${l.termStartedOn?fmtDate(l.termStartedOn):'—'}</div></div>
         <div><div class="k">Term ends</div><div class="v">${endCell(l.endsOn,l.recurring)}</div></div>
-        ${canSeeCosts()?`<div><div class="k">Cost / term</div><div class="v money">${fmtMoney(l.costCents)}</div></div>
-        <div><div class="k">Annualised</div><div class="v money">${fmtMoney(annualizedCents(l.costCents,l.termMonths))}/yr</div></div>`:''}
+        ${canSeeCosts()?`<div><div class="k">Cost / term</div><div class="v money">${fmtMoney(licPoolCents(l))} <span class="mini muted">(${l.seatsTotal} &#215; ${fmtMoney(l.costCents)}/seat)</span></div></div>
+        <div><div class="k">Annualised</div><div class="v money">${fmtMoney(annualizedCents(licPoolCents(l),l.termMonths))}/yr</div></div>`:''}
       </div>
       ${l.note?`<div class="line-sep"></div><div class="k" style="margin-bottom:4px">Note</div><div style="font-size:13px;color:var(--ink-2)">${esc(l.note)}</div>`:''}
       <div class="line-sep"></div>
@@ -123,7 +150,7 @@ function termFields(prefix, months, recurring){
           <input type="checkbox" id="${prefix}-rec" ${recurring?'checked':''}> ↻ recurring (auto-renews)
         </label>
       </div>
-      <div class="mini muted" style="margin-top:4px">Cost is per term, billed up front at each term start — monthly items are a 1-month recurring term.</div>
+      <div class="mini muted" style="margin-top:4px">Billed up front at each term start — monthly items are a 1-month recurring term.</div>
     </div>`;
 }
 function readTerm(prefix){
@@ -134,10 +161,11 @@ function readTerm(prefix){
   return months>=1&&months<=120?{months, recurring:document.getElementById(prefix+'-rec').checked}:null;
 }
 
-function licenseModal(id){
+function licenseModal(id, presetClient){
   if(!can('a_manage_licenses')) return;
   const l=id?state.licenses.find(x=>x.id===id):null;
   const cOpts=[{v:'',label:'All clients (MSP-wide)'},...pickableClients().map(c=>({v:c.id,label:c.name}))];
+  if(l && l.clientId && !cOpts.some(o=>o.v===l.clientId)) cOpts.push({v:l.clientId, label:clientName(l.clientId)+' (archived)'});
   openModal(`
     <div class="modal-head"><div><h3>${l?'Edit licence — '+esc(l.product):'Add licence'}</h3>
       <p>Type the term as it was sold — monthly, 1 year, 3 years… — and tick recurring if it auto-renews.</p></div>
@@ -146,14 +174,14 @@ function licenseModal(id){
       <div class="field"><label>Product</label><input type="text" id="lf-prod" value="${esc(l?l.product:'')}" placeholder="Microsoft 365 Business Premium"></div>
       <div class="detail-grid">
         <div class="field"><label>Vendor</label><input type="text" id="lf-vendor" value="${esc(l?l.vendor:'')}"></div>
-        <div class="field"><label>Client</label>${combo('lf-client', cOpts, l?(l.clientId||''):'', null, 'Pick a client…')}</div>
+        <div class="field"><label>Client</label>${combo('lf-client', cOpts, l?(l.clientId||''):(presetClient||''), null, 'Pick a client…')}</div>
         <div class="field"><label>Seats (total)</label><input type="number" id="lf-total" min="1" step="1" value="${l?l.seatsTotal:1}"></div>
         <div class="field"><label>Seats in use</label><input type="number" id="lf-used" min="0" step="1" value="${l?l.seatsUsed:0}"></div>
       </div>
       ${termFields('lf', l?l.termMonths:12, l?l.recurring:false)}
       <div class="detail-grid">
         <div class="field"><label>Term started</label><input type="date" id="lf-start" value="${l&&l.termStartedOn?l.termStartedOn:localISODate()}"></div>
-        ${canSeeCosts()?`<div class="field"><label>Cost per term ($)</label><input type="number" id="lf-cost" min="0" step="0.01" value="${l?(l.costCents/100):''}" placeholder="0.00"></div>`:''}
+        ${canSeeCosts()?`<div class="field"><label>Cost per seat / term ($)</label><input type="number" id="lf-cost" min="0" step="0.01" value="${l?(l.costCents/100):''}" placeholder="0.00"><div class="mini muted" style="margin-top:4px">Pool cost = this &#215; total seats. Lump-priced licence? Use 1 seat.</div></div>`:''}
       </div>
       <div class="field"><label>Note</label><textarea id="lf-note" rows="2">${esc(l?l.note:'')}</textarea></div>
     </div>

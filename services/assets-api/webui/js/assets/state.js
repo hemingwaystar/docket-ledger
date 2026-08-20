@@ -28,9 +28,11 @@ const state = {
      (the Docket/Ledger filter-bar contract) */
   af:{status:'all', q:'', client:[], type:[], cov:'all', from:'', to:''},  // assets
   rf:{client:[], type:[], status:[], from:'', to:''},                      // reports
-  lf:{q:''},                     // licenses
-  cf:{q:''},                     // contracts
-  auf:{q:'', from:'', to:''},    // audit
+  lf:{q:'', client:[], rec:'all', cap:'all', from:'', to:''},              // licenses (window on endsOn)
+  cf:{q:'', client:[], kind:[], rec:'all', from:'', to:''},                // contracts (window on endsOn)
+  auf:{q:'', actor:[], from:'', to:''},                                    // audit
+  clf:{q:''},                    // clients list
+  clientId:null,                 // the open client page
   seq:1000
 };
 
@@ -39,6 +41,7 @@ const state = {
    ========================================================================== */
 const NAV=[
   {id:'overview',  label:'Overview',               ic:IC.overview},
+  {id:'clients',   label:'Clients',                ic:IC.client},
   {id:'assets',    label:'Assets',                 ic:IC.assets},
   {id:'licenses',  label:'Software & Licenses',    ic:IC.license},
   {id:'contracts', label:'Contracts & Warranties', ic:IC.contracts},
@@ -48,6 +51,8 @@ const NAV=[
 ];
 const PAGES={
   overview:{t:'Overview', s:()=>fmtDate(localISODate())},
+  clients:{t:'Clients', s:()=>''},
+  client:{t:'Client', s:()=>{ const c=client(state.clientId); return c?esc(c.name):''; }},
   assets:{t:'Assets', s:()=>''},
   licenses:{t:'Software & Licenses', s:()=>''},
   contracts:{t:'Contracts & Warranties', s:()=>''},
@@ -56,8 +61,11 @@ const PAGES={
   settings:{t:'Settings', s:()=>''},
 };
 // nav item -> permission required to see it (null = any signed-in user)
-const NAV_PERM={ overview:null, assets:'a_view', licenses:'a_view', contracts:'a_view',
+const NAV_PERM={ overview:null, clients:'a_view', client:'a_view', assets:'a_view',
+  licenses:'a_view', contracts:'a_view',
   reports:'a_view', audit:'a_view_audit', settings:'a_manage_settings' };
+
+function openClientPage(id){ if(!canView('client')) return; state.clientId=id; state.view='client'; closeMenus(); render(); }
 
 function can(p){ return state.perms.has(p); }
 function canView(view){
