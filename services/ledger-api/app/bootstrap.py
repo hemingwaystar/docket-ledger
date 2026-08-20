@@ -34,6 +34,7 @@ def bootstrap(request: Request, limit: int = 1000):
                        "sentinel": r["is_sentinel"], "cycle": r["billing_cycle"],
                        "rateOverride": (r["wide_rate"] / 100) if r["wide_rate"] is not None else None,
                        "billableDefault": r["billable_default"],
+                       "billableDefaultHist": [],
                        "archived": r["archived_at"] is not None,
                        "useDefaults": False, "useDefaultsHist": [], "defaultTypeFlags": {},
                        "rates": {}, "access": {"mode": "all", "techs": [], "groups": []}}
@@ -56,6 +57,9 @@ def bootstrap(request: Request, limit: int = 1000):
                 if r["activity_type_id"] is None:      # client-wide override lane
                     c["rateOverride"] = rate           # rows are date-ordered → last wins
                     c.setdefault("rateOverrideHist", []).append({"from": day, "rate": rate})
+                    if r["billable"] is not None:      # 0038: the billable-by-default flag
+                        c["billableDefault"] = r["billable"]   # lane = pricing truth for display
+                        c["billableDefaultHist"].append({"from": day, "billable": r["billable"]})
                 else:
                     o = c["rates"].setdefault(str(r["activity_type_id"]),
                                               {"rate": None, "billable": None,
@@ -134,12 +138,18 @@ def bootstrap(request: Request, limit: int = 1000):
                 rate = (r["rate_cents"] / 100) if r["rate_cents"] is not None else None
                 d["rate"] = rate
                 d["hist"].append({"from": r["valid_from"].isoformat(), "rate": rate})
-            cur.execute("""SELECT at, actor, action, entity, detail FROM audit.events
-                            WHERE app IN ('ledger', 'auth')
-                            ORDER BY at DESC LIMIT 200""")
-            out["audit"] = [{"ts": ms(r["at"]), "actor": r["actor"], "action": r["action"],
-                             "entityId": r["entity"], "detail": r["detail"] or ""}
-                            for r in cur.fetchall()]
+            # the audit tail ships only to roles holding l_view_audit (user
+            # decision 2026-08-20 — enforced server-side, not just the hidden
+            # tab); the KEY always rides so mapIn stays complete (row 36)
+            if "l_view_audit" in who["perms"]:
+                cur.execute("""SELECT at, actor, action, entity, detail FROM audit.events
+                                WHERE app IN ('ledger', 'auth')
+                                ORDER BY at DESC LIMIT 200""")
+                out["audit"] = [{"ts": ms(r["at"]), "actor": r["actor"], "action": r["action"],
+                                 "entityId": r["entity"], "detail": r["detail"] or ""}
+                                for r in cur.fetchall()]
+            else:
+                out["audit"] = []
             cur.execute("""SELECT key, value FROM shared.app_config
                             WHERE key IN ('ledger','odoo','retainers')""")
             cfg = {r["key"]: (r["value"] if isinstance(r["value"], dict) else {})

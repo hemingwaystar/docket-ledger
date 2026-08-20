@@ -82,7 +82,7 @@ window.addEventListener('message', ev=>{
     let c = state.clients.find(x=>x.id===cl.id);
     if(!c){
       c = { id:cl.id, zorg: String(cl.id||'').slice(0,8), name:cl.name, cycle:'monthly', rateOverride:null,
-            billableDefault:true, rates:{}, access:{mode:'all', techs:[]},
+            billableDefault:true, billableDefaultHist:[], rates:{}, access:{mode:'all', techs:[]},
             useDefaults:false, useDefaultsHist:[], defaultTypeFlags:{} };
       state.clients.push(c);
       log('Client received from Directory', `${cl.name} — created in Docket, billing defaults applied (monthly cycle, standard rates)`);

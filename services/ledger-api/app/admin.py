@@ -29,7 +29,7 @@ def put_config(key: str, body: ConfigValue, request: Request):
         raise HTTPException(422, f"Unknown config key — one of {', '.join(LEDGER_CONFIG_KEYS)}")
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_settings", "l_export")
+        auth.need(who, "l_manage_settings")
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO shared.app_config (key, value)
                            VALUES (%s, %s)
@@ -54,7 +54,7 @@ def put_secret(name: str, body: SecretValue, request: Request):
         raise HTTPException(422, "Ledger stores only the 'odoo' secret")
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_settings", "l_export")
+        auth.need(who, "l_manage_settings")
         blob = crypto.seal(body.value.encode())
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO shared.secrets (name, ciphertext, nonce, kek_id)
@@ -79,7 +79,7 @@ def patch_client_billing(client_id: str, body: ClientBilling, request: Request):
     """The two billing columns Ledger owns on the shared client record."""
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_clients")
         with conn.cursor() as cur:
             sets, args, notes = [], [], []
             if body.cycle is not None:
@@ -97,6 +97,22 @@ def patch_client_billing(client_id: str, body: ClientBilling, request: Request):
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(404, "No such client")
+            if body.billable_default is not None:
+                # the flag PRICES via the dated client-wide lane (0038's veto
+                # rung in priced()); the column stays the Directory's display
+                # copy. Carry the current wide rate forward so the dated-unset
+                # convention can't silently reset a client-wide rate override.
+                cur.execute("""INSERT INTO ledger.client_rates
+                                 (client_id, activity_type_id, valid_from, rate_cents, billable)
+                               VALUES (%s, NULL, current_date,
+                                       (SELECT r.rate_cents FROM ledger.client_rates r
+                                         WHERE r.client_id = %s AND r.activity_type_id IS NULL
+                                           AND r.valid_from <= current_date
+                                         ORDER BY r.valid_from DESC LIMIT 1),
+                                       %s)
+                               ON CONFLICT (client_id, valid_from) WHERE activity_type_id IS NULL
+                                 DO UPDATE SET billable = EXCLUDED.billable""",
+                            (client_id, client_id, body.billable_default))
         auth.audit(conn, "ledger", "Client billing changed", f"client:{client_id}",
                    f"{row[0]} · " + " · ".join(notes))
         return {"ok": True}
@@ -117,7 +133,7 @@ def create_type(body: NewType, request: Request):
         raise HTTPException(422, "The type needs a name")
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_types")
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM ledger.activity_types WHERE lower(name) = lower(%s)",
                         (name,))
@@ -142,7 +158,7 @@ def patch_type(type_id: str, body: TypePatch, request: Request):
     """Activity type edits — the sentinel guard trigger has the final word."""
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_types")
         cols = {k: v for k, v in body.model_dump().items() if v is not None}
         if not cols:
             return {"ok": True}
@@ -201,7 +217,7 @@ def put_type_rate(type_id: str, body: TypeRate, request: Request):
         raise HTTPException(422, "rate_cents must be >= 0")
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_types")
         with conn.cursor() as cur:
             cur.execute("SELECT EXISTS (SELECT 1 FROM ledger.activity_type_rates "
                         "WHERE activity_type_id = %s)", (type_id,))
@@ -232,7 +248,7 @@ def put_default_rate(type_id: str, body: DefaultRate, request: Request):
         raise HTTPException(422, "rate_cents must be >= 0")
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_types", "l_manage_settings")
         with conn.cursor() as cur:
             cur.execute("SELECT is_sentinel FROM ledger.activity_types WHERE id::text = %s",
                         (type_id,))
@@ -269,15 +285,21 @@ def put_client_rate(client_id: str, body: ClientRate, request: Request):
     NULLs mean inherit — an all-NULL row IS the reset, history intact."""
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_clients")
         with conn.cursor() as cur:
             if body.activity_type is None:
+                # 0038: the wide row's billable IS the client's billable-by-
+                # default veto — a same-day rate edit (which sends billable
+                # NULL) must PRESERVE it, never null it out. Explicit values
+                # still win; only the typed lane keeps NULL-means-reset for
+                # billable (clearClientTypeOverride relies on it).
                 cur.execute("""INSERT INTO ledger.client_rates
                                  (client_id, activity_type_id, valid_from, rate_cents, billable)
                                VALUES (%s, NULL, current_date, %s, %s)
                                ON CONFLICT (client_id, valid_from) WHERE activity_type_id IS NULL
                                  DO UPDATE SET rate_cents = EXCLUDED.rate_cents,
-                                               billable = EXCLUDED.billable""",
+                                               billable = COALESCE(EXCLUDED.billable,
+                                                                   ledger.client_rates.billable)""",
                             (client_id, body.rate_cents, body.billable))
             else:
                 cur.execute("""INSERT INTO ledger.client_rates
@@ -308,7 +330,7 @@ def put_client_default_optin(client_id: str, body: ClientDefaultOptin, request: 
     is on). Dated rows mean a flip today never re-prices yesterday."""
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_clients")
         with conn.cursor() as cur:
             if body.activity_type is None:
                 cur.execute("""INSERT INTO ledger.client_default_rate_optin
@@ -343,7 +365,7 @@ def put_client_access(client_id: str, body: ClientAccess, request: Request):
         raise HTTPException(422, "mode must be all, restricted, or group")
     with db.connect() as conn:
         who = auth.require(conn, request)
-        auth.need(who, "l_approve", "l_export")
+        auth.need(who, "l_manage_clients")
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO ledger.client_access
                              (client_id, mode, tech_ids, group_ids)

@@ -76,7 +76,10 @@ function viewClient(){
   /* ---- billing: per-activity-type ---- */
   const typeRows=state.types.filter(t=>!t.sentinel && t.active!==false).map(t=>{
     const ov=(c.rates&&c.rates[t.id])||null;
-    const effBill = ov&&ov.billable!=null ? !!ov.billable : !!t.billable;
+    /* 0038: the unticked "Billable by default" flag vetoes non-overridden
+       types — the rows must agree with priced(), which already applies it */
+    const cwOff=c.billableDefault===false;
+    const effBill = ov&&ov.billable!=null ? !!ov.billable : (cwOff ? false : !!t.billable);
     const tf=(c.defaultTypeFlags||{})[t.id];
     const dfOn = !!c.useDefaults && !(tf&&tf.enabled===false);
     const dfCur = dfOn && state.defaultRates[t.id] ? state.defaultRates[t.id].rate : null;
@@ -257,11 +260,18 @@ function setClientCycle(id,v){
 }
 function toggleClientBillable(id){
   const c=client(id); if(!c) return;
-  c.billableDefault=!c.billableDefault; render();
+  c.billableDefault=!c.billableDefault;
+  /* 0038: the flag prices via the dated wide lane — mirror it locally so
+     priced() agrees before the hydrate lands; a flip today never re-prices
+     history (the server writes the same effective-dated row) */
+  c.billableDefaultHist=histToday(c.billableDefaultHist,'billable',c.billableDefault);
+  log('Client billing changed',`${esc(c.name)} → new time ${c.billableDefault?'bills by default':'is non-billable by default'}`,id);
+  render();
   $fetch('/api/clients/'+encodeURIComponent(id),{method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({billable_default:c.billableDefault})})
-    .then(async r=>{ if(!r.ok) return oops(await jshort(r)); });
+    .then(async r=>{ if(!r.ok) return oops(await jshort(r));
+      setTimeout(hydrate,600); });
 }
 /* effective-dated override history: one row per day, today's edits collapse */
 const histToday=(arr,field,val)=>{
@@ -303,9 +313,13 @@ function toggleClientTypeBillable(cid,tid){
   const c=client(cid); const t=atype(tid);
   c.rates=c.rates||{};
   const o=c.rates[tid]||(c.rates[tid]={});
-  const eff=o.billable!=null?o.billable:t.billable;
+  const cwOff=c.billableDefault===false;              /* wide veto in force (0038) */
+  const eff=o.billable!=null?o.billable:(cwOff?false:t.billable);
   o.billable=!eff;
-  if(o.billable===t.billable){ delete o.billable; if(o.rate==null) delete c.rates[tid]; }
+  /* normalize the override away only when it adds nothing: matches the type
+     flag AND no veto is in force — for an unticked client an explicit TRUE
+     is load-bearing (it outranks the veto), so it must survive */
+  if(!cwOff && o.billable===t.billable){ delete o.billable; if(o.rate==null) delete c.rates[tid]; }
   log('Client billing changed',`${esc(c.name)} · ${esc(t.name)} → ${(o.billable!=null?o.billable:t.billable)?'billable':'non-billable'}`,cid);
   const ov=(c.rates||{})[tid];
   if(ov) ov.billableHist=histToday(ov.billableHist,'billable',ov.billable!=null?ov.billable:null);

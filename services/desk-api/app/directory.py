@@ -204,6 +204,14 @@ def create_client(body: NewClient, request: Request):
                         (body.name, body.billing_cycle, body.billable_default,
                          json.dumps(body.profile)))
             (cid,) = cur.fetchone()
+            if not body.billable_default:
+                # 0038: pricing reads the dated wide client_rates lane, not the
+                # column — a client born unticked must seed its veto row or the
+                # card would say "No" while its time bills (INSERT grant: 0038;
+                # a brand-new client has no same-day wide row to conflict with)
+                cur.execute("""INSERT INTO ledger.client_rates
+                                 (client_id, activity_type_id, valid_from, rate_cents, billable)
+                               VALUES (%s, NULL, current_date, NULL, false)""", (cid,))
             for d in body.domains:
                 cur.execute("INSERT INTO shared.client_domains (client_id, domain) VALUES (%s, %s)",
                             (cid, d.lower().strip()))

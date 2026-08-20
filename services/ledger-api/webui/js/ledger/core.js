@@ -92,7 +92,11 @@ function _presetDates(f,p){
 }
 
 /* pricing resolution:
-   billable = per-client-type override ?? type.billable (sentinel never billable)
+   billable = per-client-type override
+              ?? (client-wide "billable by default" flag = false → false;
+                  true/absent falls through — VETO ONLY, 0038: re-ticking the
+                  checkbox must never make Internal/Cancelled types billable)
+              ?? type.billable (sentinel never billable)
    rate     = per-client-type rate ?? client.rateOverride
               ?? (client opted in AND type not toggled off) global default rate
               ?? type.rate
@@ -165,8 +169,9 @@ function priced(e){
   }
   const ov = (c.rates && c.rates[e.typeId]) || null;
   const ovB = ov ? effBillPick(ov.billable, ov.billableHist, e.startedAt) : null;
+  const cwB = effBillPick(null, c.billableDefaultHist, e.startedAt);  /* 0038: dated wide lane */
   const tB  = effBillPick(t.billable, t.billableHist, e.startedAt);
-  const billable = t.sentinel ? false : (ovB!=null ? !!ovB : !!tB);
+  const billable = t.sentinel ? false : (ovB!=null ? !!ovB : (cwB===false ? false : !!tB));
   let rate = 0;
   if(billable){
     const ovRate = ov ? effRateN(ov.rate, ov.rateHist, e.startedAt) : null;
