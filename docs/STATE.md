@@ -604,6 +604,10 @@ places.
    Docket's spec (use NetBird ports).
 
 **Verify after next deploy (latest bundle):**
+- [ ] **BUILD 27i — no migration.** desk-api rebuilds (webui only: dashboard/api/settings js). RELOAD APP TABS.
+- [ ] **Build 27i — Docket "Time this cycle" is honest + configurable:** the dashboard card now sums ONLY non-voided ticket time inside the CURRENT cycle window and names the window ("hours logged from tickets · August 2026") — it used to sum all history (user saw 1.41h of old time in an empty month). Docket → Settings → "Dashboard — time this cycle" picks the cycle: Monthly (calendar month, default) or Weekly (Mon–Sun, Ledger's weekly cycle); the choice is a shared desk_ui default (manage_settings) and applies on next render/hydrate.
+- [ ] **BUILD 27h — no migration.** assets-api rebuilds (webui only). RELOAD APP TABS.
+- [ ] **Build 27h — archived licences & contracts are reachable:** Software & Licenses and Contracts & Warranties each gain a Live | Archived seg (counts on both); archived rows show an Archived chip; all filters/search/CSV work inside either view; an archived record's detail modal offers **Restore** (the Archive button toggles); restoring returns it to the Live view and writes the audit trail.
 - [ ] **Build 27g — type bars mean share-of-fleet:** Overview "Assets by type" and Reports "Fleet by type" bars are now the type's share of ALL live assets (tooltip "N% of fleet"), not scaled to the largest type — the biggest category no longer draws a full bar regardless of count.
 - [ ] **BUILD 27f — no migration.** assets-api rebuilds (webui only). RELOAD APP TABS.
 - [ ] **Build 27f — verify:** (1) A FULL licence pool no longer appears in Overview's Needs-attention list, the nav pip, or a client's needs-attention chip (user decision: MS seats are bought as needed — full is normal); capacity stays visible in the Licenses table ("at capacity"), the ≥90%/at-capacity filter, the stat card sub-line and the true-up chip. (2) Settings-page checkboxes (Raise tickets for…) and the modals' ↻ recurring tick sit at intrinsic size next to their labels — no more full-row-wide checkbox with the label at the far edge.

@@ -10,7 +10,7 @@
 
 function licenseRows(){
   const f=state.lf, q=(f.q||'').toLowerCase();
-  let rows=liveLicenses();
+  let rows = f.show==='archived' ? state.licenses.filter(l=>l.archived) : liveLicenses();
   if(f.client.length) rows=rows.filter(l=>f.client.includes(l.clientId||''));   /* '' = the MSP-wide option */
   if(f.rec!=='all')   rows=rows.filter(l=> f.rec==='rec' ? l.recurring : !l.recurring);
   if(f.cap!=='all')   rows=rows.filter(l=> f.cap==='full' ? l.seatsUsed>=l.seatsTotal
@@ -20,7 +20,7 @@ function licenseRows(){
   return rows;
 }
 
-function lfClear(){ state.lf={q:state.lf.q, client:[], rec:'all', cap:'all', from:'', to:''}; render(); }
+function lfClear(){ state.lf={show:state.lf.show, q:state.lf.q, client:[], rec:'all', cap:'all', from:'', to:''}; render(); }
 
 function viewLicenses(){
   const money=canSeeCosts();
@@ -29,6 +29,10 @@ function viewLicenses(){
   const total=rows.reduce((s,l)=>s+annualizedCents(licPoolCents(l),l.termMonths),0);
   return `
   <div class="toolbar">
+    <div class="seg">
+      <button class="${state.lf.show!=='archived'?'on':''}" onclick="state.lf.show='live';render()">Live<span class="pip">${liveLicenses().length}</span></button>
+      <button class="${state.lf.show==='archived'?'on':''}" onclick="state.lf.show='archived';render()">Archived<span class="pip">${state.licenses.filter(l=>l.archived).length}</span></button>
+    </div>
     <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="lic-q" placeholder="Search licences…" value="${esc(state.lf.q)}" oninput="state.lf.q=this.value;render()"></div>
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportLicensesCSV()">Export CSV</button>`:''}
@@ -61,7 +65,7 @@ function viewLicenses(){
         const pct=Math.min(100,Math.round(l.seatsUsed/l.seatsTotal*100));
         const cls=l.seatsUsed>=l.seatsTotal?'full':(pct>=90?'warn':'');
         return `<tr class="clickable" onclick="openLicense('${l.id}')">
-        <td><div class="cell-title">${esc(l.product)}</div><div class="cell-meta">${esc(l.vendor||'—')}</div></td>
+        <td><div class="cell-title">${esc(l.product)}${l.archived?' <span class="chip grey slim"><span class="cdot"></span>Archived</span>':''}</div><div class="cell-meta">${esc(l.vendor||'—')}</div></td>
         <td>${esc(clientName(l.clientId))}</td>
         <td class="mono">${l.seatsUsed}/${l.seatsTotal}
           ${can('a_manage_licenses')?`<span style="white-space:nowrap"><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',-1)">−</button><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',1)">+</button></span>`:''}</td>
@@ -120,7 +124,7 @@ function openLicense(id){
       ${eventFeed('license', id)}
     </div>
     <div class="modal-foot">
-      ${can('a_manage_licenses')?`<button class="btn danger" onclick="archiveLicense('${l.id}')">Archive</button>`:''}
+      ${can('a_manage_licenses')?`<button class="btn ${l.archived?'':'danger'}" onclick="archiveLicense('${l.id}')">${l.archived?'Restore':'Archive'}</button>`:''}
       <button class="btn" onclick="closeModal()">Close</button>
       ${can('a_manage_licenses')?`<button class="btn primary" onclick="licenseModal('${l.id}')">Edit licence</button>`:''}
     </div>`, true);
@@ -128,10 +132,11 @@ function openLicense(id){
 
 function archiveLicense(id){
   const l=state.licenses.find(x=>x.id===id); if(!l||!can('a_manage_licenses')) return;
+  const to=!l.archived;                        /* toggle: Restore lives in the Archived view */
   closeModal();
-  l.archived=true; log('Licence archived', l.product, id); render();
-  post('PATCH','/api/licenses/'+id,{version:l.version, archived:true})
-    .then(d=>{ if(d){ if(d.version) l.version=d.version; toast(`${l.product} archived.`); } });
+  l.archived=to; log(to?'Licence archived':'Licence restored', l.product, id); render();
+  post('PATCH','/api/licenses/'+id,{version:l.version, archived:to})
+    .then(d=>{ if(d){ if(d.version) l.version=d.version; toast(`${l.product} ${to?'archived':'restored'}.`); } });
 }
 
 /* ---- add / edit ---- */

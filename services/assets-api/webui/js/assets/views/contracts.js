@@ -9,7 +9,7 @@
 
 function contractRows(){
   const f=state.cf, q=(f.q||'').toLowerCase();
-  let rows=liveContracts();
+  let rows = f.show==='archived' ? state.contracts.filter(c=>c.archived) : liveContracts();
   if(f.client.length) rows=rows.filter(c=>f.client.includes(c.clientId));
   if(f.kind.length)   rows=rows.filter(c=>f.kind.includes(c.kind));
   if(f.rec!=='all')   rows=rows.filter(c=> f.rec==='rec' ? c.recurring : !c.recurring);
@@ -18,7 +18,7 @@ function contractRows(){
   return rows;
 }
 
-function cfClear(){ state.cf={q:state.cf.q, client:[], kind:[], rec:'all', from:'', to:''}; render(); }
+function cfClear(){ state.cf={show:state.cf.show, q:state.cf.q, client:[], kind:[], rec:'all', from:'', to:''}; render(); }
 
 function viewContracts(){
   const money=canSeeCosts();
@@ -30,6 +30,10 @@ function viewContracts(){
     <div>Coverage is bought on whatever term the vendor sold — type it in (monthly, 1–5 yr…), tick ↻ recurring if it auto-renews.
     Charges post to <b>Ledger</b> up front at each term start (Build 29); non-recurring terms raise a lapse ticket ${leadDays()} days out (Build 30).</div></div>
   <div class="toolbar">
+    <div class="seg">
+      <button class="${state.cf.show!=='archived'?'on':''}" onclick="state.cf.show='live';render()">Live<span class="pip">${liveContracts().length}</span></button>
+      <button class="${state.cf.show==='archived'?'on':''}" onclick="state.cf.show='archived';render()">Archived<span class="pip">${state.contracts.filter(c=>c.archived).length}</span></button>
+    </div>
     <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="ct-q" placeholder="Search contracts…" value="${esc(state.cf.q)}" oninput="state.cf.q=this.value;render()"></div>
     <div class="spacer"></div>
     ${can('a_export_csv')?`<button class="btn" onclick="exportContractsCSV()">Export CSV</button>`:''}
@@ -55,7 +59,7 @@ function viewContracts(){
       <thead><tr><th>Vendor / agreement</th><th>Type</th><th>Client</th><th>Coverage</th><th>Term</th><th>Term ends</th>${money?'<th class="num">Cost / term</th><th class="num">Annualised</th>':''}</tr></thead>
       <tbody>
       ${pg.slice.length?pg.slice.map(c=>`<tr class="clickable" onclick="openContract('${c.id}')">
-        <td><div class="cell-title">${esc(c.vendor)}</div><div class="cell-meta">since ${c.termStartedOn?fmtDate(c.termStartedOn):'—'}</div></td>
+        <td><div class="cell-title">${esc(c.vendor)}${c.archived?' <span class="chip grey slim"><span class="cdot"></span>Archived</span>':''}</div><div class="cell-meta">since ${c.termStartedOn?fmtDate(c.termStartedOn):'—'}</div></td>
         <td>${kindChip(c.kind)}</td>
         <td>${esc(clientName(c.clientId))}</td>
         <td class="mini" style="font-size:12.5px;color:var(--ink-2)">${(c.assetIds||[]).length?esc((c.assetIds||[]).slice(0,3).map(id=>{const a=assetById(id);return a?a.ciTag:'?';}).join(', ')+((c.assetIds||[]).length>3?' +'+((c.assetIds||[]).length-3):'')):esc(c.scopeNote||'—')}</td>
@@ -106,7 +110,7 @@ function openContract(id){
       ${eventFeed('contract', id)}
     </div>
     <div class="modal-foot">
-      ${can('a_manage_contracts')?`<button class="btn danger" onclick="archiveContract('${c.id}')">Archive</button>`:''}
+      ${can('a_manage_contracts')?`<button class="btn ${c.archived?'':'danger'}" onclick="archiveContract('${c.id}')">${c.archived?'Restore':'Archive'}</button>`:''}
       <button class="btn" onclick="closeModal()">Close</button>
       ${can('a_manage_contracts')?`<button class="btn primary" onclick="contractModal('${c.id}')">Edit contract</button>`:''}
     </div>`, true);
@@ -114,10 +118,11 @@ function openContract(id){
 
 function archiveContract(id){
   const c=state.contracts.find(x=>x.id===id); if(!c||!can('a_manage_contracts')) return;
+  const to=!c.archived;                        /* toggle: Restore lives in the Archived view */
   closeModal();
-  c.archived=true; log('Contract archived', c.vendor, id); render();
-  post('PATCH','/api/contracts/'+id,{version:c.version, archived:true})
-    .then(d=>{ if(d){ if(d.version) c.version=d.version; toast(`${c.vendor} archived.`); } });
+  c.archived=to; log(to?'Contract archived':'Contract restored', c.vendor, id); render();
+  post('PATCH','/api/contracts/'+id,{version:c.version, archived:to})
+    .then(d=>{ if(d){ if(d.version) c.version=d.version; toast(`${c.vendor} ${to?'archived':'restored'}.`); } });
 }
 
 /* ---- add / edit (coverage picker lives in the modal) ---- */

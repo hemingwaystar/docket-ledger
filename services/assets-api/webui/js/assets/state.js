@@ -28,8 +28,8 @@ const state = {
      (the Docket/Ledger filter-bar contract) */
   af:{status:'all', q:'', client:[], type:[], cov:'all', from:'', to:''},  // assets
   rf:{client:[], type:[], status:[], from:'', to:''},                      // reports
-  lf:{q:'', client:[], rec:'all', cap:'all', from:'', to:''},              // licenses (window on endsOn)
-  cf:{q:'', client:[], kind:[], rec:'all', from:'', to:''},                // contracts (window on endsOn)
+  lf:{show:'live', q:'', client:[], rec:'all', cap:'all', from:'', to:''}, // licenses (window on endsOn)
+  cf:{show:'live', q:'', client:[], kind:[], rec:'all', from:'', to:''},   // contracts (window on endsOn)
   auf:{q:'', actor:[], from:'', to:''},                                    // audit
   clf:{q:''},                    // clients list
   clientId:null,                 // the open client page
