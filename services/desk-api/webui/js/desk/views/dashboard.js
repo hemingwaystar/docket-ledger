@@ -44,7 +44,19 @@ function viewDashboard(){
   const maxN = Math.max(1,...byState.map(x=>x.n));
   const personalStates = Array.isArray((state.prefs||{}).dashboardStates);
 
-  const hrsToday = scoped().flatMap(t=>t.time).reduce((a,e)=>a+e.h,0); /* all logged time on tickets in scope */
+  /* Time this cycle: the CURRENT window per desk_ui.timeCycle (monthly
+     calendar month by default; 'weekly' = Mon-Sun, Ledger's other cycle).
+     Voided time never counts. It used to sum ALL history, which showed
+     stale hours in an empty month (user-reported). */
+  const cycW = DESK_UI.timeCycle==='weekly';
+  const _n = new Date();
+  const cycStart = cycW ? new Date(_n.getFullYear(),_n.getMonth(),_n.getDate()-((_n.getDay()+6)%7))
+                        : new Date(_n.getFullYear(),_n.getMonth(),1);
+  const cycLabel = cycW ? 'week of '+cycStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                        : _n.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  const hrsCycle = scoped().flatMap(t=>t.time)
+    .filter(e=>!e.void && e.startedAt>=cycStart.getTime())
+    .reduce((a,e)=>a+e.h,0);
   return `
   <div class="grid g-4">
     <div class="card stat"><div class="lab">${can('view_all')?'Open in queue':'Open · my scope'}</div><div class="val tape">${sc.length}</div><div class="sub">${sc.filter(t=>t.st==='new').length} awaiting first response</div></div>
@@ -90,7 +102,7 @@ function viewDashboard(){
       ${can('see_billing')?`<div class="section-gap"></div>
       <div class="card card-pad">
         <div class="card-head" style="padding:0 0 8px;border:0"><h3>Time this cycle</h3></div>
-        <div style="display:flex;align-items:baseline;gap:8px"><span class="tape" style="font-size:26px;font-weight:600">${fmtHours(hrsToday)}</span><span class="muted">hours logged from tickets</span></div>
+        <div style="display:flex;align-items:baseline;gap:8px"><span class="tape" style="font-size:26px;font-weight:600">${fmtHours(hrsCycle)}</span><span class="muted">hours logged from tickets · ${cycLabel}</span></div>
         <button class="btn sm" style="margin-top:10px" onclick="openLedger()">Open in Ledger ${icon(IC.clock)}</button>
       </div>`:''}
     </div>

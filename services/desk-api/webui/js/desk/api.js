@@ -146,6 +146,7 @@ function mapIn(d){
     if(Array.isArray(dui.overviews)) DESK_UI.overviews = dui.overviews;
     if(Array.isArray(dui.dashboardStates)) DESK_UI.dashboardStates = dui.dashboardStates;
     if(typeof dui.defaultGroup==='string' && dui.defaultGroup) DESK_UI.defaultGroup = dui.defaultGroup;
+    if(dui.timeCycle==='weekly') DESK_UI.timeCycle = 'weekly';   /* absent = monthly */
   }
   if(d.notifs){ state.notifs.length=0; d.notifs.forEach(n=>state.notifs.push(n)); }
   d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });

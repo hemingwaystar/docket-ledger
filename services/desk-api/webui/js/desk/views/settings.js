@@ -598,6 +598,14 @@ function setDashHiddenDefault(vals){
   render();
   deskUiPush();
 }
+function setTimeCycle(v){
+  const cur = DESK_UI.timeCycle==='weekly'?'weekly':'monthly';
+  if(v===cur) return;                                                  /* diff-guard */
+  if(v==='weekly') DESK_UI.timeCycle='weekly'; else delete DESK_UI.timeCycle;  /* absent = monthly */
+  log('Dashboard time cycle changed', v==='weekly'?'weekly (Mon–Sun)':'monthly (calendar month)');
+  render();
+  deskUiPush();
+}
 function setDefaultGroup(v){
   const cur = DESK_UI.defaultGroup || '';
   if(v===cur) return;                                                  /* diff-guard */
@@ -701,6 +709,13 @@ function deskUiCard(){
           ${aGROUPS().map(g=>`<option value="${g.id}" ${DESK_UI.defaultGroup===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}
           ${DESK_UI.defaultGroup&&!aGROUPS().some(g=>g.id===DESK_UI.defaultGroup)?`<option value="${esc(DESK_UI.defaultGroup)}" selected>${esc(grp(DESK_UI.defaultGroup)?.name||DESK_UI.defaultGroup)} (archived)</option>`:''}
         </select></div>
+      <div class="card-head flush" style="margin-top:16px"><h3>Dashboard — time this cycle</h3><span class="hint">the window the hours card sums</span></div>
+      <div class="field inline-sm" style="margin-top:6px"><label>Cycle</label>
+        <select onchange="setTimeCycle(this.value)" style="max-width:360px">
+          <option value="monthly" ${DESK_UI.timeCycle!=='weekly'?'selected':''}>Monthly — calendar month</option>
+          <option value="weekly" ${DESK_UI.timeCycle==='weekly'?'selected':''}>Weekly — Mon–Sun (Ledger's weekly cycle)</option>
+        </select></div>
+      <div class="mini muted" style="margin-top:8px">Matches the Ledger billing cycles — the dashboard's “Time this cycle” card sums non-voided ticket time logged inside the current window.</div>
     </div>`;
 }
 
