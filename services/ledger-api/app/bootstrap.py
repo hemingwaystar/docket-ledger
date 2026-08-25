@@ -86,12 +86,16 @@ def bootstrap(request: Request, limit: int = 1000):
                     o["enabled"] = r["enabled"]
                     o["hist"].append({"from": day, "enabled": r["enabled"]})
             out["clients"] = list(clients.values())
-            cur.execute("""SELECT a.id, a.name, a.initials, a.email,
+            # ALL agents ride, active flagged — entries reference deactivated
+            # techs forever, and a tech(id) miss threw in Approvals/Reports/
+            # Clients, bricking the view (audit). Pickers label inactive.
+            cur.execute("""SELECT a.id, a.name, a.initials, a.email, a.active,
                              COALESCE((SELECT array_agg(ag.group_id) FROM shared.agent_groups ag
                                         WHERE ag.agent_id = a.id), '{}') AS gids
-                             FROM shared.agents a WHERE a.active ORDER BY a.name""")
+                             FROM shared.agents a ORDER BY a.name""")
             out["techs"] = [{"id": str(r["id"]), "name": r["name"], "initials": r["initials"],
-                             "email": r["email"], "groups": [str(g) for g in r["gids"]]}
+                             "email": r["email"], "active": r["active"],
+                             "groups": [str(g) for g in r["gids"]]}
                             for r in cur.fetchall()]
             # group-based client access + the read-only Directory mirror need
             # these on a fresh load — suite-bridge events only supplement
@@ -180,6 +184,9 @@ def bootstrap(request: Request, limit: int = 1000):
             # applies now gates the DATA — l_view_own sessions get their own
             # rows only, client access modes apply unless l_all_clients
             scope_sql, scope_args = entry_scope_where(who)
+            cur.execute(f"SELECT count(*) FROM ledger.time_entries e WHERE {scope_sql}",
+                        scope_args)
+            out["entriesTotal"] = cur.fetchone()["count"]
             cur.execute(f"""SELECT e.id, e.ticket_id, e.task_id, e.client_id, e.tech_id,
                                   e.activity_type_id, e.article_id, e.started_at, e.ended_at, e.hours,
                                   COALESCE(NULLIF(e.note, ''),
@@ -191,7 +198,8 @@ def bootstrap(request: Request, limit: int = 1000):
                                   tk.title AS ticket_title,
                                   pt.label AS task_label,
                                   ap.name AS approver_name,
-                                  rb.name AS returner_name
+                                  rb.name AS returner_name,
+                                  bp.period_key
                              FROM ledger.time_entries e
                              LEFT JOIN desk.tickets tk ON tk.id = e.ticket_id
                              LEFT JOIN desk.project_tasks pt ON pt.id = e.task_id
@@ -199,6 +207,7 @@ def bootstrap(request: Request, limit: int = 1000):
                                ON ar.id = e.article_id AND ar.deleted_at IS NULL
                              LEFT JOIN shared.agents ap ON ap.id = e.ts_approved_by
                              LEFT JOIN shared.agents rb ON rb.id = e.returned_by
+                             LEFT JOIN ledger.billing_periods bp ON bp.id = e.period_id
                             WHERE {scope_sql}
                             ORDER BY e.started_at DESC LIMIT %s""",
                         (*scope_args, limit))
@@ -220,15 +229,41 @@ def bootstrap(request: Request, limit: int = 1000):
                 "tsApprovedBy": r["approver_name"],
                 "returnedAt": ms(r["returned_at"]), "returnedBy": r["returner_name"],
                 "returnReason": r["return_reason"],
+                # the server's period assignment is the billing truth — the
+                # UI's entryPeriod() prefers this over its browser-local
+                # bucketing, which desynced near month/week ends (audit)
+                "periodKey": r["period_key"],
                 "zTask": ({"id": str(r["task_id"]), "label": r["task_label"] or ""}
                           if r["task_id"] else None)} for r in cur.fetchall()]
+            # the FULL shape the suite-bridge 'project-approved' message
+            # carries — clientId/title/tasks were missing, so flat fees
+            # vanished from every tally after a reload (clientId undefined)
+            # and task-priced entries crashed priced() on p.tasks (audit)
             cur.execute("""SELECT p.ticket_id, p.billing_model, p.project_flat_cents,
-                                  p.status, p.approved_at
-                             FROM desk.projects p WHERE p.status = 'approved'""")
-            out["projects"] = [{"zTicket": r["ticket_id"],
-                                "pmode": "flat" if r["billing_model"] == "project_flat" else "tasks",
-                                "projectFlat": (r["project_flat_cents"] or 0) / 100 or None,
-                                "approvedAt": ms(r["approved_at"])} for r in cur.fetchall()]
+                                  p.status, p.approved_at, t.client_id, t.title
+                             FROM desk.projects p
+                             JOIN desk.tickets t ON t.id = p.ticket_id
+                            WHERE p.status = 'approved'""")
+            projects = {r["ticket_id"]: {
+                "zTicket": r["ticket_id"], "ticket": r["ticket_id"],
+                "title": r["title"], "clientId": str(r["client_id"]),
+                "pmode": "flat" if r["billing_model"] == "project_flat" else "tasks",
+                "projectFlat": (r["project_flat_cents"] or 0) / 100 or None,
+                "approvedAt": ms(r["approved_at"]), "approvedBy": "Docket",
+                "tasks": []} for r in cur.fetchall()}
+            if projects:
+                cur.execute("""SELECT ticket_id, id, label, billing_mode,
+                                      rate_cents, flat_cents
+                                 FROM desk.project_tasks
+                                WHERE ticket_id = ANY(%s) ORDER BY position""",
+                            (list(projects),))
+                for r in cur.fetchall():
+                    projects[r["ticket_id"]]["tasks"].append({
+                        "id": str(r["id"]), "label": r["label"],
+                        "mode": r["billing_mode"],
+                        "rate": (r["rate_cents"] / 100) if r["rate_cents"] is not None else None,
+                        "flat": (r["flat_cents"] / 100) if r["flat_cents"] is not None else None})
+            out["projects"] = list(projects.values())
         # money visibility (audit): every rate lane ships only with
         # l_see_amounts — same server-side rule as the audit tail above.
         # Keys/shapes stay intact (mapIn completeness); only values blank.
@@ -249,6 +284,9 @@ def bootstrap(request: Request, limit: int = 1000):
                     t["rateHist"] = []
             if "l_manage_settings" not in who["perms"]:
                 out["defaultRates"] = {}
-            for p in out["projects"]:   # ledger has no projectFlat editor —
+            for p in out["projects"]:   # ledger has no project-money editor —
                 p["projectFlat"] = None  # display-only, safe to blank outright
+                for t in p["tasks"]:
+                    t["rate"] = None
+                    t["flat"] = None
         return out

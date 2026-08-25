@@ -27,7 +27,11 @@ window.addEventListener('message', ev=>{
     const e={
       id:'e'+(state.seq++), zEntryId:null, zArticleId:null, zTicket:d.ticket,
       clientId:d.clientId, techId:d.techId, ticketTitle:d.title||('Ticket #'+d.ticket),
-      typeId:d.typeId||'a0', content:d.note||'Logged from Docket.',
+      /* no type picked in Docket → the SENTINEL (Unclassified), never the
+         prototype-era 'a0' which no hydrated type matches — that fallback
+         froze every render until the next hydrate (audit) */
+      typeId:d.typeId||((state.types.find(t=>t.sentinel)||{}).id||null),
+      content:d.note||'Logged from Docket.',
       startedAt, endedAt:startedAt+d.h*3600000, hours:Math.round(d.h*100)/100,
       status:'pending', source:'docket-live', createdAt:Date.now(),
       voidedAt:null, voidReason:null, zDeleted:false,
@@ -43,6 +47,9 @@ window.addEventListener('message', ev=>{
     log('Entry received from Docket', `${client(d.clientId)?.name||d.clientId} · #${d.ticket}: ${fmtHours(d.h)} h · ${atype(e.typeId)?.name||e.typeId} — arrived live over the shared database`, e.id);
     toast(`⚡ ${fmtHours(d.h)} h just landed from Docket ticket #${d.ticket}.`);
     render();
+    /* swap the local ghost for the REAL server row promptly: until the
+       hydrate lands, every action on the ghost is a guarded no-op (audit) */
+    setTimeout(()=>{ try{ hydrate(); }catch(_e){} }, 900);
   }
   const findByHeuristic = ()=> state.entries.find(x=> x.zTicket===d.ticket && x.techId===d.techId
       && x.status!=='void' && !x.zDeleted && Math.abs(x.hours-(d.oldH!=null?d.oldH:d.h))<0.011);

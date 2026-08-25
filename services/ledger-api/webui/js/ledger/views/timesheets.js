@@ -80,7 +80,7 @@ function viewTimesheets(){
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <div class="search">${icon(IC.search)}<input type="text" placeholder="Search ticket, note, client${admin?', tech':''}…" value="${esc(f.q)}" data-fkey="tf-q" oninput="setTF('q',this.value)"></div>
       <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('tfClient', state.clients.filter(c=>!c.archivedInDocket||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')})), f.client, function(v){ setTF('client',v); }, 'All clients')}</span>
-      ${admin?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('tfTech', state.techs.map(t=>({v:t.id,label:t.name})), f.tech, function(v){ setTF('tech',v); }, 'All techs')}</span>`:''}
+      ${admin?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('tfTech', state.techs.map(t=>({v:t.id,label:t.name+(t.active===false?' (deactivated)':'')})), f.tech, function(v){ setTF('tech',v); }, 'All techs')}</span>`:''}
       <span style="display:inline-block;min-width:170px;vertical-align:middle">${typeSel}</span>
       <div class="seg wrap">${statuses.map(s=>`<button class="${s==='all'?(f.status.length?'':'on'):(f.status.includes(s)?'on':'')}" onclick="setTF('status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}</div>
       ${anyFilter?`<button class="btn sm ghost" onclick="tsClear()">Clear</button>`:''}
@@ -217,7 +217,8 @@ function classify(id,typeId){
   e.typeId=typeId; closeMenus();
   log(atype(typeId).sentinel?'Marked unclassified':'Classified', `${esc(client(e.clientId).name)} · #${e.zTicket}: ${from} → ${to}`, e.id);
   toast(`Classified as ${to}`); render();
-  if(e.typeId===was||!srvId(id)) return;
+  if(e.typeId===was) return;
+  if(!srvId(id)){ toast('Still syncing from Docket — reclassify again in a moment.'); return; }
   const ty=state.types.find(t=>t.id===e.typeId);
   $fetch('/api/entries/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({activity_type:ty?ty.name:e.typeId})})
@@ -254,6 +255,9 @@ function applySubmitSelected(){
   toast(`${ents.length} ${ents.length===1?'entry':'entries'} submitted for review`);
   render();
   const done=ents.filter(e=>srvId(e.id));
+  /* the guard used to SILENTLY drop ghosts still syncing from Docket —
+     success toast, no server call, reverted on hydrate (audit) */
+  if(done.length<ents.length) toast(`${ents.length-done.length} still syncing from Docket — submit again in a moment.`);
   if(!done.length) return;
   Promise.all(done.map(e=>$fetch('/api/entries/'+e.id+'/submit',{method:'POST'})))
     .then(async rs=>{ const bad=rs.find(r=>!r.ok);
@@ -269,6 +273,7 @@ function recallSelected(){
   toast(`${ents.length} ${ents.length===1?'entry':'entries'} recalled — editable again`);
   render();
   const done=ents.filter(e=>srvId(e.id));
+  if(done.length<ents.length) toast(`${ents.length-done.length} still syncing from Docket — recall again in a moment.`);
   if(!done.length) return;
   Promise.all(done.map(e=>$fetch('/api/entries/'+e.id+'/recall',{method:'POST'})))
     .then(async rs=>{ const bad=rs.find(r=>!r.ok);
@@ -292,22 +297,28 @@ function confirmDeleteSelected(){
 }
 function applyDeleteSelected(){
   const ents=selectedEntries(); closeModal();
-  const voided=[];
+  /* locked/approved entries are IMMUTABLE server-side: the old flow faked
+     zDeleted + an audit line + a Docket notification that all evaporated on
+     the next hydrate while toasting success (audit). Refuse honestly. */
+  const voided=[], locked=[];
   ents.forEach(e=>{
+    if(isLocked(e)||e.tsApproved){
+      locked.push(e);
+      log('Removal refused (locked)',`${esc(client(e.clientId).name)} · #${e.zTicket}: entry #${e.zEntryId} is ${e.tsApproved?'manager-approved':'in a closed period'} — immutable, nothing removed`,e.id);
+      return;
+    }
     e.zDeleted=true;
     notifyDocket({ type:'entry-removed', ticket:e.zTicket, techId:e.techId, typeId:e.typeId, h:e.hours, eid:(window._docketRev||{})[e.id]||null });
-    if(isLocked(e)){
-      log('Removed in Docket (locked)',`${esc(client(e.clientId).name)} · #${e.zTicket}: entry #${e.zEntryId} removed in Docket after approval — billed entry retained (immutable)`,e.id);
-    } else {
-      e.status='void'; e.voidedAt=Date.now(); e.voidReason='Removed in Docket';
-      voided.push(e);
-      log('Voided (removed in Docket)',`${esc(client(e.clientId).name)} · #${e.zTicket}: entry #${e.zEntryId} removed in Docket — ledger row voided (not billed), retained for audit`,e.id);
-    }
+    e.status='void'; e.voidedAt=Date.now(); e.voidReason='Removed in Docket';
+    voided.push(e);
+    log('Voided (removed in Docket)',`${esc(client(e.clientId).name)} · #${e.zTicket}: entry #${e.zEntryId} removed in Docket — ledger row voided (not billed), retained for audit`,e.id);
   });
   state.tf.sel={};
-  toast(`${ents.length} ${ents.length===1?'entry':'entries'} removed in Docket — audited`);
+  if(voided.length) toast(`${voided.length} ${voided.length===1?'entry':'entries'} removed in Docket — audited`);
+  if(locked.length) toast(`${locked.length} ${locked.length===1?'entry is':'entries are'} approved/billed — immutable, not removed`);
   if(state.view!=='timesheets') go('timesheets'); else render();
   const done=voided.filter(e=>srvId(e.id));
+  if(done.length<voided.length) toast(`${voided.length-done.length} still syncing from Docket — remove again in a moment.`);
   if(!done.length) return;
   Promise.all(done.map(e=>$fetch('/api/entries/'+e.id,{method:'PATCH',
       headers:{'Content-Type':'application/json'},
@@ -336,7 +347,8 @@ function saveTime(id){
   notifyDocket({ type:'entry-updated', ticket:e.zTicket, techId:e.techId, typeId:e.typeId, oldH:_oldH, h:e.hours, startedAt:e.startedAt, endedAt:e.endedAt, eid:(window._docketRev||{})[e.id]||null });
   toast(`Updated to ${fmtHours(e.hours)} h${e.zEntryId?' — shared record updated; Docket sees it immediately':''}`);
   render();
-  if((e.startedAt===was.s&&e.endedAt===was.en)||!srvId(id)) return;
+  if(e.startedAt===was.s&&e.endedAt===was.en) return;
+  if(!srvId(id)){ toast('Still syncing from Docket — edit the span again in a moment.'); return; }
   $fetch('/api/entries/'+id,{method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({started_at:iso(e.startedAt),ended_at:iso(e.endedAt)})})

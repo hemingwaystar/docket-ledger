@@ -129,7 +129,7 @@ function viewApprovals(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('afPeriod', perOpts.map(p=>({v:p.key,label:p.label+' ('+p.cycle+')'})), f.period, function(v){ setAF('period',v); }, 'All billing periods')}</span>
-      <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('afTech', state.techs.map(t=>({v:t.id,label:t.name})), f.tech, function(v){ setAF('tech',v); }, 'All technicians')}</span>
+      <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('afTech', state.techs.map(t=>({v:t.id,label:t.name+(t.active===false?' (deactivated)':'')})), f.tech, function(v){ setAF('tech',v); }, 'All technicians')}</span>
       <span style="display:inline-block;min-width:160px;vertical-align:middle">${multiCombo('afGroup', state.zammadGroups.filter(g=>!g.archived||f.group.includes(g.id)).map(g=>({v:g.id,label:g.name+(g.archived?' (archived)':'')})), f.group, function(v){ setAF('group',v); }, 'All groups')}</span>
       <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('afClient', state.clients.filter(c=>!c.archivedInDocket||f.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')})), f.client, function(v){ setAF('client',v); }, 'All clients')}</span>
       ${anyF?`<button class="btn sm ghost" onclick="afClear()">Clear</button>`:''}

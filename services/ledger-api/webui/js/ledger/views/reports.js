@@ -217,7 +217,7 @@ function viewReports(){
     ? detDefs.map(([k,l])=>`<button class="${r.det[k]?'on':''}" onclick="setRptDet('${k}')">${l}</button>`).join('')
     : metricDefs.map(([k,l])=>`<button class="${r.metrics[k]?'on':''}" onclick="setRptMetric('${k}')">${l}</button>`).join('');
 
-  const controls=`
+  const controls=`${capBanner()}
   <div class="card"><div class="card-pad" style="display:flex;flex-direction:column;gap:13px">
     <div class="rpt-line"><span class="rpt-lab">Report</span><div class="seg wrap">${groupSeg}</div></div>
     <div class="rpt-line"><span class="rpt-lab">Period</span>
@@ -232,7 +232,7 @@ function viewReports(){
     </div>
     <div class="rpt-line"><span class="rpt-lab">Filters</span>
       <span style="display:inline-block;min-width:200px;vertical-align:middle">${multiCombo('rptClient', state.clients.filter(c=>!c.archivedInDocket||r.client.includes(c.id)).map(c=>({v:c.id,label:c.name+(c.archivedInDocket?' (archived)':'')})), r.client, function(v){ setRpt('client',v); }, 'All clients')}</span>
-      ${admin?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('rptTech', state.techs.map(t=>({v:t.id,label:t.name})), r.tech, function(v){ setRpt('tech',v); }, 'All techs')}</span>`:''}
+      ${admin?`<span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('rptTech', state.techs.map(t=>({v:t.id,label:t.name+(t.active===false?' (deactivated)':'')})), r.tech, function(v){ setRpt('tech',v); }, 'All techs')}</span>`:''}
       <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('rptType', state.types.filter(a=>a.active!==false||r.type.includes(a.id)).map(a=>({v:a.id,label:a.name+(a.active===false?' (archived)':'')})), r.type, function(v){ setRpt('type',v); }, 'All activities')}</span>
       ${money?`<span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('rptBill', [{v:'billable',label:'Billable'},{v:'nonbill',label:'Non-billable'}], r.billable, function(v){ setRpt('billable',v); }, 'Billable + non')}</span>`:''}
       <span style="display:inline-block;min-width:150px;vertical-align:middle">${multiCombo('rptScope', [{v:'open',label:'Open'},{v:'locked',label:'Approved / locked'}], r.scope, function(v){ setRpt('scope',v); }, 'Any status')}</span>

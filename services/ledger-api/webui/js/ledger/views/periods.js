@@ -176,7 +176,7 @@ function viewPeriods(){
     <div class="search">${icon(IC.search)}<input type="text" placeholder="Search clients…" value="${esc(pf.q)}" data-fkey="pf-q" oninput="pfSetQ(this.value)"></div>
     <div class="mini muted">${rows.length} client${rows.length===1?'':'s'}${archHidden?` · ${archHidden} archived without period history hidden`:''}</div>
   </div>`;
-  return `<div class="notice info" style="margin-bottom:16px">${icon(IC.period)}<div>Approving a period <b>locks every entry in it permanently</b> — they become immutable and can’t be edited or deleted, and the period is cleared for Odoo export. A period can’t be approved while any entry is Unclassified.</div></div>
+  return `${capBanner()}<div class="notice info" style="margin-bottom:16px">${icon(IC.period)}<div>Approving a period <b>locks every entry in it permanently</b> — they become immutable and can’t be edited or deleted, and the period is cleared for Odoo export. A period can’t be approved while any entry is Unclassified.</div></div>
   ${toolbar}
   <div class="card"><table class="tbl">
     <thead><tr><th>Client</th><th>Current period</th><th class="num">Entries</th><th class="num">Amount</th><th></th></tr></thead>

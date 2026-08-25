@@ -44,7 +44,13 @@ function fmtDateShort(d){ return new Date(d).toLocaleDateString('en-US',{month:'
 function fmtStamp(d){ return new Date(d).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}) }
 function tech(id){ return state.techs.find(t=>t.id===id) }
 function client(id){ return state.clients.find(c=>c.id===id) }
-function atype(id){ return state.types.find(a=>a.id===id) }
+/* unknown id → sentinel-shaped fallback, NEVER undefined: a bridge entry
+   with a type the hydrate hasn't delivered yet used to throw in renderNav/
+   priced/classifyControl and freeze the whole pane (audit). Desk's atype()
+   already worked this way. */
+function atype(id){ return state.types.find(a=>a.id===id)
+  || {id, name:'Unclassified', billable:false, sentinel:true, active:true,
+      rate:0, rateHist:[], billableHist:[], note:''} }
 
 /* Period math — start/end range + human label + stable key, per cycle */
 function periodFor(cycle, dateStr){
@@ -69,7 +75,28 @@ function periodFor(cycle, dateStr){
   }
   return {start,end,label,key};
 }
-function entryPeriod(e){ const c=client(e.clientId); return periodFor(c.cycle, e.startedAt) }
+function entryPeriod(e){
+  const c=client(e.clientId);
+  /* the server's period assignment is the billing truth (audit): hydrated
+     entries carry periodKey; browser-local bucketing put an evening entry
+     near a month/week end in a DIFFERENT period than the DB (UTC), so lock
+     checks, sheets and period ops silently missed it. Ghosts (no periodKey
+     yet) still bucket locally until the next hydrate. */
+  if(e.periodKey){
+    const uk=uiPeriodKey(e.periodKey);
+    if(uk[0]==='M'){
+      const [y,mo]=uk.slice(1).split('-').map(Number);
+      const start=new Date(y,mo-1,1), end=new Date(y,mo,1);
+      return {start,end,key:uk,label:start.toLocaleDateString('en-US',{month:'long',year:'numeric'})};
+    }
+    if(uk[0]==='W'){
+      const start=new Date(uk.slice(1)+'T00:00:00');
+      const end=new Date(start); end.setDate(start.getDate()+7);
+      return {start,end,key:uk,label:'Week of '+fmtDateShort(start)};
+    }
+  }
+  return periodFor(c.cycle, e.startedAt)
+}
 function periodState(clientId, key){
   const k=clientId+'|'+key;
   if(!state.periods[k]) state.periods[k]={status:'open',approvedAt:null,approvedBy:null,exportedAt:null,exportRef:null};
@@ -149,6 +176,11 @@ function clientUsesDefaultsAsOf(c, tid, atMs){
 function defaultRateAsOf(tid, atMs){
   const d=state.defaultRates[tid]; if(!d) return null;
   return effRateN(d.rate, d.hist, atMs);   /* NULL hist row = dated unset, falls through */
+}
+/* shown atop any view whose tallies run over the capped hydrate window */
+function capBanner(){
+  if(!state.entriesCapped) return '';
+  return `<div class="notice info" style="margin-bottom:16px"><div><b>Not all history is loaded</b> — older entries beyond the hydrate window are excluded from the tallies on this page. Server-side period totals and Odoo exports remain complete.</div></div>`;
 }
 function projFor(e){ return (state.projects && state.projects[e.zTicket]) || null; }
 function projTaskFor(e){ const p=projFor(e); if(!p||!e.zTask) return null; return p.tasks.find(x=>x.id===e.zTask.id)||null; }

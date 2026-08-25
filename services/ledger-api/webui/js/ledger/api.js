@@ -36,6 +36,9 @@ function mapIn(d){
   Object.keys(state.defaultRates).forEach(k=>delete state.defaultRates[k]);
   Object.entries(d.defaultRates||{}).forEach(([k,v])=>{ state.defaultRates[k]=v; });
   state.entries.length=0; d.entries.forEach(e=>state.entries.push(e));
+  /* the hydrate window is capped server-side — when older entries exist
+     beyond it, client-side tallies under-count and must SAY so (audit) */
+  state.entriesCapped=(d.entriesTotal||d.entries.length)>d.entries.length;
   if(d.cfg){
     if(d.cfg.ledger) Object.assign(state.settings, d.cfg.ledger);
     if(d.cfg.odoo)   Object.assign(state.settings.odoo, d.cfg.odoo);
