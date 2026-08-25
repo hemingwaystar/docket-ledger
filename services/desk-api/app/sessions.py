@@ -34,6 +34,61 @@ COOKIE = "hts_session"
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 
+# brute-force throttle (0040): 5 failures in a 15-minute window lock the key
+# for 15 minutes. Keyed per account AND per client address, so guessing burns
+# out fast whichever way it fans. The address comes from X-Real-IP when the
+# nginx front set it (request.client.host behind the proxy is nginx itself —
+# keying on that would lock every user at once); direct overlay-port access
+# has no proxy and falls back to the socket peer.
+THROTTLE_FAILS = 5
+THROTTLE_MINUTES = 15
+
+
+def _throttle_keys(request, email: str | None = None) -> list[str]:
+    keys = []
+    if email and email.strip():
+        keys.append(f"acct:{email.strip().lower()}"[:200])
+    addr = request.headers.get("x-real-ip") or (
+        request.client.host if request.client else None)
+    if addr:
+        keys.append(f"ip:{addr}"[:200])
+    return keys
+
+
+def _throttle_guard(cur, keys):
+    if not keys:
+        return
+    cur.execute("""SELECT 1 FROM shared.auth_throttle
+                    WHERE key = ANY(%s) AND locked_until > now() LIMIT 1""", (keys,))
+    if cur.fetchone():
+        raise HTTPException(429, "Too many failed attempts — try again in a few minutes")
+
+
+def _throttle_fail(cur, keys):
+    """One failed credential check. Rides the caller's failure-audit commit."""
+    for k in keys:
+        cur.execute("""
+            INSERT INTO shared.auth_throttle AS t (key) VALUES (%s)
+            ON CONFLICT (key) DO UPDATE SET
+              fails = CASE WHEN t.window_start < now() - make_interval(mins => %s)
+                           THEN 1 ELSE t.fails + 1 END,
+              window_start = CASE WHEN t.window_start < now() - make_interval(mins => %s)
+                                  THEN now() ELSE t.window_start END,
+              locked_until = CASE WHEN (CASE WHEN t.window_start < now() - make_interval(mins => %s)
+                                             THEN 1 ELSE t.fails + 1 END) >= %s
+                                  THEN now() + make_interval(mins => %s)
+                                  ELSE t.locked_until END""",
+                    (k, THROTTLE_MINUTES, THROTTLE_MINUTES, THROTTLE_MINUTES,
+                     THROTTLE_FAILS, THROTTLE_MINUTES))
+
+
+def _throttle_clear(cur, email: str):
+    """A successful sign-in clears the ACCOUNT counter only — the address
+    counter expires on its own, so interleaved good logins can't feed it."""
+    cur.execute("DELETE FROM shared.auth_throttle WHERE key = %s",
+                (f"acct:{email.strip().lower()}"[:200],))
+
+
 def _mfa_policy(cur) -> str:
     cur.execute("SELECT value FROM shared.app_config WHERE key = 'auth'")
     row = cur.fetchone()
@@ -77,22 +132,31 @@ class Login(BaseModel):
 def login(body: Login, request: Request, response: Response):
     with db.connect("auth") as conn:
         with conn.cursor() as cur:
+            tkeys = _throttle_keys(request, body.email)
+            _throttle_guard(cur, tkeys)
             cur.execute("""SELECT id, name, password_hash, password_must_change,
-                                  totp_secret_enc, totp_enrolled_at, active
+                                  totp_secret_enc, totp_enrolled_at, active,
+                                  last_totp_step
                              FROM shared.agents WHERE lower(email) = lower(%s)""",
                         (body.email,))
             row = cur.fetchone()
             generic = HTTPException(401, "Invalid email or password")
             if row is None:
+                _throttle_fail(cur, tkeys)
+                conn.commit()  # keep the counter — the raise would roll it back
                 raise generic
-            agent_id, name, pw_hash, must_change, totp_enc, totp_enrolled_at, active = row
+            (agent_id, name, pw_hash, must_change, totp_enc, totp_enrolled_at,
+             active, last_step) = row
             if not active or not pw_hash:
+                _throttle_fail(cur, tkeys)
+                conn.commit()  # keep the counter — the raise would roll it back
                 raise generic
             try:
                 ph.verify(pw_hash, body.password)
             except VerifyMismatchError:
                 auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
                            f"{body.email} — wrong password")
+                _throttle_fail(cur, tkeys)
                 conn.commit()  # keep the failure audit — the raise would roll it back
                 raise generic
             policy = _mfa_policy(cur)
@@ -104,22 +168,36 @@ def login(body: Login, request: Request, response: Response):
                 if not body.totp_code:
                     raise HTTPException(401, "TOTP code required", headers={"X-MFA": "required"})
                 secret = crypto.open_(totp_enc).decode()
-                if not totp.verify(secret, body.totp_code):
+                step = totp.verify_step(secret, body.totp_code)
+                if step is None:
                     auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
                                f"{body.email} — bad TOTP")
+                    _throttle_fail(cur, tkeys)
                     conn.commit()  # keep the failure audit — the raise would roll it back
                     raise HTTPException(401, "Invalid TOTP code")
+                if last_step is not None and step <= last_step:
+                    # a code at/behind the last accepted step is a replay
+                    auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
+                               f"{body.email} — TOTP replay")
+                    _throttle_fail(cur, tkeys)
+                    conn.commit()  # keep the failure audit — the raise would roll it back
+                    raise HTTPException(401, "That code was already used — wait for the next one")
+                cur.execute("UPDATE shared.agents SET last_totp_step = %s WHERE id = %s",
+                            (step, agent_id))
             elif policy == "required":
                 if totp_enc is not None and body.totp_code:
                     # pending secret: proof of possession completes enrollment
                     secret = crypto.open_(totp_enc).decode()
-                    if not totp.verify(secret, body.totp_code):
+                    step = totp.verify_step(secret, body.totp_code)
+                    if step is None:
                         auth.audit(conn, "auth", "Login failed", f"agent:{agent_id}",
                                    f"{body.email} — bad TOTP (enrollment)")
+                        _throttle_fail(cur, tkeys)
                         conn.commit()  # keep the failure audit — the raise would roll it back
                         raise HTTPException(401, "Invalid TOTP code")
-                    cur.execute("UPDATE shared.agents SET totp_enrolled_at = now() WHERE id = %s",
-                                (agent_id,))
+                    cur.execute("""UPDATE shared.agents
+                                      SET totp_enrolled_at = now(), last_totp_step = %s
+                                    WHERE id = %s""", (step, agent_id))
                     auth.audit(conn, "auth", "MFA enrolled", f"agent:{agent_id}",
                                f"{body.email} — confirmed at sign-in")
                 else:
@@ -127,6 +205,7 @@ def login(body: Login, request: Request, response: Response):
                                         headers={"X-MFA": "enroll"})
             # optional policy + pending/no secret → plain password sign-in
             # (a pending secret stays inert until confirmed)
+            _throttle_clear(cur, body.email)
             token, perms = mint_session(conn, cur, request, agent_id)
         auth.audit(conn, "auth", "Signed in", f"agent:{agent_id}", body.email)
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax",
@@ -149,7 +228,7 @@ def logout(request: Request, response: Response):
 @router.get("/me")
 def me(request: Request):
     with db.connect() as conn:
-        who = auth.require(conn, request)
+        who = auth.require(conn, request, allow_must_change=True)
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
         return {"name": who["name"], "email": who["email"],
@@ -192,23 +271,36 @@ def change_password(body: ChangePassword, request: Request):
     if len(body.new_password) < 12:
         raise HTTPException(422, "New password must be at least 12 characters")
     with db.connect() as conn:
-        who = auth.require(conn, request)
+        who = auth.require(conn, request, allow_must_change=True)
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
         with conn.cursor() as cur:
+            tkeys = _throttle_keys(request, who["email"])
+            _throttle_guard(cur, tkeys)
             cur.execute("SELECT password_hash FROM shared.agents WHERE id = %s",
                         (who["agent_id"],))
             (pw_hash,) = cur.fetchone()
             try:
                 ph.verify(pw_hash, body.current_password)
             except VerifyMismatchError:
+                _throttle_fail(cur, tkeys)
+                conn.commit()  # keep the counter — the raise would roll it back
                 raise HTTPException(401, "Current password is wrong")
             cur.execute("""UPDATE shared.agents
                               SET password_hash = %s, password_must_change = false
                             WHERE id = %s""",
                         (ph.hash(body.new_password), who["agent_id"]))
+            # every OTHER session dies with the old password — the standard
+            # "change my password to lock the intruder out" expectation
+            # (admin resets already did this; the self-service path now matches)
+            token = request.cookies.get(COOKIE)
+            cur.execute("""UPDATE shared.sessions SET revoked_at = now()
+                            WHERE agent_id = %s AND revoked_at IS NULL
+                              AND token_hash <> %s""",
+                        (who["agent_id"],
+                         hashlib.sha256((token or "").encode()).hexdigest()))
         auth.audit(conn, "auth", "Password changed", f"agent:{who['agent_id']}",
-                   f"{who['email']} — self-service")
+                   f"{who['email']} — self-service; other sessions revoked")
         return {"ok": True}
 
 
@@ -259,10 +351,16 @@ def mfa_confirm(body: MfaConfirm, request: Request):
                 raise HTTPException(409, "No enrollment in progress — start one first")
             if at is not None:
                 return {"ok": True}                     # already live — idempotent
-            if not totp.verify(crypto.open_(enc).decode(), body.code):
+            tkeys = _throttle_keys(request, who["email"])
+            _throttle_guard(cur, tkeys)
+            step = totp.verify_step(crypto.open_(enc).decode(), body.code)
+            if step is None:
+                _throttle_fail(cur, tkeys)
+                conn.commit()  # keep the counter — the raise would roll it back
                 raise HTTPException(401, "Invalid TOTP code")
-            cur.execute("UPDATE shared.agents SET totp_enrolled_at = now() WHERE id = %s",
-                        (who["agent_id"],))
+            cur.execute("""UPDATE shared.agents
+                              SET totp_enrolled_at = now(), last_totp_step = %s
+                            WHERE id = %s""", (step, who["agent_id"]))
         auth.audit(conn, "auth", "MFA enrolled", f"agent:{who['agent_id']}", who["email"])
         return {"ok": True}
 
@@ -273,26 +371,33 @@ class EnrollStart(BaseModel):
 
 
 @router.post("/mfa/enroll-start")
-def mfa_enroll_start(body: EnrollStart):
+def mfa_enroll_start(body: EnrollStart, request: Request):
     """Login-time enrollment: password re-verified, no session needed. Mints a
     PENDING secret (active only after a valid code at /auth/login). Refuses if
     MFA is already live — admin reset is the only way to replace an active secret."""
     with db.connect("auth") as conn, conn.cursor() as cur:
+        tkeys = _throttle_keys(request, body.email)
+        _throttle_guard(cur, tkeys)
         cur.execute("""SELECT id, password_hash, totp_enrolled_at, active
                          FROM shared.agents WHERE lower(email) = lower(%s)""",
                     (body.email,))
         row = cur.fetchone()
         generic = HTTPException(401, "Invalid email or password")
         if row is None:
+            _throttle_fail(cur, tkeys)
+            conn.commit()  # keep the counter — the raise would roll it back
             raise generic
         agent_id, pw_hash, enrolled_at, active = row
         if not active or not pw_hash:
+            _throttle_fail(cur, tkeys)
+            conn.commit()  # keep the counter — the raise would roll it back
             raise generic
         try:
             ph.verify(pw_hash, body.password)
         except VerifyMismatchError:
             auth.audit(conn, "auth", "MFA enroll-start failed", f"agent:{agent_id}",
                        f"{body.email} — wrong password")
+            _throttle_fail(cur, tkeys)
             conn.commit()  # keep the failure audit — the raise would roll it back
             raise generic
         if enrolled_at is not None:

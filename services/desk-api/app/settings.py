@@ -24,8 +24,11 @@ from . import auth, crypto, db, helpers, mailer
 
 router = APIRouter(prefix="/api/settings")
 
+# odoo/retainers were caller-less prototype-era duplicates of Ledger's own
+# l_manage_settings-gated routes — desk perms could silently clobber billing
+# config (audit). 'projects' was read by nothing. Ledger owns all three now.
 CONFIG_KEYS = ("auth", "graph", "mail", "verification", "business_hours",
-               "odoo", "retainers", "projects", "sla", "desk_ui")
+               "sla", "desk_ui")
 
 
 @router.get("/config")
@@ -83,7 +86,9 @@ class SecretValue(BaseModel):
 
 @router.put("/secrets/{name}")
 def put_secret(name: str, body: SecretValue, request: Request):
-    if name not in ("graph", "entra_oidc", "voipms", "twilio", "odoo"):
+    # 'odoo' removed (audit): the Odoo secret rotates only via Ledger's
+    # l_manage_settings-gated PUT /api/secrets/odoo, never via desk perms
+    if name not in ("graph", "entra_oidc", "voipms", "twilio"):
         raise HTTPException(422, "Unknown secret name")
     with db.connect() as conn:
         who = auth.require(conn, request)

@@ -21,11 +21,20 @@ def _code(secret: str, counter: int) -> str:
     return f"{value % 1_000_000:06d}"
 
 
-def verify(secret: str, code: str) -> bool:
+def verify_step(secret: str, code: str) -> int | None:
+    """The matched timestep, or None. Callers that gate sign-in pin this
+    against shared.agents.last_totp_step so a captured code cannot be
+    replayed within the drift window (0040)."""
     now = int(time.time()) // 30
     code = code.strip().replace(" ", "")
-    return any(hmac.compare_digest(_code(secret, now + drift), code)
-               for drift in (-1, 0, 1))
+    for drift in (-1, 0, 1):
+        if hmac.compare_digest(_code(secret, now + drift), code):
+            return now + drift
+    return None
+
+
+def verify(secret: str, code: str) -> bool:
+    return verify_step(secret, code) is not None
 
 
 def otpauth_uri(secret: str, email: str) -> str:
