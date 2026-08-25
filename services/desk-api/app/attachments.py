@@ -10,11 +10,14 @@ and thread view use:
                                  day. 20 MB/file cap here; the nginx front's
                                  client_max_body_size 25m leaves headroom for
                                  multipart overhead.
-  GET  /api/attachments/{id}     authenticated download. Images and PDFs
-                                 render inline (browser tab); everything else
-                                 downloads. Bytes come straight from the
+  GET  /api/attachments/{id}     authenticated download. Raster images and
+                                 PDFs render inline (browser tab); everything
+                                 else — including SVG, which is a script
+                                 container, not a picture — downloads as an
+                                 opaque file. Bytes come straight from the
                                  bytea column — one database, atomic backups.
 """
+import re
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
@@ -25,6 +28,23 @@ from . import auth, db
 router = APIRouter(prefix="/api")
 
 MAX_BYTES = 20 * 1024 * 1024
+
+# The stored mime is sender/uploader-chosen — it may only ever pick between
+# "render inline" and "download", never inject anything. Inline is a closed
+# list of script-free formats; image/svg+xml executing on the app origin with
+# the agent's cookie is the stored-XSS class this fences (audit CRIT-2).
+INLINE_MIMES = frozenset((
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+    "application/pdf"))
+MIME_SHAPE = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$")
+CTRL_STRIP = re.compile(r'[\x00-\x1f\x7f"\\]')   # header-safe filename: no CR/LF/quotes
+
+
+def normalize_mime(raw) -> str:
+    """Lowercase, drop parameters; anything not shaped like a media type
+    becomes octet-stream. The mail-worker applies the same rule at ingest."""
+    mime = (raw or "").split(";")[0].strip().lower()
+    return mime if MIME_SHAPE.match(mime) else "application/octet-stream"
 
 
 @router.post("/uploads", status_code=201)
@@ -42,7 +62,7 @@ async def upload(file: UploadFile, request: Request):
                              (filename, mime_type, byte_size, content, staged_by)
                            VALUES (%s, %s, %s, %s, %s) RETURNING id""",
                         (file.filename or "attachment",
-                         file.content_type or "application/octet-stream",
+                         normalize_mime(file.content_type),
                          len(data), data, who.get("agent_id")))
             (aid,) = cur.fetchone()
     return {"id": str(aid), "name": file.filename,
@@ -61,9 +81,14 @@ def download(attachment_id: uuid.UUID, request: Request):
     if row is None:
         raise HTTPException(404, "No such attachment")
     filename, mime, content = row
-    disposition = "inline" if (mime or "").startswith(("image/", "application/pdf")) \
-        else "attachment"
-    safe = (filename or "attachment").replace('"', "")
-    return Response(bytes(content), media_type=mime or "application/octet-stream",
+    # serve-time is the real gate: it covers rows stored before mime
+    # normalization existed, whatever their column says
+    mime = normalize_mime(mime)
+    inline = mime in INLINE_MIMES
+    safe = CTRL_STRIP.sub("", filename or "") or "attachment"
+    return Response(bytes(content),
+                    media_type=mime if inline else "application/octet-stream",
                     headers={"Content-Disposition":
-                             f'{disposition}; filename="{safe}"'})
+                             f'{"inline" if inline else "attachment"}; filename="{safe}"',
+                             "X-Content-Type-Options": "nosniff",
+                             "Content-Security-Policy": "default-src 'none'"})

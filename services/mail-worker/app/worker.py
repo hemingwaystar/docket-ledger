@@ -27,6 +27,7 @@ import time
 
 import base64
 import httpx
+import psycopg
 
 from . import automations, crypto, db
 
@@ -34,6 +35,24 @@ INTERVAL = 30
 TOKEN_CACHE = {"token": None, "until": 0.0}
 SUBJECT_REF = re.compile(r"\[#(\d{5,})\]")
 TAG_STRIP = re.compile(r"<[^>]+>")
+
+
+def _clean(s):
+    """Postgres text rejects NUL — a \\x00 anywhere in sender-controlled text
+    (subject, body, filename) fails the INSERT. Strip it at the door."""
+    return s.replace("\x00", "") if isinstance(s, str) else s
+
+
+MIME_SHAPE = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$")
+
+
+def normalize_mime(raw) -> str:
+    """The Graph contentType is sender-chosen — never store it verbatim.
+    Lowercase, drop parameters, and anything not shaped like a media type
+    becomes octet-stream. Serving stays gated by desk-api's inline allowlist;
+    this keeps garbage out of the column."""
+    mime = (raw or "").split(";")[0].strip().lower()
+    return mime if MIME_SHAPE.match(mime) else "application/octet-stream"
 
 
 def wake_pending(conn) -> int:
@@ -72,9 +91,20 @@ def route_sender(conn, from_email: str):
         if row:
             client_id = row[0]
             name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            # contacts_email_key is unconditional on lower(email), but the
+            # lookup above filters c.active — mail from a DEACTIVATED contact
+            # reaches this INSERT and must not blow up the ingestion tx.
+            # Adopt the existing row (its own client) instead of creating.
             cur.execute("""INSERT INTO shared.contacts (client_id, name, email)
-                           VALUES (%s, %s, %s) RETURNING id""", (client_id, name, email))
-            (contact_id,) = cur.fetchone()
+                           VALUES (%s, %s, %s)
+                           ON CONFLICT (lower(email)) DO NOTHING
+                           RETURNING id""", (client_id, name, email))
+            created = cur.fetchone()
+            if created is None:
+                cur.execute("""SELECT c.client_id, c.id FROM shared.contacts c
+                                WHERE lower(c.email) = %s""", (email,))
+                return (*cur.fetchone(), False)
+            (contact_id,) = created
             cur.execute("""INSERT INTO audit.events (app, action, entity, detail)
                            VALUES ('mail', 'Contact auto-created', %s, %s)""",
                         (f"contact:{contact_id}", f"{email} via domain match"))
@@ -126,7 +156,7 @@ def body_text(msg) -> str:
         content = html.unescape(TAG_STRIP.sub(" ", content))
     content = re.sub(r"[ \t]+", " ", content)
     content = re.sub(r"\n\s*\n+", "\n\n", content)
-    return content.strip()[:20000]
+    return _clean(content).strip()[:20000]
 
 
 def body_html(msg) -> str | None:
@@ -134,7 +164,7 @@ def body_html(msg) -> str | None:
     body = msg.get("body") or {}
     if (body.get("contentType") or "").lower() != "html":
         return None
-    return (body.get("content") or "")[:300000] or None
+    return _clean(body.get("content") or "")[:300000] or None
 
 
 def is_auto_mail(msg) -> bool:
@@ -157,7 +187,7 @@ def find_thread(cur, msg):
             return int(m.group(1))
     for h in msg.get("internetMessageHeaders") or []:
         if h.get("name", "").lower() in ("in-reply-to", "references"):
-            for ref in h.get("value", "").split():
+            for ref in _clean(h.get("value", "")).split():
                 cur.execute("SELECT ticket_id FROM desk.articles WHERE message_id = %s",
                             (ref.strip(),))
                 row = cur.fetchone()
@@ -167,9 +197,9 @@ def find_thread(cur, msg):
 
 
 def ingest_message(conn, mailbox, msg, token=None) -> str:
-    mid = msg.get("internetMessageId")
-    sender = (((msg.get("from") or {}).get("emailAddress")) or {}).get("address", "")
-    subject = (msg.get("subject") or "").strip() or "(no subject)"
+    mid = _clean(msg.get("internetMessageId"))
+    sender = _clean((((msg.get("from") or {}).get("emailAddress")) or {}).get("address", ""))
+    subject = _clean(msg.get("subject") or "").strip() or "(no subject)"
     auto = is_auto_mail(msg)
     with conn.cursor() as cur:
         if mid:
@@ -291,9 +321,9 @@ def ingest_attachments(cur, address, graph_msg_id, article_id, token):
                              (article_id, filename, mime_type, byte_size, content,
                               content_id, is_inline)
                            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                        (article_id, a.get("name") or "attachment",
-                         a.get("contentType") or "application/octet-stream",
-                         len(data), data, a.get("contentId"),
+                        (article_id, _clean(a.get("name")) or "attachment",
+                         normalize_mime(a.get("contentType")),
+                         len(data), data, _clean(a.get("contentId")),
                          bool(a.get("isInline"))))
             cur.execute("RELEASE SAVEPOINT att")
         except Exception as exc:                          # noqa: BLE001
@@ -324,7 +354,7 @@ def poll_mailbox(conn, token, mailbox) -> dict:
            f"https://graph.microsoft.com/v1.0/users/{mailbox['address']}"
            f"/mailFolders/inbox/messages/delta?$select={select}")
     headers = {"Authorization": f"Bearer {token}", "Prefer": "odata.maxpagesize=25"}
-    counts = {"new": 0, "followup": 0, "dup": 0}
+    counts = {"new": 0, "followup": 0, "dup": 0, "failed": 0}
     for _ in range(20):
         resp = httpx.get(url, headers=headers, timeout=30)
         if resp.status_code == 410:      # delta cursor expired — restart clean
@@ -336,7 +366,39 @@ def poll_mailbox(conn, token, mailbox) -> dict:
         for msg in page.get("value", []):
             if "@removed" in msg:
                 continue
-            counts[ingest_message(conn, mailbox, msg, token)] += 1
+            # savepoint per MESSAGE (bug #29's class, one level up): without
+            # this, one poison email aborts the pass's shared tx, the commit
+            # below becomes a rollback, the delta cursor never advances, and
+            # the identical crash repeats every 30s — intake wedged for good.
+            # Fenced, the bad message is skipped WITH a durable audit trace
+            # and the cursor moves past it.
+            with conn.cursor() as cur:
+                cur.execute("SAVEPOINT msg")
+            try:
+                counts[ingest_message(conn, mailbox, msg, token)] += 1
+                with conn.cursor() as cur:
+                    cur.execute("RELEASE SAVEPOINT msg")
+            except psycopg.OperationalError:
+                # transient, not poison (deadlock loser, lock/serialization
+                # failure, dying connection): re-raise so the mailbox fence
+                # rolls back WITHOUT advancing the delta cursor — the message
+                # is retried next pass instead of silently dropped forever
+                raise
+            except Exception as exc:                      # noqa: BLE001
+                counts["failed"] += 1
+                with conn.cursor() as cur:
+                    cur.execute("ROLLBACK TO SAVEPOINT msg")
+                    try:   # the trace must never re-poison the restored tx
+                        cur.execute("""INSERT INTO audit.events (app, action, entity, detail)
+                                       VALUES ('mail', 'Message ingest FAILED', %s, %s)""",
+                                    (f"mailbox:{mailbox['address']}",
+                                     _clean(f"skipped {msg.get('internetMessageId') or '(no id)'} "
+                                            f"“{(msg.get('subject') or '')[:120]}” — {exc}")[:1000]))
+                    except Exception:                     # noqa: BLE001
+                        cur.execute("ROLLBACK TO SAVEPOINT msg")
+                    cur.execute("RELEASE SAVEPOINT msg")
+                print(f"[ingest] skipped poison message in {mailbox['address']}: "
+                      f"{exc}", flush=True)
         if "@odata.nextLink" in page:
             url = page["@odata.nextLink"]
             continue
@@ -367,12 +429,24 @@ def poll_all(conn):
         boxes = [{"id": r[0], "address": r[1], "group_id": r[2],
                   "default_priority_id": r[3]} for r in cur.fetchall()]
     for mb in boxes:
+        # savepoint per MAILBOX: anything escaping the per-message fence
+        # (delta-link upsert, cursor reads) must not leave the shared tx
+        # aborted — that would fail every later mailbox and turn the pass's
+        # final commit into a silent rollback.
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT box")
         try:
             counts = poll_mailbox(conn, token, mb)
-            if counts["new"] or counts["followup"]:
+            with conn.cursor() as cur:
+                cur.execute("RELEASE SAVEPOINT box")
+            if counts["new"] or counts["followup"] or counts["failed"]:
                 print(f"{mb['address']}: {counts['new']} new, "
-                      f"{counts['followup']} follow-ups")
+                      f"{counts['followup']} follow-ups"
+                      + (f", {counts['failed']} FAILED (see audit log)"
+                         if counts["failed"] else ""))
         except Exception as exc:
+            with conn.cursor() as cur:
+                cur.execute("ROLLBACK TO SAVEPOINT box")
             print(f"poll failed for {mb['address']}: {exc}")
 
 
