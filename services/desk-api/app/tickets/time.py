@@ -6,6 +6,7 @@ from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from .. import auth, db, helpers
 from .common import _sane_span
+from .write import _touch
 
 router = APIRouter(prefix="/api")
 
@@ -52,11 +53,15 @@ def add_time(ticket_id: int, body: NewTime, request: Request):
             except pg_errors.RaiseException as e:   # 0039 insert guard: period closed
                 raise HTTPException(409, e.diag.message_primary or "Billing period is closed")
             entry_id, hours = cur.fetchone()
-            cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
+            # _touch, not a bare UPDATE: the bump must ride back to the client
+            # or its next property edit 409s on the stale version (audit;
+            # build 14b / 16 F1's class)
+            version, updated_ms = _touch(cur, ticket_id)
         auth.audit(conn, "desk", "Time attached", f"ticket:{ticket_id}",
                    f"#{ticket_id} · {tech_name} · {hours} h · {body.activity_type}"
                    + (" · on article" if body.article_id else ""))
-        return {"id": str(entry_id), "hours": float(hours)}
+        return {"id": str(entry_id), "hours": float(hours),
+                "version": version, "updatedAt": updated_ms}
 
 
 class PatchTime(BaseModel):

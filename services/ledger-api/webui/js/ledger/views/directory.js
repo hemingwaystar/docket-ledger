@@ -16,7 +16,7 @@ function viewDirectory(){
   <div class="grid g-2">
     <div class="card card-pad">
       <div class="card-head" style="padding:0 0 6px;border:0"><h3>Groups &amp; membership</h3><span class="hint">shared</span></div>
-      ${state.zammadGroups.map(g=>`<div class="setting-row" ${g.archived?'style="opacity:.55"':''}><div class="sl"><b>${esc(g.name)}</b>${g.archived?' <span class="chip void slim"><span class="cdot"></span>archived</span>':''}<p>${state.techs.filter(t=>t.groups.includes(g.id)).map(t=>t.name.split(' ')[0]).join(', ')||'no members'}</p></div></div>`).join('')}
+      ${state.zammadGroups.map(g=>`<div class="setting-row" ${g.archived?'style="opacity:.55"':''}><div class="sl"><b>${esc(g.name)}</b>${g.archived?' <span class="chip void slim"><span class="cdot"></span>archived</span>':''}<p>${esc(state.techs.filter(t=>t.groups.includes(g.id)).map(t=>t.name.split(' ')[0]).join(', '))||'no members'}</p></div></div>`).join('')}
     </div>
     <div>
       <div class="card card-pad">

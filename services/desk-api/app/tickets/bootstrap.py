@@ -65,7 +65,7 @@ def bootstrap(request: Request, limit: int = 500):
                         "city", "st", "zip", "tz", "since", "notes")},
                     "contacts": []}
             cur.execute("""SELECT id, client_id, name, email, title, department, phone,
-                             mobile, active, vip
+                             mobile, active, vip, pref, fax, notes
                              FROM shared.contacts ORDER BY name""")
             for r in cur.fetchall():
                 c = clients.get(str(r["client_id"]))
@@ -74,7 +74,8 @@ def bootstrap(request: Request, limit: int = 500):
                                           "email": r["email"], "title": r["title"],
                                           "dept": r["department"], "phone": r["phone"],
                                           "mobile": r["mobile"], "active": r["active"],
-                                          "vip": r["vip"]})
+                                          "vip": r["vip"], "pref": r["pref"],
+                                          "fax": r["fax"], "notes": r["notes"]})
             out["clients"] = list(clients.values())
             cur.execute("SELECT id, name, billable, active FROM ledger.activity_types ORDER BY is_sentinel DESC, name")
             # archived types ride along (active:false) so existing time chips

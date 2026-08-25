@@ -25,6 +25,8 @@ class NewTicket(BaseModel):
     group: str
     contact_email: str | None = None
     priority: str = "Normal"
+    note: str = ""                     # the modal's "first entry" — was
+    owner_email: str | None = None     # silently dropped pre-audit
 
 
 @router.post("/tickets", status_code=201)
@@ -42,13 +44,25 @@ def create_ticket(body: NewTicket, request: Request):
                             (body.contact_email,))
                 row = cur.fetchone()
                 contact_id = row[0] if row else None
+            owner_id = None
+            if body.owner_email:
+                owner_id, _owner_name = helpers.agent(cur, body.owner_email)
             cur.execute(
                 """INSERT INTO desk.tickets
-                     (title, client_id, contact_id, group_id, state_id, priority_id)
-                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                     (title, client_id, contact_id, group_id, state_id, priority_id,
+                      owner_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                 (body.title, client_id, contact_id, group_id,
-                 helpers.state_id(cur, "New"), priority))
+                 helpers.state_id(cur, "New"), priority, owner_id))
             (ticket_id,) = cur.fetchone()
+            if body.note.strip():
+                # the modal's "first entry (internal note)" lands as a real
+                # note — phone-in intake details must never vanish (audit)
+                cur.execute("""INSERT INTO desk.articles
+                                 (ticket_id, kind, author, author_id, body)
+                               VALUES (%s, 'note', %s, %s, %s)""",
+                            (ticket_id, who.get("name") or who["label"],
+                             who.get("agent_id"), body.note.strip()))
             emit_event(cur, "create", ticket_id)
         auth.audit(conn, "desk", "Ticket created", f"ticket:{ticket_id}",
                    f"#{ticket_id} {body.title} — via API ({who['label']})")

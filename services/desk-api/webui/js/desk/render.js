@@ -81,7 +81,7 @@ function render(){
 /* shared renderers */
 const stateChip = t => { const s=st8(t.st)||{cls:'st-open',label:t.st}; return `<span ${stChipAttrs(s)}><span class="cdot"></span>${esc(s.label)}</span>`; };
 const prioTag = p => { const x=prio(p)||{label:'?',cls:'p2'}; return `<span ${prioTagAttrs(x)}><span class="pflag"></span>${esc(x.label)}</span>`; };
-const avatarOf = a => `<span class="avatar" style="width:22px;height:22px;font-size:9.5px;display:inline-grid" title="${esc(a.name)}">${a.initials}</span>`;
+const avatarOf = a => `<span class="avatar" style="width:22px;height:22px;font-size:9.5px;display:inline-grid" title="${esc(a.name)}">${esc(a.initials)}</span>`;
 function slaCell(t){
   const s = slaInfo(t);
   if(!s) return `<span class="mini muted">—</span>`;
@@ -326,7 +326,9 @@ document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.mcombo')) O
 function toast(msg){
   const w = document.getElementById('toasts');
   const t = document.createElement('div');
-  t.className='toast'; t.innerHTML=`<span class="cdot"></span><span>${msg}</span>`;
+  /* esc() like assets/ledger toast(): callers interpolate stored names —
+     an unescaped one is a stored-XSS sink on every routine action (audit) */
+  t.className='toast'; t.innerHTML=`<span class="cdot"></span><span>${esc(msg)}</span>`;
   w.appendChild(t); setTimeout(()=>t.remove(), 4200);
 }
 

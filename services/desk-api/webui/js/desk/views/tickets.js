@@ -817,7 +817,10 @@ function attachTime(tid, aid){
       note:a.body.slice(0,140)})})
     .then(async r=>{ const d=await r.json().catch(()=>({}));
       if(!r.ok) return oops(d);
-      e.eid=d.id; });                            /* edits now mirror; hydrate relinks later */
+      e.eid=d.id;
+      /* the server _touch bumped the ticket version — sync it or the next
+         property edit 409s on the stale lock (audit; build 14b/16 F1) */
+      if(d.version){ t.version=d.version; t.updatedAt=d.updatedAt||t.updatedAt; } });
 }
 
 function editTimeEntry(tid, i, k, v, srcEl){
@@ -1136,6 +1139,10 @@ function sendArticle(tid){
      that claims them — the server links the rows and mails them on replies */
   const payload={kind:a.kind==='reply'?'reply':'note', body:a.body,
                  author_email:ME.email};
+  /* the editable To override MUST travel — the server honors it first in its
+     recipient COALESCE; without it the reply mails the ticket contact while
+     the thread shows the typed address (audit) */
+  if(a.kind==='reply'&&a.to) payload.to=a.to;
   if(a.time) payload.time={started_at:iso(a.time.startedAt||Date.now()-a.time.h*36e5),
     ended_at:iso(a.time.endedAt||Date.now()),
     activity_type:typeName(a.time.typeId), technician_email:ME.email,

@@ -129,13 +129,15 @@ def create_agent(body: NewAgent, request: Request):
                 # is still there, history intact)
                 (aid, _) = row
                 cur.execute("""UPDATE shared.agents
-                                  SET active = true, name = %s, initials = %s,
+                                  SET active = true, name = %s, initials = left(%s, 3),
                                       role_id = %s WHERE id = %s""",
                             (body.name, body.initials, role, aid))
                 cur.execute("DELETE FROM shared.agent_groups WHERE agent_id = %s", (aid,))
             else:
+                # initials render inside avatar markup — the UI's maxlength=3
+                # is cosmetic, the cap is enforced here
                 cur.execute("""INSERT INTO shared.agents (name, email, initials, role_id)
-                               VALUES (%s, %s, %s, %s) RETURNING id""",
+                               VALUES (%s, %s, left(%s, 3), %s) RETURNING id""",
                             (body.name, body.email, body.initials, role))
                 (aid,) = cur.fetchone()
             for g in body.groups:
@@ -268,6 +270,9 @@ class NewContact(BaseModel):
     phone: str = ""
     mobile: str = ""
     vip: bool = False                  # ★ chip + trigger condition (0028)
+    pref: str = "email"                # preferred contact channel (0041)
+    fax: str = ""
+    notes: str = ""                    # "anything the next tech should know"
 
 
 @router.post("/contacts", status_code=201)
@@ -278,10 +283,14 @@ def create_contact(body: NewContact, request: Request):
         with conn.cursor() as cur:
             cid = helpers.client_id(cur, body.client)
             cur.execute("""INSERT INTO shared.contacts
-                             (client_id, name, email, title, department, phone, mobile, vip)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                             (client_id, name, email, title, department, phone, mobile,
+                              vip, pref, fax, notes)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           RETURNING id""",
                         (cid, body.name, body.email, body.title, body.department,
-                         body.phone, body.mobile, body.vip))
+                         body.phone, body.mobile, body.vip,
+                         body.pref if body.pref in ("email", "sms", "phone", "fax")
+                         else "email", body.fax, body.notes))
             (pid,) = cur.fetchone()
         auth.audit(conn, "desk", "Contact added", f"contact:{pid}",
                    f"{body.name} <{body.email}> → {body.client}"
@@ -298,6 +307,9 @@ class PatchContact(BaseModel):
     mobile: str | None = None
     active: bool | None = None         # people leave — they stay on old tickets
     vip: bool | None = None            # omitted = unchanged; triggers key on it (0028)
+    pref: str | None = None            # 0041 — the DB CHECK constrains values
+    fax: str | None = None
+    notes: str | None = None
 
 
 @router.patch("/contacts/{contact_id}")

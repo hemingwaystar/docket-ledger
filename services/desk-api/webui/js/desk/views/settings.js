@@ -859,7 +859,7 @@ function viewSettings(){
       <div class="fgrid">
         <div class="field inline-sm"><label>from</label><input type="number" min="0" max="23" value="${BIZ.start}" style="width:64px" onchange="bizHours('start',this.value,this)"></div>
         <div class="field inline-sm"><label>to</label><input type="number" min="1" max="24" value="${BIZ.end}" style="width:64px" onchange="bizHours('end',this.value,this)"></div>
-        <div class="field inline-sm" style="flex:1;min-width:200px"><label>holidays</label><input type="text" value="${BIZ.holidays.join(', ')}" style="width:100%;font-size:12px" onchange="bizHolidays(this.value,this)" placeholder="YYYY-MM-DD, comma-separated"></div>
+        <div class="field inline-sm" style="flex:1;min-width:200px"><label>holidays</label><input type="text" value="${esc(BIZ.holidays.join(', '))}" style="width:100%;font-size:12px" onchange="bizHolidays(this.value,this)" placeholder="YYYY-MM-DD, comma-separated"></div>
       </div>
       <div class="mini muted" style="margin-top:8px">A ticket opened Friday 5 PM won't breach on Saturday — due dates walk only working minutes.</div>
     </div>

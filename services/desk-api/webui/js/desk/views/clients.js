@@ -233,7 +233,10 @@ function contactPayload(){
      the key is always present, never omitted (row 38's field-list lesson) */
   return { name:g('acName'), email:g('acEmail'), title:g('acTitle'),
            department:g('acDept'), phone:g('acPhone'), mobile:g('acMobile'),
-           vip:(document.getElementById('acVip')||{}).checked===true };
+           vip:(document.getElementById('acVip')||{}).checked===true,
+           /* pref/fax/notes persist as of 0041 — they were render-only before
+              and everything typed vanished on the next hydrate (audit) */
+           pref:g('acPref')||'email', fax:g('acFax'), notes:g('acNotes') };
 }
 function saveContact(clientId, fromTicket){
   const c = client(clientId);

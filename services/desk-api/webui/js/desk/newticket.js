@@ -60,10 +60,13 @@ function createTicket(){
   openTicket(id);
   const cl = client(t.clientId)||{}, gr = grp(t.groupId)||{};
   const p = (cl.contacts||[]).find(x=>x.id===t.contactId);
+  /* note + owner ride the payload — pre-audit they were local-only and the
+     hydrate wiped them: phone-in intake notes silently vanished */
   $fetch('/api/tickets',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({ title, client:cl.name, group:gr.name,
       contact_email:p?p.email:null,
-      priority:(prio(t.prio)||{label:'Normal'}).label })})
+      priority:(prio(t.prio)||{label:'Normal'}).label,
+      note:body, owner_email:(me()||{}).email||null })})
     .then(async r=>{ const d=await r.json().catch(()=>({}));
       if(!r.ok) return oops(d);
       TITLES[d.id] = title;                /* the name follows the ticket to its server id */
