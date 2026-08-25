@@ -18,6 +18,29 @@
 -- or half-recorded apply leaves nothing behind and re-runs clean.
 BEGIN;
 
+-- FRESH-BOOTSTRAP fix (audit): repo 0001 carries a dead prototype-era
+-- desk.ticket_links (a/b pair shape) that production never had — its 0001
+-- ran before that table was added to the file. On a fresh database the
+-- CREATE IF NOT EXISTS below silently no-ops against 0001's table and the
+-- src_id index then aborts the whole chain (42703 under ON_ERROR_STOP),
+-- killing every DR restore / new environment at 0025. Drop the legacy shape
+-- when it is present, empty, and unmistakably 0001's (a/b, no src_id) —
+-- production databases recorded 0025 long ago and never re-run this file.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'desk' AND table_name = 'ticket_links'
+                AND column_name = 'a')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'desk' AND table_name = 'ticket_links'
+                        AND column_name = 'src_id') THEN
+    IF EXISTS (SELECT 1 FROM desk.ticket_links) THEN
+      RAISE EXCEPTION '0025: legacy desk.ticket_links (a/b shape) holds rows — resolve by hand';
+    END IF;
+    DROP TABLE desk.ticket_links;
+  END IF;
+END $do$;
+
 CREATE TABLE IF NOT EXISTS desk.ticket_links (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   kind       text NOT NULL CHECK (kind IN ('related', 'child')),

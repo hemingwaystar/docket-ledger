@@ -139,7 +139,7 @@ def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
                               AND c.merged_into_id IS NULL
                             ORDER BY l.dst_id""", (ticket_id,))
             kids = [r[0] for r in cur.fetchall()]
-            cur.execute("""UPDATE desk.tickets SET state_id = %s
+            cur.execute("""UPDATE desk.tickets SET state_id = %s, pending_until = NULL
                             WHERE id = %s AND version = %s RETURNING version""",
                         (strow[0], ticket_id, body.version))
             updated = cur.fetchone()
@@ -147,7 +147,10 @@ def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
                 raise HTTPException(409, "Version conflict — re-read the ticket and retry")
             emit_event(cur, "state", ticket_id)
             for cid in kids:
-                cur.execute("UPDATE desk.tickets SET state_id = %s WHERE id = %s",
+                # pending cleared like every close path (merge.py invariant) —
+                # a cascade-closed on-hold child must not be worker-reopened
+                cur.execute("""UPDATE desk.tickets SET state_id = %s,
+                                      pending_until = NULL WHERE id = %s""",
                             (ccid, cid))
                 sys_note(cur, cid, f"Closed with parent #{ticket_id} ({body.state})")
                 emit_event(cur, "state", cid)

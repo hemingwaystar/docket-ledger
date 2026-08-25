@@ -62,10 +62,15 @@ def _daynums(v):
             pass
     return out or [1, 2, 3, 4, 5]
 
-# prototype state ids by lowercased label — the reverse of desk-api's ST_MAP
+# prototype state ids by lowercased label — the reverse of desk-api's ST_MAP.
+# MUST stay in lockstep with tickets/common.py ST_MAP: the builder saves the
+# bootstrap's slug, so any label desk maps specially has to map the same here
+# ('closed: child ticket' → 'child-closed' was the drift that made child-closed
+# state triggers never fire — audit).
 PROTO_STATE = {"new": "new", "open": "open", "pending reminder": "pending",
                "on hold": "hold", "solved": "solved", "closed": "closed",
-               "archived": "archived"}
+               "archived": "archived",
+               "closed: child ticket": "child-closed"}
 
 
 def _jload(v):
@@ -424,6 +429,24 @@ def fire_triggers(conn, event, ticket_id, meta=None, depth=0):
                             did.append(f"state → {row[0]}")
                             enqueue(cur, "state", ticket_id, {"auto": meta.get("auto", False)},
                                     depth + 1)
+                    elif not label:
+                        # CUSTOM state: the builder saved the bootstrap's
+                        # derived slug (label.lower(), spaces → '-') — resolve
+                        # it the same way instead of silently dropping the
+                        # action (audit). System states stay engine-only via
+                        # the cascade, never a trigger target.
+                        cur.execute("""UPDATE desk.tickets t SET state_id = s.id
+                                         FROM desk.ticket_states s
+                                        WHERE t.id = %s AND s.active AND NOT s.is_system
+                                          AND replace(lower(s.label), ' ', '-') = %s
+                                          AND t.state_id <> s.id
+                                        RETURNING s.label""",
+                                    (ticket_id, str(val)))
+                        row = cur.fetchone()
+                        if row:
+                            did.append(f"state → {row[0]}")
+                            enqueue(cur, "state", ticket_id, {"auto": meta.get("auto", False)},
+                                    depth + 1)
                 elif typ == "prio" and val:
                     if int(val) != ctx["prio_rank"]:
                         cur.execute("""UPDATE desk.tickets t SET priority_id = p.id
@@ -475,9 +498,21 @@ def process_events(conn) -> int:
         cur.execute("UPDATE desk.automation_events SET processed_at = now() "
                     "WHERE id = ANY(%s)", ([e[0] for e in events],))
     for _id, event, ticket_id, meta, depth in events:
+        # savepoint per EVENT (audit): a SQL error mid-trigger used to leave
+        # the shared tx aborted — every later event failed, the worker's
+        # rollback then RESET processed_at on events whose emails had already
+        # gone out, and the next pass re-mailed customers every 30s. Fenced,
+        # the poison event's work rolls back alone and its processed_at
+        # marking (written above, before this loop) survives the commit.
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT evt")
         try:
             fire_triggers(conn, event, ticket_id, _jload(meta) or {}, depth or 0)
+            with conn.cursor() as cur:
+                cur.execute("RELEASE SAVEPOINT evt")
         except Exception as exc:
+            with conn.cursor() as cur:
+                cur.execute("ROLLBACK TO SAVEPOINT evt")
             print(f"trigger evaluation failed for event {_id} (#{ticket_id}): {exc}")
     return len(events)
 

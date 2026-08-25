@@ -104,6 +104,11 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                 new_kind = strow[1]
                 sets.append("state_id = %s"); args.append(strow[0])
                 notes.append(f"state → {body.state}")
+                if new_kind == "done":
+                    # closing clears the wake timer (merge.py's invariant) —
+                    # otherwise the worker's pending sweep would reopen the
+                    # closed ticket when the old timer elapsed (audit)
+                    sets.append("pending_until = NULL")
             if body.priority is not None:
                 sets.append("priority_id = %s"); args.append(helpers.priority_id(cur, body.priority))
                 notes.append(f"priority → {body.priority}")

@@ -62,6 +62,8 @@ def wake_pending(conn) -> int:
                SET state_id = (SELECT id FROM desk.ticket_states WHERE label = 'Open'),
                    pending_until = NULL
              WHERE t.pending_until IS NOT NULL AND t.pending_until <= now()
+               AND (SELECT s.kind FROM desk.ticket_states s
+                     WHERE s.id = t.state_id) = 'paused'
             RETURNING t.id""")
         woken = [r[0] for r in cur.fetchall()]
         for tid in woken:
@@ -404,16 +406,26 @@ def poll_mailbox(conn, token, mailbox) -> dict:
             continue
         delta = page.get("@odata.deltaLink")
         if delta:
-            with conn.cursor() as cur:
-                cur.execute("""INSERT INTO desk.graph_subscriptions
-                                 (mailbox_id, delta_link, last_delta_at)
-                               VALUES (%s, %s, now())
-                               ON CONFLICT (mailbox_id) DO UPDATE
-                                 SET delta_link = EXCLUDED.delta_link,
-                                     last_delta_at = now()""",
-                            (mailbox["id"], delta))
+            _save_cursor(conn, mailbox["id"], delta)
         break
+    else:
+        # 20 pages (500 messages) exhausted mid-enumeration: persist the
+        # nextLink so the next pass RESUMES here. Without this, a first sync
+        # (or 410 reset) of a >500-message inbox refetched the same first
+        # 500 every 30s forever and never ingested anything past them (audit).
+        _save_cursor(conn, mailbox["id"], url)
     return counts
+
+
+def _save_cursor(conn, mailbox_id, link):
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO desk.graph_subscriptions
+                         (mailbox_id, delta_link, last_delta_at)
+                       VALUES (%s, %s, now())
+                       ON CONFLICT (mailbox_id) DO UPDATE
+                         SET delta_link = EXCLUDED.delta_link,
+                             last_delta_at = now()""",
+                    (mailbox_id, link))
 
 
 def poll_all(conn):
