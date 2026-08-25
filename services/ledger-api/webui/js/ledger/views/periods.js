@@ -184,12 +184,12 @@ function viewPeriods(){
 }
 
 function approvePeriod(clientId,pk){
-  const c=client(clientId), per=periodFor(c.cycle, findPeriodDate(clientId,pk));
+  const c=client(clientId), perLabel=periodLabel(clientId,pk);
   const es=state.entries.filter(e=>e.clientId===clientId && entryPeriod(e).key===pk && e.status!=='void');
   const unclass=es.filter(e=>atype(e.typeId).sentinel).length;
   if(unclass>0){ toast('Classify all entries first'); return; }
   confirmModal(`Approve & lock this period?`,
-    `<b>${esc(c.name)} — ${per.label}</b><br>${es.length} entries · ${fmtHours(es.reduce((s,e)=>s+priced(e).h,0))} h · ${fmtMoney(es.reduce((s,e)=>s+priced(e).amount,0))}<br><br>Once approved, every entry in this period becomes <b>immutable</b> — it can’t be edited or deleted, even if the underlying time event is later removed in Docket. This can’t be undone.`,
+    `<b>${esc(c.name)} — ${perLabel}</b><br>${es.length} entries · ${fmtHours(es.reduce((s,e)=>s+priced(e).h,0))} h · ${fmtMoney(es.reduce((s,e)=>s+priced(e).amount,0))}<br><br>Once approved, every entry in this period becomes <b>immutable</b> — it can’t be edited or deleted, even if the underlying time event is later removed in Docket. This can’t be undone.`,
     'Approve & lock','seal',()=>{
       const ps=periodState(clientId,pk);
       if(ps.status!=='open') return;   /* mirror only a real flip */
@@ -276,7 +276,7 @@ function runExport(clientId,pk){
       /* honest wording (audit): mark-exported RECORDS the payload — no code
          posts to Odoo yet; claiming 'Posted' let an operator believe a
          draft invoice reached Odoo when nothing was ever sent */
-      log('Export recorded',`${esc(c.name)} · ${periodFor(c.cycle,findPeriodDate(clientId,pk)).label} · payload stored server-side (${state.settings.odoo.enabled?state.settings.odoo.mode+' invoice, awaiting the connector build':'connector disabled'}) · ${ref}`,clientId+'|'+pk);
+      log('Export recorded',`${esc(c.name)} · ${periodLabel(clientId,pk)} · payload stored server-side (${state.settings.odoo.enabled?state.settings.odoo.mode+' invoice, awaiting the connector build':'connector disabled'}) · ${ref}`,clientId+'|'+pk);
       toast(`Export recorded · ${ref}${state.settings.odoo.enabled?' — the connector build will post it to Odoo':' (connector disabled)'}`);
       render();
       setTimeout(hydrate,600);

@@ -118,10 +118,12 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                 new_kind = strow[1]
                 sets.append("state_id = %s"); args.append(strow[0])
                 notes.append(f"state → {body.state}")
-                if new_kind == "done":
+                if new_kind == "done" and body.pending_until is None:
                     # closing clears the wake timer (merge.py's invariant) —
                     # otherwise the worker's pending sweep would reopen the
-                    # closed ticket when the old timer elapsed (audit)
+                    # closed ticket when the old timer elapsed (audit). Only
+                    # when the caller didn't set pending itself: two
+                    # assignments to one column is a SQL error.
                     sets.append("pending_until = NULL")
             if body.priority is not None:
                 sets.append("priority_id = %s"); args.append(helpers.priority_id(cur, body.priority))

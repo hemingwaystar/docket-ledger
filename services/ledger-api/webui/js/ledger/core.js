@@ -104,6 +104,14 @@ function periodState(clientId, key){
 }
 function isLocked(e){ const p=entryPeriod(e); return periodState(e.clientId,p.key).status!=='open' }
 function findPeriodDate(clientId,pk){ const e=state.entries.find(x=>x.clientId===clientId && entryPeriod(x).key===pk); return e?e.startedAt:NOW; }
+/* label a UI period key via the entries actually IN it — deriving the label
+   from a matched entry's raw date could name the neighbouring month for a
+   server-keyed boundary entry */
+function periodLabel(clientId,pk){
+  const e=state.entries.find(x=>x.clientId===clientId && entryPeriod(x).key===pk);
+  if(e) return entryPeriod(e).label;
+  const c=client(clientId); return c?periodFor(c.cycle,NOW).label:pk;
+}
 
 /* ------------ date-range filter helpers (shared by the filter bars) ------------ */
 function _dateRange(f){

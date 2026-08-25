@@ -421,7 +421,7 @@ function trigDrawActs(){
     const val =
       a.type==='email'||a.type==='note' ? `<textarea rows="3" oninput="_trigDraft.actions[${i}].value=this.value" placeholder="Template — variables like #{ticket.number} and #{customer.name} fill in at send time">${esc(a.value||'')}</textarea>` :
       a.type==='tag' ? `<input type="text" value="${esc(a.value||'')}" oninput="_trigDraft.actions[${i}].value=this.value" placeholder="tag name">` :
-      a.type==='state' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aSTATES().map(s=>`<option value="${s.id}" ${a.value===s.id?'selected':''}>${s.label}</option>`).join('')}</select>` :
+      a.type==='state' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aSTATES().filter(s=>!s.system).map(s=>`<option value="${s.id}" ${a.value===s.id?'selected':''}>${s.label}</option>`).join('')}</select>` :
       a.type==='prio' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aPRIOS().map(p=>`<option value="${p.id}" ${String(a.value)===String(p.id)?'selected':''}>${p.label}</option>`).join('')}</select>` :
       a.type==='autoassign' ? `<select onchange="_trigDraft.actions[${i}].value=this.value"><option value="rr" ${a.value!=='least'?'selected':''}>Round-robin within the board</option><option value="least" ${a.value==='least'?'selected':''}>Least-loaded agent on the board</option></select>` :
       `<select onchange="_trigDraft.actions[${i}].value=this.value">${aGROUPS().map(g=>`<option value="${g.id}" ${a.value===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`;

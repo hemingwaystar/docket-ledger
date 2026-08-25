@@ -192,8 +192,9 @@ function exportUtilCSV(){
   const data = [['technician','total_hours','billable_hours','utilization_pct']];
   state.techs.forEach(t=>{
     const es = state.entries.filter(e=>e.techId===t.id && e.status!=='void' && new Date(e.startedAt).toISOString().slice(0,7)===mkey);
+    if(t.active===false && !es.length) return;   /* idle deactivated techs stay off the report */
     const tot = es.reduce((s,e)=>s+e.hours,0), bil = es.filter(e=>priced(e).billable).reduce((s,e)=>s+e.hours,0);
-    data.push([t.name, tot.toFixed(2), bil.toFixed(2), tot?(bil/tot*100).toFixed(1):'0']);
+    data.push([t.name+(t.active===false?' (deactivated)':''), tot.toFixed(2), bil.toFixed(2), tot?(bil/tot*100).toFixed(1):'0']);
   });
   const csv = data.map(r=>r.join(',')).join('\n');
   const a = document.createElement('a');
@@ -279,10 +280,12 @@ function viewReports(){
       ${(()=>{ const now=new Date(); const mkey=now.toISOString().slice(0,7);
         const rows = state.techs.map(t=>{
           const es = state.entries.filter(e=>e.techId===t.id && e.status!=='void' && new Date(e.startedAt).toISOString().slice(0,7)===mkey);
+          if(t.active===false && !es.length) return null;   /* idle deactivated techs stay off */
           const tot = es.reduce((s,e)=>s+e.hours,0);
           const bil = es.filter(e=>priced(e).billable).reduce((s,e)=>s+e.hours,0);
-          return { t, tot, bil, pct: tot? bil/tot*100 : 0 };
-        });
+          return { t:(t.active===false?Object.assign({},t,{name:t.name+' (deactivated)'}):t),
+                   tot, bil, pct: tot? bil/tot*100 : 0 };
+        }).filter(Boolean);
         return rows.map(r=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <span style="width:130px;font-size:13px">${esc(r.t.name)}</span>
           <div style="flex:1;height:10px;background:#e8edec;border-radius:6px;overflow:hidden;position:relative">

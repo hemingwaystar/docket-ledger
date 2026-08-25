@@ -285,9 +285,12 @@ function recallSelected(){
 function confirmDeleteSelected(){
   const ents=selectedEntries();
   if(!ents.length){ toast('Nothing selected to delete'); return; }
-  const rowsHtml=ents.map(e=>{const c=client(e.clientId),lk=isLocked(e);
+  /* preview with the SAME rule the apply step enforces: locked OR
+     manager-approved rows are kept — the old preview promised 'voided'
+     for tsApproved rows the apply then refused */
+  const rowsHtml=ents.map(e=>{const c=client(e.clientId),lk=isLocked(e)||e.tsApproved;
     return `<tr><td><div class="cell-title" style="font-weight:500">${esc(e.ticketTitle)}</div><div class="cell-meta">${esc(c.name)} · #${e.zTicket}</div></td><td class="num">${fmtHours(e.hours)} h</td><td>${lk?'<span class="chip approved slim"><span class="cdot"></span>kept · locked</span>':'<span class="chip void slim"><span class="cdot"></span>voided</span>'}</td></tr>`;}).join('');
-  const nLock=ents.filter(e=>isLocked(e)).length, nOpen=ents.length-nLock;
+  const nLock=ents.filter(e=>isLocked(e)||e.tsApproved).length, nOpen=ents.length-nLock;
   openModal(`<div class="modal-head"><h3>Remove ${ents.length} time ${ents.length===1?'entry':'entries'} in Docket</h3><p>Removes ${ents.length===1?'this entry':'these entries'} on the Docket side. Review the outcome, then confirm.</p></div>
     <div class="modal-body">
       <table class="tbl" style="margin:0"><thead><tr><th>Entry</th><th class="num">Hours</th><th>Result</th></tr></thead><tbody>${rowsHtml}</tbody></table>
@@ -349,8 +352,13 @@ function saveTime(id){
   render();
   if(e.startedAt===was.s&&e.endedAt===was.en) return;
   if(!srvId(id)){ toast('Still syncing from Docket — edit the span again in a moment.'); return; }
+  /* the server re-homes period_id on span edits (0042): the stale hydrated
+     periodKey must not keep bucketing this entry in the OLD period, and a
+     rehydrate picks up the server's new assignment */
+  e.periodKey=null;
   $fetch('/api/entries/'+id,{method:'PATCH',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({started_at:iso(e.startedAt),ended_at:iso(e.endedAt)})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      setTimeout(hydrate,600); });
 }

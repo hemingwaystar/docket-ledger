@@ -48,8 +48,11 @@ window.addEventListener('message', ev=>{
     toast(`⚡ ${fmtHours(d.h)} h just landed from Docket ticket #${d.ticket}.`);
     render();
     /* swap the local ghost for the REAL server row promptly: until the
-       hydrate lands, every action on the ghost is a guarded no-op (audit) */
-    setTimeout(()=>{ try{ hydrate(); }catch(_e){} }, 900);
+       hydrate lands, every action on the ghost is a guarded no-op (audit).
+       Delay generously — Docket's POST (behind attachment staging) must
+       commit first or the hydrate briefly wipes the ghost with nothing to
+       replace it; the focus rehydrate heals any residual race. */
+    setTimeout(()=>{ try{ hydrate(); }catch(_e){} }, 2500);
   }
   const findByHeuristic = ()=> state.entries.find(x=> x.zTicket===d.ticket && x.techId===d.techId
       && x.status!=='void' && !x.zDeleted && Math.abs(x.hours-(d.oldH!=null?d.oldH:d.h))<0.011);
@@ -63,6 +66,7 @@ window.addEventListener('message', ev=>{
       const was = e.hours;
       if(d.startedAt) e.startedAt = d.startedAt;
       if(d.endedAt) e.endedAt = d.endedAt;
+      if(d.startedAt||d.endedAt) e.periodKey=null;   /* server re-homes (0042) — drop the stale key */
       e.hours = d.h; if(!d.endedAt) e.endedAt = e.startedAt + d.h*3600000;
       if(d.typeId) e.typeId = d.typeId;
       if(d.task!==undefined) e.zTask = d.task? { id:d.task.id, label:d.task.label } : null;

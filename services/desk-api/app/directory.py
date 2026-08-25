@@ -307,7 +307,7 @@ class PatchContact(BaseModel):
     mobile: str | None = None
     active: bool | None = None         # people leave — they stay on old tickets
     vip: bool | None = None            # omitted = unchanged; triggers key on it (0028)
-    pref: str | None = None            # 0041 — the DB CHECK constrains values
+    pref: str | None = None            # 0041 — validated below, CHECK backstops
     fax: str | None = None
     notes: str | None = None
 
@@ -317,6 +317,8 @@ def patch_contact(contact_id: str, body: PatchContact, request: Request):
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, 'add_contacts', 'manage_clients')
+        if body.pref is not None and body.pref not in ("email", "sms", "phone", "fax"):
+            raise HTTPException(422, "pref must be email, sms, phone or fax")
         cols = {k: v for k, v in body.model_dump().items() if v is not None}
         if not cols:
             return {"ok": True}

@@ -208,7 +208,7 @@ function viewClient(){
     const on=(c.access&&c.access.techs||[]).includes(t.id);
     return `<label class="perm ${on?'on':''}" style="max-width:230px">
       <input type="checkbox" ${on?'checked':''} ${manage&&restricted?'':'disabled'} onclick="toggleClientAccessTech('${c.id}','${t.id}')">
-      <span>${esc(t.name)}</span></label>`;
+      <span>${esc(t.name)}${t.active===false?' (deactivated)':''}</span></label>`;
   }).join('');
   const groupChecks=state.zammadGroups.filter(g=>!g.archived).map(g=>{
     const on=(c.access&&c.access.groups||[]).includes(g.id);
@@ -239,7 +239,8 @@ function viewClient(){
 }
 function cfPreset(p){ state.cf=state.cf||{tech:[],type:[],status:[],q:'',from:'',to:''}; _presetDates(state.cf,p); render(); }
 function cfClear(){ state.cf={tech:[],type:[],status:[],q:'',from:'',to:''}; render(); }
-let retTimer=null;
+const retTimers={};   /* keyed per client — one shared timer dropped client
+                         A's pending save when B was edited within 600 ms */
 function retSet(cid, k, v, srcEl){
   const c = client(cid); c.retainer = c.retainer||{ enabled:false, includedHours:0, overageRate:null, rolloverCap:0, note:'' };
   const was = JSON.stringify({e:c.retainer.enabled,i:c.retainer.includedHours,o:c.retainer.overageRate,r:c.retainer.rolloverCap});
@@ -251,8 +252,8 @@ function retSet(cid, k, v, srcEl){
   commitRender(srcEl);
   /* persist (0043) — the editor was UI-local and the next hydrate wiped
      every typed term while it LOOKED saved (audit) */
-  clearTimeout(retTimer);
-  retTimer=setTimeout(()=>{ const r=c.retainer;
+  clearTimeout(retTimers[cid]);
+  retTimers[cid]=setTimeout(()=>{ const r=c.retainer;
     $fetch('/api/clients/'+cid+'/retainer',{method:'PUT',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ enabled:!!r.enabled, included_hours:r.includedHours||0,
         overage_rate_cents:(r.overageRate==null||r.overageRate==='')?null:Math.round(Number(r.overageRate)*100),

@@ -10,7 +10,8 @@
 function viewDirectory(){
   const gname = id => (state.zammadGroups.find(g=>g.id===id)||{}).name||id;
   const pgC=paginate('dirClients',state.clients);
-  const pgA=paginate('dirAgents',state.techs);
+  const pgA=paginate('dirAgents',state.techs.map(t=>t.active===false
+    ?Object.assign({},t,{name:t.name+' (deactivated)'}):t));
   return `
   <div class="notice info" style="margin-bottom:16px">${icon(IC.client)}<div><b>Read-only mirror of the shared control plane.</b> These are the same records Docket manages — one set of clients, groups, agents, activity types and role permissions in the shared database. Edits happen in <b>Docket → Directory</b> and land here instantly; this page is for looking things up without leaving Ledger.</div></div>
   <div class="grid g-2">

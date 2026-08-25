@@ -419,9 +419,17 @@ def fire_triggers(conn, event, ticket_id, meta=None, depth=0):
                 elif typ == "state" and val:
                     label = {v: k for k, v in PROTO_STATE.items()}.get(str(val))
                     if label and label != (ctx["state_label"] or "").lower():
-                        cur.execute("""UPDATE desk.tickets t SET state_id = s.id
+                        # NOT is_system + active, same as the custom branch:
+                        # mapping child-closed for EVENT matching must not let
+                        # an ACTION drive the cascade-only system state. Done
+                        # states clear the wake timer like every close path.
+                        cur.execute("""UPDATE desk.tickets t
+                                          SET state_id = s.id,
+                                              pending_until = CASE WHEN s.kind = 'done'
+                                                              THEN NULL ELSE t.pending_until END
                                          FROM desk.ticket_states s
                                         WHERE t.id = %s AND lower(s.label) = %s
+                                          AND s.active AND NOT s.is_system
                                         RETURNING s.label""",
                                     (ticket_id, label))
                         row = cur.fetchone()
@@ -435,7 +443,10 @@ def fire_triggers(conn, event, ticket_id, meta=None, depth=0):
                         # it the same way instead of silently dropping the
                         # action (audit). System states stay engine-only via
                         # the cascade, never a trigger target.
-                        cur.execute("""UPDATE desk.tickets t SET state_id = s.id
+                        cur.execute("""UPDATE desk.tickets t
+                                          SET state_id = s.id,
+                                              pending_until = CASE WHEN s.kind = 'done'
+                                                              THEN NULL ELSE t.pending_until END
                                          FROM desk.ticket_states s
                                         WHERE t.id = %s AND s.active AND NOT s.is_system
                                           AND replace(lower(s.label), ' ', '-') = %s
