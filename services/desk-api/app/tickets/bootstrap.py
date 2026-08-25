@@ -3,7 +3,7 @@ the select vocabularies."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from .. import auth, automations, db
-from .common import ST_MAP
+from .common import ST_MAP, visibility_where
 
 router = APIRouter(prefix="/api")
 
@@ -212,7 +212,11 @@ def bootstrap(request: Request, limit: int = 500):
             # admin queue-tab + dashboard defaults (build 10) — every user needs
             # them and the settings API is admin-gated, so they ride bootstrap
             out["deskUi"] = eng.get("desk_ui", {})
-            cur.execute("""SELECT t.id, t.title, t.client_id, t.contact_id, t.group_id,
+            # visibility scoping (audit): the same rule the UI's ticketVisible
+            # applies now gates the DATA — a view_own/view_group session gets
+            # only its slice; articles/time/schedules below key off this set
+            vis_sql, vis_args = visibility_where(who)
+            cur.execute(f"""SELECT t.id, t.title, t.client_id, t.contact_id, t.group_id,
                              t.owner_id, s.label AS st_label, p.rank AS prio,
                              t.pending_until, t.merged_into_id, t.is_project, t.cc,
                              t.created_at, t.updated_at, t.version,
@@ -220,11 +224,12 @@ def bootstrap(request: Request, limit: int = 500):
                                       WHERE fr.ticket_id = t.id AND fr.kind = 'reply'
                                         AND NOT fr.is_auto) AS fr_met,
                              COALESCE((SELECT array_agg(tag ORDER BY tag)
-                                        FROM desk.ticket_tags tt WHERE tt.ticket_id = t.id), '{}') AS tags
+                                        FROM desk.ticket_tags tt WHERE tt.ticket_id = t.id), '{{}}') AS tags
                              FROM desk.tickets t
                              JOIN desk.ticket_states s ON s.id = t.state_id
                              JOIN desk.priorities p ON p.id = t.priority_id
-                            ORDER BY t.updated_at DESC LIMIT %s""", (limit,))
+                            WHERE {vis_sql}
+                            ORDER BY t.updated_at DESC LIMIT %s""", (*vis_args, limit))
             tickets = {}
             for r in cur.fetchall():
                 tickets[r["id"]] = {
@@ -413,13 +418,20 @@ def bootstrap(request: Request, limit: int = 500):
             # "pat:…"/other for service/automation). Resolve the agent uuid to the
             # person's display name so the Audit Log shows "Ada Lovelace", not
             # "agent:<uuid>"; non-agent actors fall through unchanged (build 25).
-            cur.execute("""SELECT e.at, COALESCE(a.name, e.actor) AS who,
-                                  e.action, e.detail
-                             FROM audit.events e
-                             LEFT JOIN shared.agents a ON e.actor = 'agent:' || a.id::text
-                            ORDER BY e.at DESC LIMIT 120""")
-            out["audit"] = [{"ts": ms(r["at"]), "who": r["who"], "action": r["action"],
-                             "detail": r["detail"] or ""} for r in cur.fetchall()]
+            # the audit tail ships only to roles holding view_audit — same
+            # server-side rule the dedicated GET /api/audit already enforces
+            # (and ledger's bootstrap set the precedent). The KEY always rides
+            # so mapIn stays complete.
+            if "view_audit" in who["perms"]:
+                cur.execute("""SELECT e.at, COALESCE(a.name, e.actor) AS who,
+                                      e.action, e.detail
+                                 FROM audit.events e
+                                 LEFT JOIN shared.agents a ON e.actor = 'agent:' || a.id::text
+                                ORDER BY e.at DESC LIMIT 120""")
+                out["audit"] = [{"ts": ms(r["at"]), "who": r["who"], "action": r["action"],
+                                 "detail": r["detail"] or ""} for r in cur.fetchall()]
+            else:
+                out["audit"] = []
         with conn.cursor() as plain:
             out["notifs"] = automations._notifs(plain, who)
         return out

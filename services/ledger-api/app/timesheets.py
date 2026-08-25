@@ -150,13 +150,13 @@ def approve_timesheet(body: ApproveSheet, request: Request):
             try:
                 cur.execute("""
                     UPDATE ledger.time_entries e
-                       SET ts_approved_at = now()
+                       SET ts_approved_at = now(), ts_approved_by = %s
                       FROM ledger.billing_periods bp
                      WHERE bp.id = e.period_id
                        AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
                        AND e.status <> 'void' AND e.ts_approved_at IS NULL
                     RETURNING e.id""",
-                    (tech_id, client_id, body.period_key))
+                    (who.get("agent_id"), tech_id, client_id, body.period_key))
             except pg_errors.RaiseException as e:
                 raise HTTPException(409, e.diag.message_primary or "Entries are period-locked")
             n = len(cur.fetchall())

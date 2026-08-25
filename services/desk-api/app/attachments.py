@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 from . import auth, db
+from .tickets.common import visibility_where
 
 router = APIRouter(prefix="/api")
 
@@ -72,11 +73,20 @@ async def upload(file: UploadFile, request: Request):
 @router.get("/attachments/{attachment_id}")
 def download(attachment_id: uuid.UUID, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
         with conn.cursor() as cur:
-            cur.execute("""SELECT filename, mime_type, content
-                             FROM desk.attachments WHERE id = %s""",
-                        (attachment_id,))
+            # a deleted (0036) article's files are tombstoned with it, and a
+            # linked file serves only when its TICKET is visible to the
+            # caller — the same visibility_where every other read applies.
+            # Staged rows (article_id NULL) still serve: LEFT JOINs keep them.
+            vis_sql, vis_args = visibility_where(who)
+            cur.execute(f"""SELECT at.filename, at.mime_type, at.content
+                             FROM desk.attachments at
+                             LEFT JOIN desk.articles ar ON ar.id = at.article_id
+                             LEFT JOIN desk.tickets t ON t.id = ar.ticket_id
+                            WHERE at.id = %s AND ar.deleted_at IS NULL
+                              AND (at.article_id IS NULL OR {vis_sql})""",
+                        (attachment_id, *vis_args))
             row = cur.fetchone()
     if row is None:
         raise HTTPException(404, "No such attachment")

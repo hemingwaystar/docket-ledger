@@ -59,7 +59,10 @@ function mapIn(d){
     d.audit.forEach(a=>state.audit.push({id:'srv'+a.ts+(a.entityId||''), ts:a.ts,
       actor:a.actor, action:a.action, detail:a.detail, entityId:a.entityId})); }
   state.user={name:d.me.name,initials:d.me.initials,role:'Live',email:d.me.email};
-  state.perms=new Set(d.me.perms.map(p=>p.replace(/^l_/,'')));
+  /* ONLY the l_* keys are Ledger perms — stripping the prefix from the whole
+     suite union let desk's unprefixed view_all/view_own satisfy can() here,
+     diverging from the server's l_-keyed scope (audit) */
+  state.perms=new Set(d.me.perms.filter(p=>p.startsWith('l_')).map(p=>p.slice(2)));
   const me=state.techs.find(t=>t.email===d.me.email);
   state.myTechId=me?me.id:null;   /* re-derived every hydrate — never stale */
 }

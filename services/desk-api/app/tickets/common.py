@@ -25,6 +25,31 @@ ST_MAP = {"new": "new", "open": "open", "pending reminder": "pending",
           "closed: child ticket": "child-closed"}
 
 
+def visibility_where(who: dict, alias: str = "t"):
+    """The server-side mirror of the UI's ticketVisible() (state.js) — ONE
+    definition of who may READ a ticket, applied to every list/detail/
+    bootstrap query so the visibility permissions gate the data, not just
+    the render: view_all → everything; view_group → tickets in my groups;
+    view_own → owned by me OR assigned to me (0032; owner and assignee are
+    separate concepts, the OR dedups them). Returns (sql, args) to AND into
+    a WHERE. PATs are all-scope service credentials (§10.17) like need()."""
+    if who["kind"] != "session" or "view_all" in who["perms"]:
+        return "TRUE", []
+    ors, args = [], []
+    if "view_group" in who["perms"]:
+        ors.append(f"""{alias}.group_id IN (SELECT ag.group_id
+                         FROM shared.agent_groups ag WHERE ag.agent_id = %s)""")
+        args.append(who["agent_id"])
+    if "view_own" in who["perms"]:
+        ors.append(f"""({alias}.owner_id = %s OR EXISTS
+                        (SELECT 1 FROM desk.ticket_assignees ta
+                          WHERE ta.ticket_id = {alias}.id AND ta.agent_id = %s))""")
+        args += [who["agent_id"], who["agent_id"]]
+    if not ors:
+        return "FALSE", []
+    return "(" + " OR ".join(ors) + ")", args
+
+
 def emit_event(cur, event: str, ticket_id: int):
     """Feed the automations outbox — the mail-worker's engine evaluates
     triggers within one scheduler pass. Manual/API mutations are never

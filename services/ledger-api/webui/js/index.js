@@ -30,10 +30,16 @@ async function boot(){
   ME=(await api('/me')).data;
   document.getElementById('meName').textContent=ME.name;
   document.getElementById('meMail').textContent=ME.email;
-  document.getElementById('logout').onclick=()=>{document.cookie='hts_session=; Max-Age=0; path=/';location.href=loginUrl()};
+  /* real sign-out: the cookie is HttpOnly (JS cannot clear it) — revoke the
+     session server-side via desk's /auth/logout, same convention as assets.
+     Behind nginx the desk routes live at the origin root; direct-port access
+     just navigates (cross-origin POST would be blocked anyway). */
+  document.getElementById('logout').onclick=async()=>{
+    if(LBASE){try{await fetch('/auth/logout',{method:'POST',credentials:'same-origin'})}catch(e){}}
+    location.href=loginUrl()};
   const tabs=[['time','My time']];
   if(can('l_approve'))tabs.push(['approvals','Approvals']);
-  tabs.push(['periods','Periods']);
+  if(can('l_approve')||can('l_export')||can('l_see_amounts'))tabs.push(['periods','Periods']);
   const nav=document.getElementById('nav');
   nav.innerHTML=tabs.map(([k,l])=>`<a data-v="${k}" class="${k===VIEW?'on':''}">${l}</a>`).join('');
   nav.querySelectorAll('a').forEach(a=>a.onclick=()=>{VIEW=a.dataset.v;boot()});

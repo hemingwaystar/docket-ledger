@@ -1,7 +1,41 @@
-"""Shared by the ledger routers: the bug-#27 span guard and the Odoo
+"""Shared by the ledger routers: the bug-#27 span guard, the entry
+visibility scope (audit: read-side RBAC enforced server-side), and the Odoo
 draft-invoice payload builder (export preview and mark-exported price
 from the same function by construction)."""
 from fastapi import HTTPException
+
+
+def entry_scope_where(who: dict, alias: str = "e"):
+    """Server-side mirror of the UI's entry visibility: the money-side roles
+    (l_approve / l_export) see EVERYTHING — their Approvals/Periods views
+    compute from the unscoped entry set, gated only by the nav perm — while
+    everyone else gets scopedEntries() semantics: l_view_all → every tech;
+    else l_view_own → own rows only; neither → nothing; client access modes
+    (0017: all/restricted/group) on top unless l_all_clients. Returns
+    (sql, args) to AND into a WHERE. PATs are all-scope service credentials,
+    like need()."""
+    if who["kind"] != "session":
+        return "TRUE", []
+    if who["perms"] & {"l_approve", "l_export"}:
+        return "TRUE", []
+    args = []
+    if "l_view_all" in who["perms"]:
+        tech_sql = "TRUE"
+    elif "l_view_own" in who["perms"]:
+        tech_sql = f"{alias}.tech_id = %s"
+        args.append(who["agent_id"])
+    else:
+        return "FALSE", []
+    parts = [tech_sql]
+    if "l_all_clients" not in who["perms"]:
+        parts.append(f"""NOT EXISTS (SELECT 1 FROM ledger.client_access ca
+            WHERE ca.client_id = {alias}.client_id
+              AND ((ca.mode = 'restricted' AND NOT %s = ANY(ca.tech_ids))
+                OR (ca.mode = 'group' AND NOT EXISTS
+                     (SELECT 1 FROM shared.agent_groups ag
+                       WHERE ag.agent_id = %s AND ag.group_id = ANY(ca.group_ids)))))""")
+        args += [who["agent_id"], who["agent_id"]]
+    return "(" + " AND ".join(parts) + ")", args
 
 
 def _sane_span(started: str | None, ended: str | None):

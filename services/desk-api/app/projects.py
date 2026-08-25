@@ -117,6 +117,11 @@ def patch_task(ticket_id: int, task_id: str, body: PatchTask, request: Request):
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, 'manage_projects', 'log_time')
+        # billing fields flow straight into Ledger pricing — log_time alone
+        # may tick tasks and rename, never touch money (audit)
+        if (body.billing_mode is not None or body.rate_cents is not None
+                or body.flat_cents is not None):
+            auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
             status, *_ = _project(cur, ticket_id)
             if status == "approved":

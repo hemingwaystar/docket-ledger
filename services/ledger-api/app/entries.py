@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from . import auth, db
-from .helpers import _sane_span
+from .helpers import _sane_span, entry_scope_where
 
 router = APIRouter()
 
@@ -54,18 +54,29 @@ def classify_entry(entry_id: str, body: Classify, request: Request):
                 notes.append("voided")
             if not sets:
                 return {"ok": True, "changed": []}
-            # span/type edits stop at submission; a void is allowed until
-            # manager approval (the freeze guard has the final word regardless)
+            # span/type edits stop at submission — unless the role holds
+            # l_edit_submitted (audit: the permission is now real server-side);
+            # a void is allowed until manager approval. l_edit_own without
+            # l_edit_all reaches OWN rows only — the same rule the UI's
+            # canEditEntry applies. The freeze guard has the final word.
             gate = ("AND ts_approved_at IS NULL" if body.void
-                    else "AND status = 'pending' AND submitted_at IS NULL")
+                    else "AND status = 'pending' AND ts_approved_at IS NULL")
+            gargs = []
+            if who["kind"] == "session":
+                if "l_edit_submitted" not in who["perms"]:
+                    gate += " AND submitted_at IS NULL"
+                if "l_edit_all" not in who["perms"]:
+                    gate += " AND tech_id = %s"
+                    gargs.append(who["agent_id"])
             try:
                 cur.execute(f"""UPDATE ledger.time_entries SET {', '.join(sets)}
                                  WHERE id = %s {gate}
-                               RETURNING id""", (*args, entry_id))
+                               RETURNING id""", (*args, entry_id, *gargs))
             except pg_errors.RaiseException as e:
                 raise HTTPException(409, e.diag.message_primary or "Entry is immutable")
             if cur.fetchone() is None:
-                raise HTTPException(409, "Entry missing, submitted, approved, or immutable")
+                raise HTTPException(409, "Entry missing, not yours to edit, "
+                                         "submitted, approved, or immutable")
         auth.audit(conn, "ledger", "Entry updated", f"entry:{entry_id}",
                    " · ".join(notes) + f" ({who['label']})")
         return {"ok": True, "changed": notes}
@@ -79,13 +90,19 @@ def recall_entry(entry_id: str, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'l_submit')
         with conn.cursor() as cur:
-            cur.execute("""UPDATE ledger.time_entries
+            # own sheet only, unless l_edit_all (audit: bare l_submit could
+            # recall anyone's submission)
+            own, oargs = "", []
+            if who["kind"] == "session" and "l_edit_all" not in who["perms"]:
+                own, oargs = " AND tech_id = %s", [who["agent_id"]]
+            cur.execute(f"""UPDATE ledger.time_entries
                               SET submitted_at = NULL
                             WHERE id = %s AND submitted_at IS NOT NULL
-                              AND ts_approved_at IS NULL AND status = 'pending'
-                           RETURNING id""", (entry_id,))
+                              AND ts_approved_at IS NULL AND status = 'pending'{own}
+                           RETURNING id""", (entry_id, *oargs))
             if cur.fetchone() is None:
-                raise HTTPException(409, "Entry missing, not submitted, or already approved")
+                raise HTTPException(409, "Entry missing, not yours, not submitted, "
+                                         "or already approved")
         auth.audit(conn, "ledger", "Submission recalled", f"entry:{entry_id}",
                    f"via API ({who['label']})")
         return {"ok": True}
@@ -116,14 +133,14 @@ ENTRY_SELECT = """
 def list_entries(request: Request, client: str | None = None, status: str | None = None,
                  limit: int = 200):
     with db.connect() as conn:
-        auth.require(conn, request)
-        sql, args = ENTRY_SELECT, []
-        where = []
+        who = auth.require(conn, request)
+        scope_sql, scope_args = entry_scope_where(who)
+        sql, args = ENTRY_SELECT, list(scope_args)
+        where = [scope_sql]
         if client:
             where.append("(c.name = %s OR c.id::text = %s)")
             args += [client, client]
-        if where:
-            sql += " WHERE " + " AND ".join(where)
+        sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY e.started_at DESC LIMIT %s"
         args.append(min(limit, 1000))
         with conn.cursor(row_factory=dict_row) as cur:
@@ -131,6 +148,11 @@ def list_entries(request: Request, client: str | None = None, status: str | None
             rows = cur.fetchall()
         if status:
             rows = [r for r in rows if r["status"] == status]
+        # money visibility (audit): rates/amounts ship only with l_see_amounts
+        if who["kind"] == "session" and "l_see_amounts" not in who["perms"]:
+            for r in rows:
+                r["rate_cents"] = None
+                r["amount_cents"] = None
         return {"entries": rows}
 
 
@@ -140,14 +162,19 @@ def submit_entry(entry_id: str, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'l_submit')
         with conn.cursor() as cur:
-            cur.execute("""
+            # own entries only, unless l_edit_all — mirrors canSubmitEntry
+            own, oargs = "", []
+            if who["kind"] == "session" and "l_edit_all" not in who["perms"]:
+                own, oargs = " AND tech_id = %s", [who["agent_id"]]
+            cur.execute(f"""
                 UPDATE ledger.time_entries
                    SET submitted_at = now(),
                        returned_at = NULL, returned_by = NULL, return_reason = NULL
-                 WHERE id = %s AND status = 'pending' AND submitted_at IS NULL
+                 WHERE id = %s AND status = 'pending' AND submitted_at IS NULL{own}
                    AND activity_type_id <> (SELECT id FROM ledger.activity_types WHERE is_sentinel)
-                RETURNING id""", (entry_id,))
+                RETURNING id""", (entry_id, *oargs))
             if cur.fetchone() is None:
-                raise HTTPException(409, "Entry missing, already submitted, voided, or unclassified")
+                raise HTTPException(409, "Entry missing, not yours, already submitted, "
+                                         "voided, or unclassified")
         auth.audit(conn, "ledger", "Submitted for review", f"entry:{entry_id}", "via API")
         return {"ok": True}

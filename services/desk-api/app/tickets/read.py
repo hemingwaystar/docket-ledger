@@ -3,7 +3,7 @@ report, and the audit tail."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from .. import auth, db
-from .common import TICKET_SELECT
+from .common import TICKET_SELECT, visibility_where
 
 router = APIRouter(prefix="/api")
 
@@ -12,15 +12,16 @@ router = APIRouter(prefix="/api")
 def list_tickets(request: Request, state: str | None = None, client: str | None = None,
                  limit: int = 100):
     with db.connect() as conn:
-        auth.require(conn, request)
-        where, args = [], []
+        who = auth.require(conn, request)
+        vis_sql, vis_args = visibility_where(who)
+        where, args = [vis_sql], list(vis_args)
         if state:
             where.append("(lower(s.label) = lower(%s) OR s.kind = lower(%s))")
             args += [state, state]
         if client:
             where.append("(c.name = %s OR c.id::text = %s)")
             args += [client, client]
-        sql = TICKET_SELECT + (" WHERE " + " AND ".join(where) if where else "")
+        sql = TICKET_SELECT + " WHERE " + " AND ".join(where)
         sql += " ORDER BY t.updated_at DESC LIMIT %s"
         args.append(min(limit, 500))
         with conn.cursor(row_factory=dict_row) as cur:
@@ -31,17 +32,26 @@ def list_tickets(request: Request, state: str | None = None, client: str | None 
 @router.get("/tickets/{ticket_id}")
 def get_ticket(ticket_id: int, request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        vis_sql, vis_args = visibility_where(who)
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(TICKET_SELECT + " WHERE t.id = %s", (ticket_id,))
+            # out-of-scope reads 404 like missing ones — existence is not leaked
+            cur.execute(TICKET_SELECT + f" WHERE t.id = %s AND {vis_sql}",
+                        (ticket_id, *vis_args))
             ticket = cur.fetchone()
             if ticket is None:
                 raise HTTPException(404, "No such ticket")
+            # deleted (0036) bodies are STRIPPED here too — the tombstone
+            # guarantee holds on every read path, not just bootstrap; the
+            # count skips inline files and deleted articles the same way
             cur.execute(
                 """SELECT id, kind, author, mail_from, mail_to, mail_cc,
-                          body, is_auto, sent_at,
-                          (SELECT count(*) FROM desk.attachments at
-                            WHERE at.article_id = ar.id) AS attachments
+                          CASE WHEN deleted_at IS NULL THEN body ELSE '' END AS body,
+                          is_auto, sent_at, deleted_at,
+                          CASE WHEN deleted_at IS NULL THEN
+                            (SELECT count(*) FROM desk.attachments at
+                              WHERE at.article_id = ar.id AND NOT at.is_inline)
+                          ELSE 0 END AS attachments
                      FROM desk.articles ar
                     WHERE ar.ticket_id = %s ORDER BY sent_at""", (ticket_id,))
             ticket["articles"] = cur.fetchall()
@@ -73,7 +83,8 @@ def get_ticket(ticket_id: int, request: Request):
 @router.get("/reports/queue")
 def report_queue(request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        vis_sql, vis_args = visibility_where(who)
         with conn.cursor(row_factory=dict_row) as cur:
             out = {}
             for name, col in (("by_state", "s.kind"), ("by_group", "g.name"),
@@ -84,8 +95,8 @@ def report_queue(request: Request):
                       JOIN desk.ticket_states s ON s.id = t.state_id
                       JOIN desk.priorities p    ON p.id = t.priority_id
                       JOIN shared.groups g      ON g.id = t.group_id
-                     WHERE s.kind <> 'done'
-                     GROUP BY 1 ORDER BY n DESC""")
+                     WHERE s.kind <> 'done' AND {vis_sql}
+                     GROUP BY 1 ORDER BY n DESC""", vis_args)
                 out[name] = cur.fetchall()
             return out
 

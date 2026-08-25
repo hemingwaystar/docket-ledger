@@ -7,6 +7,7 @@ ledger row 36's lesson)."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from . import auth, db
+from .helpers import entry_scope_where
 
 router = APIRouter()
 
@@ -175,7 +176,11 @@ def bootstrap(request: Request, limit: int = 1000):
                                "approvedAt": ms(r["approved_at"]),
                                "approvedBy": r["approved_by_name"],
                                "exportedAt": ms(r["exported_at"])} for r in cur.fetchall()]
-            cur.execute("""SELECT e.id, e.ticket_id, e.task_id, e.client_id, e.tech_id,
+            # visibility scoping (audit): the same rule the UI's scopedEntries
+            # applies now gates the DATA — l_view_own sessions get their own
+            # rows only, client access modes apply unless l_all_clients
+            scope_sql, scope_args = entry_scope_where(who)
+            cur.execute(f"""SELECT e.id, e.ticket_id, e.task_id, e.client_id, e.tech_id,
                                   e.activity_type_id, e.article_id, e.started_at, e.ended_at, e.hours,
                                   COALESCE(NULLIF(e.note, ''),
                                            left(ar.body, 140), '') AS note,
@@ -190,10 +195,13 @@ def bootstrap(request: Request, limit: int = 1000):
                              FROM ledger.time_entries e
                              LEFT JOIN desk.tickets tk ON tk.id = e.ticket_id
                              LEFT JOIN desk.project_tasks pt ON pt.id = e.task_id
-                             LEFT JOIN desk.articles ar ON ar.id = e.article_id
+                             LEFT JOIN desk.articles ar
+                               ON ar.id = e.article_id AND ar.deleted_at IS NULL
                              LEFT JOIN shared.agents ap ON ap.id = e.ts_approved_by
                              LEFT JOIN shared.agents rb ON rb.id = e.returned_by
-                            ORDER BY e.started_at DESC LIMIT %s""", (limit,))
+                            WHERE {scope_sql}
+                            ORDER BY e.started_at DESC LIMIT %s""",
+                        (*scope_args, limit))
             out["entries"] = [{
                 "id": str(r["id"]), "zEntryId": str(r["id"])[:8],
                 "zArticleId": str(r["article_id"])[:8] if r["article_id"] else None,
@@ -221,4 +229,26 @@ def bootstrap(request: Request, limit: int = 1000):
                                 "pmode": "flat" if r["billing_model"] == "project_flat" else "tasks",
                                 "projectFlat": (r["project_flat_cents"] or 0) / 100 or None,
                                 "approvedAt": ms(r["approved_at"])} for r in cur.fetchall()]
+        # money visibility (audit): every rate lane ships only with
+        # l_see_amounts — same server-side rule as the audit tail above.
+        # Keys/shapes stay intact (mapIn completeness); only values blank.
+        # Each lane keeps shipping to the role that ADMINISTERS it (manage
+        # perms), because those editors write state values back — blanking
+        # what they edit would let a save overwrite real rates with blanks.
+        if "l_see_amounts" not in who["perms"]:
+            if "l_manage_clients" not in who["perms"]:
+                for c in out["clients"]:
+                    c["rateOverride"] = None
+                    c.pop("rateOverrideHist", None)
+                    for o in c["rates"].values():
+                        o["rate"] = None
+                        o["rateHist"] = []
+            if "l_manage_types" not in who["perms"]:
+                for t in out["types"]:
+                    t["rate"] = 0
+                    t["rateHist"] = []
+            if "l_manage_settings" not in who["perms"]:
+                out["defaultRates"] = {}
+            for p in out["projects"]:   # ledger has no projectFlat editor —
+                p["projectFlat"] = None  # display-only, safe to blank outright
         return out

@@ -15,7 +15,9 @@ router = APIRouter()
 @router.get("/api/periods")
 def list_periods(request: Request, client: str | None = None):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        # period cards carry billed totals — money-side roles only (audit)
+        auth.need(who, 'l_approve', 'l_export', 'l_see_amounts')
         sql = """
           SELECT bp.id, c.name AS client, bp.period_key, bp.status,
                  bp.approved_at, bp.exported_at, bp.export_ref,
@@ -38,7 +40,14 @@ def list_periods(request: Request, client: str | None = None):
         sql += " GROUP BY bp.id, c.name ORDER BY bp.period_key DESC, c.name"
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, args)
-            return {"periods": cur.fetchall()}
+            rows = cur.fetchall()
+        # billed dollars ship only with l_see_amounts (same rule everywhere);
+        # approve/export roles without it still see hours and entry counts
+        if who["kind"] == "session" and "l_see_amounts" not in who["perms"]:
+            for r in rows:
+                r["hourly_amount_cents"] = None
+                r["project_flat_cents"] = None
+        return {"periods": rows}
 
 
 class PeriodApprove(BaseModel):

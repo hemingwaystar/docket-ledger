@@ -70,7 +70,17 @@ class PatchTicket(BaseModel):
 def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
     with db.connect() as conn:
         who = auth.require(conn, request)
+        # field-level gates (audit): the old single any-of let a close-only
+        # role rewrite every property. Now each field class needs ITS perm —
+        # close moves state, assign moves the owner, edit_props does the rest.
         auth.need(who, 'edit_props', 'assign', 'close')
+        if body.state is not None:
+            auth.need(who, 'edit_props', 'close')
+        if body.owner_email is not None:
+            auth.need(who, 'edit_props', 'assign')
+        if any(f is not None for f in (body.title, body.priority, body.contact,
+                                       body.group, body.pending_until)):
+            auth.need(who, 'edit_props')
         with conn.cursor() as cur:
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)

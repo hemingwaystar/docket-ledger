@@ -10,7 +10,9 @@ router = APIRouter()
 @router.get("/api/reports/utilization")
 def utilization(request: Request, target: float = 0.75):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        # every tech's hours ride in this rollup — all-tech read roles only
+        auth.need(who, 'l_view_all')
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT a.name AS technician,
