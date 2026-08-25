@@ -359,6 +359,45 @@ class ClientAccess(BaseModel):
     groups: list[str] = []
 
 
+class ClientRetainer(BaseModel):
+    enabled: bool = True
+    included_hours: float = 0
+    overage_rate_cents: int | None = None   # None = overage bills at standard rates
+    rollover_cap_hours: float = 0
+    note: str = ""
+
+
+@router.put("/api/clients/{client_id}/retainer")
+def put_client_retainer(client_id: str, body: ClientRetainer, request: Request):
+    """The retainer/block-hours agreement (0043) — the editor was UI-local
+    until the audit; terms now survive the hydrate like everything else."""
+    if body.included_hours < 0 or body.rollover_cap_hours < 0 \
+            or (body.overage_rate_cents is not None and body.overage_rate_cents < 0):
+        raise HTTPException(422, "Hours and rates cannot be negative")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "l_manage_clients")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO ledger.retainers
+                             (client_id, included_hours, overage_rate_cents,
+                              rollover_cap_hours, enabled, note)
+                           VALUES (%s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (client_id) DO UPDATE
+                             SET included_hours = EXCLUDED.included_hours,
+                                 overage_rate_cents = EXCLUDED.overage_rate_cents,
+                                 rollover_cap_hours = EXCLUDED.rollover_cap_hours,
+                                 enabled = EXCLUDED.enabled,
+                                 note = EXCLUDED.note""",
+                        (client_id, body.included_hours, body.overage_rate_cents,
+                         body.rollover_cap_hours, body.enabled, body.note))
+        auth.audit(conn, "ledger", "Retainer agreement changed", f"client:{client_id}",
+                   (f"{'active' if body.enabled else 'off'} · {body.included_hours} h included · "
+                    + ("standard overage rates" if body.overage_rate_cents is None
+                       else f"overage {body.overage_rate_cents}¢/h")
+                    + f" · rollover cap {body.rollover_cap_hours} h ({who['label']})"))
+        return {"ok": True}
+
+
 @router.put("/api/clients/{client_id}/access")
 def put_client_access(client_id: str, body: ClientAccess, request: Request):
     if body.mode not in ("all", "restricted", "group"):

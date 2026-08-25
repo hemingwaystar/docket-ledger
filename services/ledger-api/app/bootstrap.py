@@ -38,8 +38,23 @@ def bootstrap(request: Request, limit: int = 1000):
                        "billableDefaultHist": [],
                        "archived": r["archived_at"] is not None,
                        "useDefaults": False, "useDefaultsHist": [], "defaultTypeFlags": {},
-                       "rates": {}, "access": {"mode": "all", "techs": [], "groups": []}}
+                       "rates": {}, "retainer": None,
+                       "access": {"mode": "all", "techs": [], "groups": []}}
                        for r in cur.fetchall()}
+            # retainer agreements (0043) — the editor persists now (audit)
+            cur.execute("""SELECT client_id, included_hours, overage_rate_cents,
+                                  rollover_cap_hours, enabled, note
+                             FROM ledger.retainers""")
+            for r in cur.fetchall():
+                c = clients.get(str(r["client_id"]))
+                if c is not None:
+                    c["retainer"] = {
+                        "enabled": r["enabled"],
+                        "includedHours": float(r["included_hours"]),
+                        "overageRate": (r["overage_rate_cents"] / 100)
+                                       if r["overage_rate_cents"] is not None else None,
+                        "rolloverCap": float(r["rollover_cap_hours"]),
+                        "note": r["note"]}
             cur.execute("SELECT client_id, mode, tech_ids, group_ids FROM ledger.client_access")
             for r in cur.fetchall():
                 c = clients.get(str(r["client_id"]))
@@ -278,6 +293,8 @@ def bootstrap(request: Request, limit: int = 1000):
                     for o in c["rates"].values():
                         o["rate"] = None
                         o["rateHist"] = []
+                    if c["retainer"]:
+                        c["retainer"]["overageRate"] = None
             if "l_manage_types" not in who["perms"]:
                 for t in out["types"]:
                     t["rate"] = 0

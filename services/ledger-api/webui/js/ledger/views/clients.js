@@ -239,14 +239,26 @@ function viewClient(){
 }
 function cfPreset(p){ state.cf=state.cf||{tech:[],type:[],status:[],q:'',from:'',to:''}; _presetDates(state.cf,p); render(); }
 function cfClear(){ state.cf={tech:[],type:[],status:[],q:'',from:'',to:''}; render(); }
+let retTimer=null;
 function retSet(cid, k, v, srcEl){
   const c = client(cid); c.retainer = c.retainer||{ enabled:false, includedHours:0, overageRate:null, rolloverCap:0, note:'' };
   const was = JSON.stringify({e:c.retainer.enabled,i:c.retainer.includedHours,o:c.retainer.overageRate,r:c.retainer.rolloverCap});
   if(k==='enabled') c.retainer.enabled = !!v;
   else if(k==='overageRate') c.retainer.overageRate = v===''? null : Number(v);
+  else if(k==='note') c.retainer.note = String(v);
   else c.retainer[k] = Number(v)||0;
   log('Retainer agreement changed', `${c.name}: ${k} → ${k==='enabled'?(c.retainer.enabled?'active':'off'):(c.retainer[k]??'standard rates')} (was ${was})`);
   commitRender(srcEl);
+  /* persist (0043) — the editor was UI-local and the next hydrate wiped
+     every typed term while it LOOKED saved (audit) */
+  clearTimeout(retTimer);
+  retTimer=setTimeout(()=>{ const r=c.retainer;
+    $fetch('/api/clients/'+cid+'/retainer',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ enabled:!!r.enabled, included_hours:r.includedHours||0,
+        overage_rate_cents:(r.overageRate==null||r.overageRate==='')?null:Math.round(Number(r.overageRate)*100),
+        rollover_cap_hours:r.rolloverCap||0, note:r.note||'' })})
+      .then(async x=>{ if(!x.ok) return oops(await x.json().catch(()=>0)); });
+  },600);
 }
 
 /* ---- client billing & rate overrides ---- */

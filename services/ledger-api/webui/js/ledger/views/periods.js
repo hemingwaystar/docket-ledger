@@ -273,8 +273,11 @@ function runExport(clientId,pk){
       if(!r.ok) return oops(await jshort(r));
       const d=await jshort(r); const ref=(d&&d.export_ref)||'recorded';
       ps.status='exported'; ps.exportedAt=Date.now(); ps.exportRef=ref;
-      log('Exported to Odoo',`${esc(c.name)} · ${periodFor(c.cycle,findPeriodDate(clientId,pk)).label} · ${state.settings.odoo.enabled?state.settings.odoo.mode+' invoice':'preview only'} · ${ref}`,clientId+'|'+pk);
-      toast(state.settings.odoo.enabled?`Posted to Odoo · ${ref}`:`Preview generated · ${ref} (connector disabled)`);
+      /* honest wording (audit): mark-exported RECORDS the payload — no code
+         posts to Odoo yet; claiming 'Posted' let an operator believe a
+         draft invoice reached Odoo when nothing was ever sent */
+      log('Export recorded',`${esc(c.name)} · ${periodFor(c.cycle,findPeriodDate(clientId,pk)).label} · payload stored server-side (${state.settings.odoo.enabled?state.settings.odoo.mode+' invoice, awaiting the connector build':'connector disabled'}) · ${ref}`,clientId+'|'+pk);
+      toast(`Export recorded · ${ref}${state.settings.odoo.enabled?' — the connector build will post it to Odoo':' (connector disabled)'}`);
       render();
       setTimeout(hydrate,600);
     });
@@ -289,6 +292,6 @@ function previewPayload(clientId,pk){
     invoice_line_ids:Object.values(lines).map(l=>({name:l.name,quantity:Number(l.qty.toFixed(2)),price_unit:l.price,uom:'Hours'})).concat(flatLines) };
   openModal(`<div class="modal-head"><h3>Odoo export payload</h3><p>${esc(c.name)} — what the connector would send</p></div>
     <div class="modal-body"><div class="note-body tape" style="font-size:12px;max-height:340px;overflow:auto">${esc(JSON.stringify(payload,null,2))}</div>
-    <div class="mini muted" style="margin-top:10px">This is the open connector’s output. Map these fields to your Odoo model in the backend <span class="tape">odoo_connector.py</span>.</div></div>
+    <div class="mini muted" style="margin-top:10px">This is the payload the export records server-side (<span class="tape">ledger.odoo_exports</span>). No connector posts to Odoo yet — that arrives with the connector build.</div></div>
     <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
 }

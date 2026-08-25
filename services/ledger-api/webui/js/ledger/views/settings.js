@@ -95,9 +95,9 @@ function viewSettings(){
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-top:16px">
         <button class="toggle ${o.enabled?'on':''}" onclick="s_toggleOdoo()"></button>
-        <span class="mini">${o.enabled?'Connector enabled — exports post to Odoo':'Connector disabled — exports produce a preview payload only'}</span>
+        <span class="mini">${o.enabled?'Connector enabled — exports are recorded server-side; posting to Odoo ships with the connector build':'Connector disabled — exports produce a preview payload only'}</span>
         <div class="spacer"></div>
-        <button class="btn sm" onclick="toast('Test call would run against the backend connector')">Test connection</button>
+        <button class="btn sm" onclick="toast('No live connector yet — exports are recorded server-side (ledger.odoo_exports); nothing is sent to Odoo')">Test connection</button>
       </div>
     </div>
   </div>`;
@@ -118,6 +118,11 @@ function persistLedgerCfg(){
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
     $fetch('/api/config/odoo',{method:'PUT',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({value:od})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+    /* the Retainers module toggle was the ONE config doc this saver never
+       sent — it reverted on every reload while looking saved (audit) */
+    $fetch('/api/config/retainers',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({value:st.retainers||{enabled:false}})})
       .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
   },600);
 }
