@@ -41,13 +41,16 @@ def add_time(ticket_id: int, body: NewTime, request: Request):
                             (body.article_id, ticket_id))
                 if cur.fetchone() is None:
                     raise HTTPException(422, "Article not on this ticket (or not a note/reply)")
-            cur.execute("""INSERT INTO ledger.time_entries
-                             (ticket_id, task_id, client_id, tech_id, activity_type_id,
-                              started_at, ended_at, note, article_id)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                           RETURNING id, hours""",
-                        (ticket_id, body.task_id, client_id, tech_id, type_id,
-                         body.started_at, body.ended_at, body.note[:140], body.article_id))
+            try:
+                cur.execute("""INSERT INTO ledger.time_entries
+                                 (ticket_id, task_id, client_id, tech_id, activity_type_id,
+                                  started_at, ended_at, note, article_id)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                               RETURNING id, hours""",
+                            (ticket_id, body.task_id, client_id, tech_id, type_id,
+                             body.started_at, body.ended_at, body.note[:140], body.article_id))
+            except pg_errors.RaiseException as e:   # 0039 insert guard: period closed
+                raise HTTPException(409, e.diag.message_primary or "Billing period is closed")
             entry_id, hours = cur.fetchone()
             cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
         auth.audit(conn, "desk", "Time attached", f"ticket:{ticket_id}",

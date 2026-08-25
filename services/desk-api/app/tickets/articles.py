@@ -2,6 +2,7 @@
 ride-along time. Replies mail out only when the mailbox and the global
 outbound switch allow — otherwise recorded only."""
 from fastapi import APIRouter, HTTPException, Request
+from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from .. import auth, db, helpers, mailer
 from .common import _sane_span, sys_article, cap_text
@@ -40,6 +41,20 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
             row = helpers.ticket_or_404(cur, ticket_id)
             helpers.refuse_if_locked_project(row)
             client_id = row[1]
+            if body.time:
+                # probe the 0039 insert guard BEFORE any outbound mail: the
+                # ride-along time INSERT happens after send_reply, and a 409
+                # there would roll back an article whose email already left.
+                # period_locked + ensure_period are SECURITY DEFINER, so this
+                # needs no billing_periods grant. The try/except at the INSERT
+                # below stays as the backstop for the tiny race window.
+                cur.execute("""SELECT ledger.period_locked(
+                                 ledger.ensure_period(%s, %s::timestamptz))""",
+                            (client_id, body.time.started_at))
+                (locked,) = cur.fetchone()
+                if locked:
+                    raise HTTPException(409, "That time span falls in an approved/exported "
+                                             "billing period — nothing was sent or saved")
             author_id, author_name = helpers.agent(cur, body.author_email)
             sent, mail_to, out_mid, mb_addr = False, None, None, None
             if body.kind == "reply":
@@ -119,12 +134,15 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 t = body.time
                 tech_id, _ = helpers.agent(cur, t.technician_email)
                 type_id = helpers.activity_type_id(cur, t.activity_type)
-                cur.execute("""INSERT INTO ledger.time_entries
-                                 (ticket_id, task_id, client_id, tech_id, activity_type_id,
-                                  started_at, ended_at, note, article_id)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id, hours""",
-                            (ticket_id, t.task_id, client_id, tech_id, type_id,
-                             t.started_at, t.ended_at, body.body[:140], article_id))
+                try:
+                    cur.execute("""INSERT INTO ledger.time_entries
+                                     (ticket_id, task_id, client_id, tech_id, activity_type_id,
+                                      started_at, ended_at, note, article_id)
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id, hours""",
+                                (ticket_id, t.task_id, client_id, tech_id, type_id,
+                                 t.started_at, t.ended_at, body.body[:140], article_id))
+                except pg_errors.RaiseException as e:   # 0039 insert guard: period closed
+                    raise HTTPException(409, e.diag.message_primary or "Billing period is closed")
                 entry_id, hours = cur.fetchone()
             # ticket-audit sibling (build 24/25): the ADDITION of a note/reply is
             # a ticket event too, and now carries the CONTENT (capped) so the
