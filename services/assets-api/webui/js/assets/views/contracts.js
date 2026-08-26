@@ -198,11 +198,18 @@ function saveContract(id){
     log('Contract added', vendor);
     /* every rung guards on the previous response — a failed POST (or a
        failed coverage PUT) must never toast success (lying-chip class) */
+    /* the server DROPS unknown/archived/other-client ids from a coverage
+       PUT and returns the kept set — a success toast over a silent drop
+       was the lying-chip class (audit) */
+    const covOutcome=(d2,verb)=>{ if(!d2) return;
+      const kept=(d2.assetIds||[]).length, dropped=sel.length-kept;
+      if(dropped>0) toast(`Contract ${vendor} ${verb} — ${dropped} asset${dropped===1?' was':'s were'} dropped from coverage (archived or moved to another client meanwhile).`);
+      else toast(`Contract ${vendor} ${verb}.`); };
     post('POST','/api/contracts',body).then(d=>{
       if(!d||!d.id) return;                    /* oops() already spoke */
       if(!sel.length){ toast(`Contract ${vendor} added.`); return; }
       return post('PUT','/api/contracts/'+d.id+'/assets',{asset_ids:sel})
-        .then(d2=>{ if(d2) toast(`Contract ${vendor} added.`); });
+        .then(d2=>covOutcome(d2,'added'));
     });
     return;
   }
@@ -220,15 +227,19 @@ function saveContract(id){
   if(Object.keys(body).length===1 && !covChanged){ toast('Nothing changed.'); return; }
   log('Contract updated', vendor, id);        /* only after the diff-guard */
   const sync = d=>{ if(d&&d.version) c.version=d.version; return d; };  /* in-window 409 guard (F1) */
+  const covOutcome=(d2,label)=>{ if(!d2) return;
+    const kept=(d2.assetIds||[]).length, dropped=sel.length-kept;
+    if(dropped>0) toast(`${label} — ${dropped} asset${dropped===1?' was':'s were'} dropped from coverage (archived or moved to another client meanwhile).`);
+    else toast(`${label}.`); };
   if(Object.keys(body).length>1){
     post('PATCH','/api/contracts/'+id, body).then(sync).then(d=>{
       if(!d) return;
       if(covChanged) return post('PUT','/api/contracts/'+id+'/assets',{asset_ids:sel}).then(sync)
-        .then(d2=>{ if(d2) toast(`Contract ${vendor} saved.`); });
+        .then(d2=>covOutcome(d2,`Contract ${vendor} saved`));
       toast(`Contract ${vendor} saved.`);
     });
   } else {
     post('PUT','/api/contracts/'+id+'/assets',{asset_ids:sel}).then(sync)
-      .then(d=>{ if(d) toast(`Coverage for ${vendor} saved.`); });
+      .then(d=>covOutcome(d,`Coverage for ${vendor} saved`));
   }
 }

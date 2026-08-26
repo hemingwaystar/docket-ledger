@@ -6,11 +6,30 @@
    CSV exports the FILTERED rows, gated a_export_csv.
    ========================================================================== */
 
+/* date-window rows come from the SERVER (audit finding): filtering the
+   newest-200 bootstrap tail made a from/to query quietly return nothing
+   once history outgrew the horizon. One in-flight window, keyed. */
+let _audWin=null, _audKey='';
+function auditRowsSource(){
+  const f=state.auf;
+  if(f.from||f.to){
+    const key=(f.from||'')+'|'+(f.to||'');
+    if(_audKey!==key){
+      _audKey=key; _audWin=null;
+      const qs=[f.from?'date_from='+f.from:'', f.to?'date_to='+f.to:''].filter(Boolean).join('&');
+      $fetch('/api/audit?'+qs).then(r=>r.ok?r.json():null)
+        .then(d=>{ if(d&&_audKey===key){ _audWin=d.events||[]; render(); } })
+        .catch(()=>{});
+    }
+    if(_audWin) return _audWin;
+  }
+  return state.audit;
+}
 function auditFilteredRows(){
   const f=state.auf, q=(f.q||'').toLowerCase();
   const from=f.from?new Date(f.from+'T00:00:00').getTime():-Infinity;
   const to=f.to?new Date(f.to+'T23:59:59').getTime():Infinity;
-  return state.audit.filter(a=>
+  return auditRowsSource().filter(a=>
     a.ts>=from && a.ts<=to &&
     (!f.actor.length || f.actor.includes(a.actor)) &&
     (!q || ((a.action||'')+' '+(a.detail||'')+' '+(a.actor||'')+' '+(a.entityId||'')).toLowerCase().includes(q)));
@@ -21,7 +40,7 @@ function viewAudit(){
   const pg=paginate('auditList', rows);
   return `
   <div class="notice lock" style="margin-bottom:14px">${icon(IC.audit)}
-    <div>Every change is recorded here and can't be edited — the append-only system log (app <b>assets</b> + sign-ins). Each asset, licence and contract also carries its own attributed change feed on its detail page.</div></div>
+    <div>Every change is recorded here and can't be edited — the append-only system log (app <b>assets</b> + sign-ins). Each asset, licence and contract also carries its own attributed change feed on its detail page.${(!state.auf.from&&!state.auf.to&&(state.auditTotal||0)>state.audit.length)?` Showing the newest ${state.audit.length} of ${state.auditTotal} — set a date range to pull older rows.`:''}</div></div>
   <div class="toolbar">
     <div class="search"><span>${icon(IC.search)}</span><input type="search" data-fkey="audit-q" placeholder="Search events…" value="${esc(state.auf.q)}" oninput="state.auf.q=this.value;render()"></div>
     <span style="display:inline-block;min-width:170px;vertical-align:middle">${multiCombo('auft-actor', [...new Set(state.audit.map(a=>a.actor||''))].filter(Boolean).sort().map(x=>({v:x,label:x})), state.auf.actor, v=>mfToggle('auf','actor',v), 'All actors')}</span>

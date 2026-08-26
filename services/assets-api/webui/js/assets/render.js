@@ -259,13 +259,23 @@ function pagerBar(pg){
 }
 
 /* ---------------- entity event feed (detail modals) ---------------- */
-function eventFeed(kind, id){
-  const evs = entityEvents(kind, id);
+function evFeedRows(evs){
   if(!evs.length) return '<div class="mini muted">No recorded changes yet.</div>';
   return evs.map(e=>`<div class="evt">
     <span class="evt-when">${fmtStamp(e.ts)}</span>
     <div class="evt-body">${esc(e.body)}<div class="evt-who">${esc(e.author)}</div></div>
   </div>`).join('');
+}
+function eventFeed(kind, id){
+  /* render the hydrated tail immediately, then swap in the COMPLETE
+     per-entity feed — the global 400-row tail made older entities claim
+     'no recorded changes' over real history (audit) */
+  setTimeout(()=>{ $fetch('/api/events?entity_id='+encodeURIComponent(id))
+    .then(r=>r.ok?r.json():null)
+    .then(d=>{ const el=document.getElementById('evfeed-'+id);
+      if(el&&d) el.innerHTML=evFeedRows(d.events||[]); })
+    .catch(()=>{}); },0);
+  return `<div id="evfeed-${esc(id)}">${evFeedRows(entityEvents(kind, id))}</div>`;
 }
 
 /* ---------------- CSV export (gated by a_export_csv at the call sites) ---- */

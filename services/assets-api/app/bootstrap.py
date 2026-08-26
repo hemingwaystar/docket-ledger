@@ -116,11 +116,78 @@ def bootstrap(request: Request):
                 out["audit"] = [{"ts": ms(r["at"]), "actor": r["who"], "action": r["action"],
                                  "entityId": r["entity"], "detail": r["detail"] or ""}
                                 for r in cur.fetchall()]
+                # older rows exist beyond the tail? The audit view fetches
+                # date windows from GET /api/audit instead of pretending the
+                # tail is everything (audit finding)
+                cur.execute("""SELECT count(*) FROM audit.events e
+                                WHERE e.app IN ('assets', 'auth')""")
+                out["auditTotal"] = cur.fetchone()["count"]
             else:
                 out["audit"] = []
+                out["auditTotal"] = 0
             cur.execute("SELECT value FROM shared.app_config WHERE key = 'assets'")
             row = cur.fetchone()
             out["cfg"] = (row["value"] if row and isinstance(row["value"], dict)
                           else {"lapse_lead_days": 60, "lapse_group": "Alerts",
                                 "lapse_kinds": {"warranty": True, "license": True, "contract": True}})
         return out
+
+
+@router.get("/api/events")
+def entity_events(request: Request, entity_id: str, limit: int = 300):
+    """The COMPLETE change feed for one asset/licence/contract — the detail
+    modals used to filter bootstrap's global 400-row tail, so an entity whose
+    history predated the horizon showed 'no recorded changes' over real rows
+    (audit finding)."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        auth.need(who, "a_view")
+        ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""SELECT id, kind, entity_id, author, body, created_at
+                             FROM assets.asset_events
+                            WHERE entity_id::text = %s
+                            ORDER BY id DESC LIMIT %s""",
+                        (entity_id, min(limit, 1000)))
+            return {"events": [{"id": r["id"], "kind": r["kind"],
+                                "entityId": str(r["entity_id"]),
+                                "author": r["author"], "body": r["body"],
+                                "ts": ms(r["created_at"])} for r in cur.fetchall()]}
+
+
+@router.get("/api/audit")
+def audit_window(request: Request, date_from: str | None = None,
+                 date_to: str | None = None, limit: int = 1000):
+    """Audit rows for a DATE WINDOW — the view's from/to filters query this
+    instead of silently filtering the newest-200 bootstrap tail (audit
+    finding). Dates are YYYY-MM-DD, inclusive."""
+    import re as _re
+    for v in (date_from, date_to):
+        if v is not None and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise HTTPException(422, "dates must be YYYY-MM-DD")
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        if who["kind"] != "session":
+            raise HTTPException(401, "Session required")
+        auth.need(who, "a_view_audit")
+        ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
+        where, args = ["e.app IN ('assets', 'auth')"], []
+        if date_from:
+            where.append("e.at >= %s::date")
+            args.append(date_from)
+        if date_to:
+            where.append("e.at < %s::date + interval '1 day'")
+            args.append(date_to)
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(f"""SELECT e.at, COALESCE(a.name, e.actor) AS who, e.action,
+                                  e.entity, e.detail
+                             FROM audit.events e
+                             LEFT JOIN shared.agents a ON e.actor = 'agent:' || a.id::text
+                            WHERE {' AND '.join(where)}
+                            ORDER BY e.at DESC LIMIT %s""",
+                        (*args, min(limit, 5000)))
+            return {"events": [{"ts": ms(r["at"]), "actor": r["who"],
+                                "action": r["action"], "entityId": r["entity"],
+                                "detail": r["detail"] or ""} for r in cur.fetchall()]}

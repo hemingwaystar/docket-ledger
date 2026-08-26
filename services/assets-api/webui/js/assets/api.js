@@ -25,6 +25,7 @@ function mapIn(d){
   if(d.audit){ state.audit.length=0;
     d.audit.forEach(a=>state.audit.push({id:'srv'+a.ts+(a.entityId||''), ts:a.ts,
       actor:a.actor, action:a.action, detail:a.detail, entityId:a.entityId})); }
+  state.auditTotal=d.auditTotal||state.audit.length;   /* tail horizon (audit) */
   if(d.cfg) state.cfg=d.cfg;
   state.user={name:d.me.name, initials:d.me.initials, email:d.me.email};
   state.perms=new Set(d.me.perms);   /* full ids, deliberately unstripped */
