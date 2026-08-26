@@ -46,7 +46,10 @@ def me(request: Request):
 
 @app.get("/")
 def root():
-    return RedirectResponse("/ui/index.html")
+    # RELATIVE on purpose (the assets-api convention): behind nginx the
+    # /ledger/ prefix is stripped, so an absolute /ui/… would resolve at the
+    # shared origin into DOCKET's namespace and open the wrong app (audit)
+    return RedirectResponse("ui/index.html")
 
 
 class NoCacheStatic(StaticFiles):

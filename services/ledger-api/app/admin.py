@@ -212,7 +212,12 @@ class TypeRate(BaseModel):
 
 @router.put("/api/types/{type_id}/rate")
 def put_type_rate(type_id: str, body: TypeRate, request: Request):
-    """Effective-dated base rate — a new row from today; same-day collapses."""
+    """Effective-dated base rate — a new row from today; same-day collapses.
+    The FIRST real rate anchors at epoch so pre-existing time never prices
+    at $0. 'First' ignores the 0-cent placeholder rows a billable flip
+    writes (audit: those used to count, so a create→flip→log→rate sequence
+    left prior time invoicing at $0) — and any such placeholders are
+    repaired to the first real rate."""
     if body.rate_cents < 0:
         raise HTTPException(422, "rate_cents must be >= 0")
     with db.connect() as conn:
@@ -220,8 +225,16 @@ def put_type_rate(type_id: str, body: TypeRate, request: Request):
         auth.need(who, "l_manage_types")
         with conn.cursor() as cur:
             cur.execute("SELECT EXISTS (SELECT 1 FROM ledger.activity_type_rates "
-                        "WHERE activity_type_id = %s)", (type_id,))
+                        "WHERE activity_type_id = %s AND rate_cents <> 0)", (type_id,))
             (has_rows,) = cur.fetchone()
+            if not has_rows:
+                # billable-flip placeholders (rate 0) must not shadow the
+                # first real rate from today onward — repair them in place
+                # (their billable flags stay untouched)
+                cur.execute("""UPDATE ledger.activity_type_rates
+                                  SET rate_cents = %s
+                                WHERE activity_type_id = %s AND rate_cents = 0""",
+                            (body.rate_cents, type_id))
             cur.execute("""INSERT INTO ledger.activity_type_rates
                              (activity_type_id, valid_from, rate_cents)
                            VALUES (%s, CASE WHEN %s THEN current_date
@@ -230,7 +243,9 @@ def put_type_rate(type_id: str, body: TypeRate, request: Request):
                              DO UPDATE SET rate_cents = EXCLUDED.rate_cents""",
                         (type_id, has_rows, body.rate_cents))
         auth.audit(conn, "ledger", "Type rate set", f"type:{type_id}",
-                   f"{body.rate_cents}c/h from today ({who['label']})")
+                   (f"{body.rate_cents}c/h across ALL history — first rate, "
+                    "type was unpriced" if not has_rows else
+                    f"{body.rate_cents}c/h from today") + f" ({who['label']})")
         return {"ok": True}
 
 

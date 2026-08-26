@@ -82,6 +82,7 @@ def _export_payload(cur, period_id):
          GROUP BY at.name, p.rate_cents ORDER BY at.name""", (period_id,))
     lines = [{"name": n, "quantity": float(q), "price_unit": r / 100.0, "uom": "Hours"}
              for n, r, q in cur.fetchall()]
+    flat_cents = 0
     cur.execute("""
         SELECT fl.project_title, fl.line_label, fl.amount_cents
           FROM ledger.project_flat_lines fl
@@ -89,9 +90,28 @@ def _export_payload(cur, period_id):
            AND ledger.period_key_for(fl.client_id, fl.approved_at) = %s""",
         (client_id, period_key))
     for title, label, cents in cur.fetchall():
+        flat_cents += cents
         lines.append({"name": f"{title} — {label}", "quantity": 1,
                       "price_unit": cents / 100.0, "uom": "Fee"})
+    # the AUTHORITATIVE total is the same per-entry integer-cents sum the
+    # period cards show (ledger.priced) — never a float recompute over the
+    # grouped lines, which drifted by cents from every other money path
+    # (audit). Odoo's own draft recompute of quantity×price_unit can still
+    # differ from this by a cent on grouped lines; total_cents is the truth.
+    cur.execute("""
+        SELECT COALESCE(sum(p.amount_cents), 0)
+          FROM ledger.time_entries e
+          CROSS JOIN LATERAL ledger.priced(e) AS p
+         WHERE e.period_id = %s AND e.status <> 'void' AND p.billable""",
+        (period_id,))
+    (hourly_cents,) = cur.fetchone()
+    total_cents = int(hourly_cents) + flat_cents
+    cur.execute("SELECT value FROM shared.app_config WHERE key = 'ledger'")
+    row = cur.fetchone()
+    cfg = row[0] if row and isinstance(row[0], dict) else {}
     return {"partner": client_name, "client_id": str(client_id), "period": period_key,
             "move_type": "out_invoice", "state": "draft",
+            "currency": cfg.get("currency", "USD"),
             "invoice_line_ids": lines,
-            "total": round(sum(l["quantity"] * l["price_unit"] for l in lines), 2)}
+            "total_cents": total_cents,
+            "total": total_cents / 100.0}

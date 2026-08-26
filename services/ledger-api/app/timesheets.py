@@ -155,6 +155,7 @@ def approve_timesheet(body: ApproveSheet, request: Request):
                      WHERE bp.id = e.period_id
                        AND e.tech_id = %s AND e.client_id = %s AND bp.period_key = %s
                        AND e.status <> 'void' AND e.ts_approved_at IS NULL
+                       AND e.submitted_at IS NOT NULL
                     RETURNING e.id""",
                     (who.get("agent_id"), tech_id, client_id, body.period_key))
             except pg_errors.RaiseException as e:

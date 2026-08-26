@@ -141,13 +141,19 @@ def list_entries(request: Request, client: str | None = None, status: str | None
             where.append("(c.name = %s OR c.id::text = %s)")
             args += [client, client]
         sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY e.started_at DESC LIMIT %s"
+        # the status filter runs in SQL, BEFORE the limit (audit: filtering
+        # the newest N rows in Python silently dropped older matches)
+        if status:
+            if status not in ("pending", "submitted", "approved", "locked", "void"):
+                raise HTTPException(422, "status must be pending, submitted, "
+                                         "approved, locked, or void")
+            sql = f"SELECT * FROM ({sql}) sub WHERE sub.status = %s"
+            args.append(status)
+        sql += " ORDER BY started_at DESC LIMIT %s"
         args.append(min(limit, 1000))
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, args)
             rows = cur.fetchall()
-        if status:
-            rows = [r for r in rows if r["status"] == status]
         # money visibility (audit): rates/amounts ship only with l_see_amounts
         if who["kind"] == "session" and "l_see_amounts" not in who["perms"]:
             for r in rows:

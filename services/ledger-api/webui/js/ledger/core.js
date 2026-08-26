@@ -7,8 +7,10 @@
    the views.
    ========================================================================== */
 
-const NOW = new Date();   /* one consistent "today" for period math */
-const CURRENCY = '$';
+let NOW = new Date();   /* one consistent "today" for period math — REFRESHED
+                           on every hydrate (audit: a const froze the current
+                           billing period in long-lived suite tabs) */
+const CUR_SYM = {USD:'$', EUR:'€', GBP:'£', CAD:'C$'};
 
 /* ------------------------------ escaping ------------------------------ */
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -37,7 +39,9 @@ function icon(p,cls){return `<svg class="${cls||''}" viewBox="0 0 24 24" fill="c
 /* ------------ helpers: time, money, periods ------------ */
 function iso(d){return new Date(d).toISOString()}
 function fmtHours(h){ return h.toFixed(2) }
-function fmtMoney(n){ return CURRENCY + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) }
+function fmtMoney(n){ /* the Settings currency finally does something (audit) */
+  const sym=CUR_SYM[(state.settings&&state.settings.currency)||'USD']||'$';
+  return sym + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) }
 function fmtTime(d){ return new Date(d).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false}) }
 function fmtDate(d){ return new Date(d).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}) }
 function fmtDateShort(d){ return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'}) }

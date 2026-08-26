@@ -285,13 +285,27 @@ function runExport(clientId,pk){
 
 function previewPayload(clientId,pk){
   const c=client(clientId);
+  const srv=PERIODS.find(p=>p.clientId===clientId && uiPeriodKey(p.key)===pk);
+  const show=(payload,sub,note)=>openModal(`<div class="modal-head"><h3>Odoo export payload</h3><p>${esc(c.name)} — ${sub}</p></div>
+    <div class="modal-body"><div class="note-body tape" style="font-size:12px;max-height:340px;overflow:auto">${esc(JSON.stringify(payload,null,2))}</div>
+    <div class="mini muted" style="margin-top:10px">${note}</div></div>
+    <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  if(srv && srv.status!=='open' && can('export')){
+    /* approved/exported: show the SERVER's payload — the one _export_payload
+       computes and mark-exported records; the old local recompute drifted
+       from what was actually recorded (audit) */
+    $fetch('/api/periods/'+srv.id+'/export-payload').then(async r=>{
+      if(!r.ok) return oops(await jshort(r));
+      show(await r.json(),'as computed and recorded server-side',
+        'This is the authoritative payload (<span class="tape">ledger.odoo_exports</span> records it at export). No connector posts to Odoo yet — that arrives with the connector build.');
+    });
+    return;
+  }
   const es=state.entries.filter(e=>e.clientId===clientId && entryPeriod(e).key===pk && e.status!=='void');
   const lines={}; es.forEach(e=>{const p=priced(e); if(!p.billable)return; const t=atype(e.typeId); const k=t.id; (lines[k]=lines[k]||{name:t.name,qty:0,price:p.rate}); lines[k].qty+=p.h;});
   const flatLines = projFlatLines(clientId, pk).map(fl=>({name:`${fl.project} — ${fl.label}`, quantity:1, price_unit:fl.amount, uom:'Fee'}));
-  const payload={ partner:c.name, client_id:c.id, journal:state.settings.odoo.journal, move_type:'out_invoice', state:state.settings.odoo.mode,
+  const payload={ partner:c.name, client_id:c.id, move_type:'out_invoice', state:'draft',
     invoice_line_ids:Object.values(lines).map(l=>({name:l.name,quantity:Number(l.qty.toFixed(2)),price_unit:l.price,uom:'Hours'})).concat(flatLines) };
-  openModal(`<div class="modal-head"><h3>Odoo export payload</h3><p>${esc(c.name)} — what the connector would send</p></div>
-    <div class="modal-body"><div class="note-body tape" style="font-size:12px;max-height:340px;overflow:auto">${esc(JSON.stringify(payload,null,2))}</div>
-    <div class="mini muted" style="margin-top:10px">This is the payload the export records server-side (<span class="tape">ledger.odoo_exports</span>). No connector posts to Odoo yet — that arrives with the connector build.</div></div>
-    <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Close</button></div>`);
+  show(payload,'local estimate (period still open)',
+    'Estimate only — the authoritative payload is computed server-side at export time and recorded in <span class="tape">ledger.odoo_exports</span>.');
 }

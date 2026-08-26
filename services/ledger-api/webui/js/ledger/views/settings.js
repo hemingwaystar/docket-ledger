@@ -30,15 +30,15 @@ function viewSettings(){
       <div class="card-pad" style="border-bottom:1px solid var(--line)">
         ${row('Retainers / block-hour agreements','Turn off if agreements are managed in Odoo — per-client configuration and burn-down disappear everywhere, but nothing is deleted.',
           `<button class="toggle ${state.settings.retainers.enabled?'on':''}" onclick="s_toggleRetainers()"></button>`)}
-        ${row('New types billable by default','When a new activity type appears, treat it as billable until reviewed.',
+        ${row('New types billable by default','Saved, not applied yet — new types currently arrive non-billable until reviewed here. Wiring ships with a later build.',
           `<button class="toggle ${s.defaultBillable?'on':''}" onclick="s_toggle('defaultBillable')"></button>`)}
       </div>
       <div class="card-pad">
-        ${field('Default billing cycle','New clients inherit this. Override per client on the Clients page.',
+        ${field('Default billing cycle','Saved, not applied yet — new clients currently start monthly; override per client on the Clients page.',
           `<select onchange="state.settings.defaultCycle=this.value;persistLedgerCfg()" style="text-transform:capitalize"><option ${s.defaultCycle==='weekly'?'selected':''}>weekly</option><option ${s.defaultCycle==='monthly'?'selected':''}>monthly</option></select>`)}
-        ${field('Hour display','Hours always show to two decimals (e.g. 1.00 h). Rounding policy applies at pricing.',
+        ${field('Hour display','Hours always show to two decimals (e.g. 1.00 h). Saved, not applied yet — pricing math is exact; rounding-at-pricing ships with a later build.',
           `<select onchange="state.settings.rounding=this.value;persistLedgerCfg()"><option value="none" ${s.rounding==='none'?'selected':''}>Exact (2 dp)</option><option value="6" ${s.rounding==='6'?'selected':''}>Nearest 6 min</option><option value="15" ${s.rounding==='15'?'selected':''}>Nearest 15 min</option></select>`)}
-        ${field('Currency','Used across the ledger and Odoo export.',
+        ${field('Currency','Symbol used across the ledger; rides the export payload as its currency field.',
           `<select onchange="state.settings.currency=this.value;persistLedgerCfg()"><option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option></select>`)}
       </div>
     </div>
@@ -64,7 +64,7 @@ function viewSettings(){
           const last=d.hist.length?d.hist[d.hist.length-1].from:null;
           return `<tr>
             <td><div class="cell-title">${esc(t.name)}</div></td>
-            <td class="num">${canSeeMoney()&&(can('approve')||can('export'))?`<input type="number" min="0" step="5" value="${d.rate!=null?d.rate:''}" placeholder="—" data-fkey="df-${t.id}" oninput="setDefaultRate('${t.id}',this.value)" style="width:110px;text-align:right">`:(canSeeMoney()&&d.rate!=null?`<span class="in-mono">${d.rate}</span>`:'<span class="muted">—</span>')}</td>
+            <td class="num">${canSeeMoney()&&(can('manage_types')||can('manage_settings'))?`<input type="number" min="0" step="5" value="${d.rate!=null?d.rate:''}" placeholder="—" data-fkey="df-${t.id}" oninput="setDefaultRate('${t.id}',this.value)" style="width:110px;text-align:right">`:(canSeeMoney()&&d.rate!=null?`<span class="in-mono">${d.rate}</span>`:'<span class="muted">—</span>')}</td>
             <td class="mini muted">${last?(last==='1970-01-01'?'always':fmtDate(last)):'—'}</td>
           </tr>`;}).join('')}</tbody></table>
     </div>

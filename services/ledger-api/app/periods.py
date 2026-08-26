@@ -68,6 +68,15 @@ def approve_period(period_id: str, body: PeriodApprove, request: Request):
             if not row:
                 raise HTTPException(422, "Unknown approver")
             aid, name = row
+            # lock the period row FIRST: the 0039 insert guard takes FOR
+            # SHARE on it, so any in-flight time INSERT commits (and is
+            # counted below) or waits behind this approval — an unclassified
+            # entry can no longer slip in between the count and the flip
+            cur.execute("SELECT status FROM ledger.billing_periods WHERE id = %s FOR UPDATE",
+                        (period_id,))
+            prow = cur.fetchone()
+            if prow is None or prow[0] != "open":
+                raise HTTPException(409, "Period missing or not open")
             cur.execute("""
                 SELECT count(*) FROM ledger.time_entries e
                   JOIN ledger.activity_types at ON at.id = e.activity_type_id

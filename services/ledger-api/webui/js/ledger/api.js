@@ -89,6 +89,7 @@ async function hydrate(){
     alert('Live sync failed ('+r.status+'): '+(d.detail||'server error')+' — check ledger-api logs.');
     return;
   }
+  NOW=new Date();   /* period math tracks the wall clock, not page load */
   mapIn(await r.json());
   state.hydrated=true;
   render();

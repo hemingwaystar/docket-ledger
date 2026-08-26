@@ -64,13 +64,23 @@ function setTypeRate(id,v,srcEl){
   if(nv === a.rate){ return; }
   const today = new Date(Date.now()).toISOString().slice(0,10);
   a.rateHist = a.rateHist||[];
-  if(!a.rateHist.length) a.rateHist.push({ from:'1970-01-01', rate:a.rate });   /* anchor: history before any change */
-  const last = a.rateHist[a.rateHist.length-1];
-  if(last.from===today) last.rate = nv;            /* same-day edits collapse into one row */
-  else a.rateHist.push({ from:today, rate:nv });
-  const was = a.rate; a.rate = nv;
-  log('Rate changed (effective-dated)', `${a.name}: ${fmtMoney(was)}/h → ${fmtMoney(nv)}/h effective ${today} — entries before today keep ${fmtMoney(was)}/h`, id);
-  toast(`${a.name}: ${fmtMoney(nv)}/h from today — history keeps its price.`);
+  const was = a.rate;
+  if(!a.rateHist.length){
+    /* FIRST-ever rate: the server anchors it at epoch on purpose (never
+       price pre-existing time at $0) — so ALL open history reprices to
+       this. The old message claimed the opposite (audit). */
+    a.rateHist.push({ from:'1970-01-01', rate:nv });
+    a.rate = nv;
+    log('Rate set (first ever)', `${a.name}: ${fmtMoney(nv)}/h across ALL history — the type was unpriced; every open entry reprices from $0`, id);
+    toast(`${a.name}: ${fmtMoney(nv)}/h — applies to all existing open time (was unpriced).`);
+  } else {
+    const last = a.rateHist[a.rateHist.length-1];
+    if(last.from===today) last.rate = nv;            /* same-day edits collapse into one row */
+    else a.rateHist.push({ from:today, rate:nv });
+    a.rate = nv;
+    log('Rate changed (effective-dated)', `${a.name}: ${fmtMoney(was)}/h → ${fmtMoney(nv)}/h effective ${today} — entries before today keep ${fmtMoney(was)}/h`, id);
+    toast(`${a.name}: ${fmtMoney(nv)}/h from today — history keeps its price.`);
+  }
   commitRender(srcEl);
   $fetch('/api/types/'+encodeURIComponent(id)+'/rate',{method:'PUT',
     headers:{'Content-Type':'application/json'},
