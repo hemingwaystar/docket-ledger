@@ -78,6 +78,9 @@ class PatchTicket(BaseModel):
     owner_email: str | None = None     # "" clears the owner
     group: str | None = None
     pending_until: str | None = None   # ISO; "" clears
+    cc: list[str] | None = None        # full-replace reply-CC list; [] clears
+                                       # (review: capture went live with no
+                                       # way to see or prune the list)
 
 
 @router.patch("/tickets/{ticket_id}")
@@ -93,7 +96,7 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
         if body.owner_email is not None:
             auth.need(who, 'edit_props', 'assign')
         if any(f is not None for f in (body.title, body.priority, body.contact,
-                                       body.group, body.pending_until)):
+                                       body.group, body.pending_until, body.cc)):
             auth.need(who, 'edit_props')
         with conn.cursor() as cur:
             row = helpers.ticket_or_404(cur, ticket_id)
@@ -144,6 +147,14 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                     aid, name = helpers.agent(cur, body.owner_email)
                     sets.append("owner_id = %s"); args.append(aid)
                     notes.append(f"owner → {name}")
+            if body.cc is not None:
+                norm = []
+                for a in body.cc:
+                    a = (a or "").strip().lower()
+                    if a and "@" in a and a not in norm:
+                        norm.append(a)
+                sets.append("cc = %s::text[]"); args.append(norm[:10])
+                notes.append(("cc → " + ", ".join(norm)) if norm else "cc cleared")
             if body.group is not None:
                 gid = helpers.group_id(cur, body.group)
                 sets.append("group_id = %s"); args.append(gid)

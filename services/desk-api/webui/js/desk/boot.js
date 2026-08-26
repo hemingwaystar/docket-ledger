@@ -33,4 +33,8 @@ hydrate(false);
    the transport layer. */
 window.addEventListener('unhandledrejection', ev=>{ ev.preventDefault();
   console.error('server mirror failed', ev.reason);
-  try{ oops(0); }catch(_e){} });
+  /* throttled + never re-raising: an unreachable API must produce ONE
+     alert per window, not a modal loop (review catch) */
+  if(window.__netAt && Date.now()-window.__netAt<10000) return;
+  window.__netAt=Date.now();
+  try{ Promise.resolve(oops(0)).catch(()=>{}); }catch(_e){} });

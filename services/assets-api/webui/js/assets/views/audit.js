@@ -16,7 +16,8 @@ function auditRowsSource(){
     const key=(f.from||'')+'|'+(f.to||'');
     if(_audKey!==key){
       _audKey=key; _audWin=null;
-      const qs=[f.from?'date_from='+f.from:'', f.to?'date_to='+f.to:''].filter(Boolean).join('&');
+      const qs=[f.from?'date_from='+f.from:'', f.to?'date_to='+f.to:'',
+                'tz_min='+new Date().getTimezoneOffset()].filter(Boolean).join('&');
       $fetch('/api/audit?'+qs).then(r=>r.ok?r.json():null)
         .then(d=>{ if(d&&_audKey===key){ _audWin=d.events||[]; render(); } })
         .catch(()=>{});

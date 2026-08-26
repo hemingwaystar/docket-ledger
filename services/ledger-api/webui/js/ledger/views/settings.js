@@ -39,7 +39,7 @@ function viewSettings(){
         ${field('Hour display','Hours always show to two decimals (e.g. 1.00 h). Saved, not applied yet — pricing math is exact; rounding-at-pricing ships with a later build.',
           `<select onchange="state.settings.rounding=this.value;persistLedgerCfg()"><option value="none" ${s.rounding==='none'?'selected':''}>Exact (2 dp)</option><option value="6" ${s.rounding==='6'?'selected':''}>Nearest 6 min</option><option value="15" ${s.rounding==='15'?'selected':''}>Nearest 15 min</option></select>`)}
         ${field('Currency','Symbol used across the ledger; rides the export payload as its currency field.',
-          `<select onchange="state.settings.currency=this.value;persistLedgerCfg()"><option>USD</option><option>EUR</option><option>GBP</option><option>CAD</option></select>`)}
+          `<select onchange="state.settings.currency=this.value;persistLedgerCfg()">${['USD','EUR','GBP','CAD'].map(x=>`<option ${s.currency===x?'selected':''}>${x}</option>`).join('')}</select>`)}
       </div>
     </div>
 

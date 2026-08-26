@@ -7,7 +7,7 @@ COPY webui/ ./webui/
 # --proxy-headers: honor X-Forwarded-Proto/For from the nginx front so
 # request.base_url (and OIDC's derived redirect URI) reflect https.
 # non-root (audit): an RCE in the Python stack must not be container-root.
-RUN useradd -r -u 10001 appuser
+RUN groupadd -r -g 10001 appuser && useradd -r -u 10001 -g appuser appuser
 USER appuser
 # trust X-Forwarded-* only from the proxy's network (audit: '*' let any
 # direct-port caller forge the audited sign-in IP); compose sets the range.

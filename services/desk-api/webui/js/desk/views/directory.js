@@ -120,6 +120,12 @@ function authModal(tid, temp, enroll){
           <input type="text" id="mfaCode" inputmode="numeric" placeholder="6-digit code" style="width:140px">
           <button class="btn sm primary" onclick="mfaConfirmSelf('${a.id}')">Confirm</button></div>`:''}
       </div>
+      <div class="field" style="margin-top:14px"><label>Entra (SSO) binding</label>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span class="mini muted" style="flex:1">If this person's Entra identity changed (tenant migration, offboard/rehire), clear the stale binding — their next SSO sign-in re-binds the new one.</span>
+          <button class="btn sm" onclick="entraUnbind('${a.id}')">Unbind Entra ID</button>
+        </div>
+      </div>
     </div>
     <div class="modal-foot"><span class="mini muted" style="margin-right:auto">MFA policy is “${esc(AUTH_CFG.mfa||'optional')}” — change it in Settings → Authentication.</span><button class="btn ghost" onclick="closeModal()">Close</button></div>`;
   document.getElementById('scrim').classList.add('open');
@@ -128,6 +134,16 @@ function authModal(tid, temp, enroll){
 /* ---- credential resets (admin-direct, §10.16) ----------------------------
    The server mints the temp password, revokes sessions and sets must-change;
    the response is the ONLY place the password ever appears — no email. */
+function entraUnbind(tid){
+  if(!can('manage_roles')) return;
+  const a=agent(tid); if(!a) return;
+  if(!confirm(`Clear ${a.name}'s Entra binding? Their next SSO sign-in with ${a.email} re-binds the new identity. Local password/MFA are untouched.`)) return;
+  $fetch('/auth/admin/unbind-entra',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({email:a.email})})
+    .then(async r=>{ const d=await r.json().catch(()=>({}));
+      if(!r.ok) return oops(d);
+      toast('Entra binding cleared — next SSO sign-in re-binds.'); });
+}
 function pwReset(tid){
   const a = agent(tid); if(!a) return;
   $fetch('/auth/admin/set-password',{method:'POST',

@@ -682,6 +682,9 @@ function renderProps(t){
       <div class="prop"><div class="pk">Tags</div>
         <div class="tagrow">${t.tags.map((tag,i)=>`<span class="chip tagchip">${esc(tag)}${can('edit_props')?`<button onclick="rmTag(${t.id},${i})" title="remove">×</button>`:''}</span>`).join('')}
         ${can('edit_props')?`<button class="tagadd" onclick="addTag(${t.id})">+ tag</button>`:''}</div></div>
+      ${(t.cc&&t.cc.length)||can('edit_props')?`<div class="prop"><div class="pk">Reply CC</div>
+        <div class="tagrow">${(t.cc||[]).map((a,i)=>`<span class="chip tagchip" title="CC'd on every agent reply">${esc(a)}${can('edit_props')?`<button onclick="rmCc(${t.id},${i})" title="stop copying">×</button>`:''}</span>`).join('')||'<span class="mini muted">no one — inbound To/Cc parties land here</span>'}
+        ${can('edit_props')?`<button class="tagadd" onclick="addCc(${t.id})">+ cc</button>`:''}</div></div>`:''}
       <div class="prop"><div class="pk">Service level</div>
         ${s? `<div class="sla-line ${s.breached?'breach-sla':(s.due-nowMs()<2*H?'due-sla':'ok-sla')}"><span class="sdot"></span>${s.kind} due · ${fmtIn(s.due)}</div>
               <div class="mini muted" style="margin-top:3px">${prio(t.prio).label}: first response ${SLA[t.prio].fr}h · resolution ${SLA[t.prio].res}h</div>`

@@ -136,7 +136,7 @@ function viewClient(){
         <span class="mini muted">${c.useDefaults?'billable types with no client rate price at the Settings defaults — toggle individual types below':'off — this client prices only from its own rates and the type base rates'}</span>
       </div>
       <table class="tbl">
-        <thead><tr><th>Activity type</th><th>Billable (this client)</th><th class="num">Rate ($/h)</th><th>Effective from</th></tr></thead>
+        <thead><tr><th>Activity type</th><th>Billable (this client)</th><th class="num">Rate ($/h)</th><th>Rate source</th></tr></thead>
         <tbody>${typeRows}</tbody></table>
       <div class="mini muted" style="margin-top:10px">Rate resolution: <b>per-type override</b> → <b>client default rate</b> → <b>global default</b> (when switched on) → <b>activity-type rate</b>. Overrides only change <b>open</b> entries; locked periods never re-price.</div>
     </div>

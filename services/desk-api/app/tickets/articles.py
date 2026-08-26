@@ -128,6 +128,12 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 except pg_errors.RaiseException as e:   # 0039 insert guard: period closed
                     raise HTTPException(409, e.diag.message_primary or "Billing period is closed")
                 entry_id, hours = cur.fetchone()
+            # KNOWN TRADEOFF (reviewed, accepted): the ride-along time INSERT
+            # above holds a FOR SHARE on the billing-period row (0039) across
+            # this Graph call — a slow send can stall a concurrent period
+            # approval for up to the 30s timeout. Rare (reply+time+approve
+            # colliding), and the alternative re-opens the mail-before-record
+            # hazard this ordering exists to close.
             # the EXTERNAL send runs LAST (audit): every fallible DB statement
             # is already in — a failure before this point rolls back with no
             # customer email out the door, and a send failure rolls everything
@@ -162,6 +168,9 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 sys_article(cur, ticket_id, who, f"Internal note added — “{snippet}”")
             else:
                 head = f"Public reply sent to {mail_to}" if sent else f"Public reply recorded (to {mail_to})"
+                if sent and cc_list:
+                    # the CC recipients are part of what happened — say so
+                    head += f" (cc {', '.join(cc_list)})"
                 sys_article(cur, ticket_id, who, f"{head} — “{snippet}”")
             cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
         detail = f"#{ticket_id} · {body.kind} by {author_name}"

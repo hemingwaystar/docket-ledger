@@ -1,4 +1,4 @@
-"""Shared DB helper: pooled connections, per-transaction actor for audit."""
+"""Shared DB helper: one connection per request (no pool), per-transaction actor for audit."""
 import os, pathlib
 import psycopg
 

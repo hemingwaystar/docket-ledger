@@ -928,6 +928,33 @@ function addTag(tid){
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({add,remove:[]})}).then(tagSynced(t));
 }
+/* reply-CC list — visible + editable (review: capture went live with no way
+   to see or prune it; agents were copying recipients they couldn't control) */
+function _ccPatch(t, next){
+  $fetch('/api/tickets/'+t.id,{method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({version:t.version, cc:next})})
+    .then(async r=>{ const d=await r.json().catch(()=>({}));
+      if(!r.ok) return oops(d);
+      if(d.version){ t.version=d.version; t.updatedAt=d.updatedAt||nowMs(); } });
+}
+function addCc(tid){
+  if(!can('edit_props')||projLocked(tk(tid))) return;
+  const t=tk(tid);
+  const v=(prompt('Address to CC on every agent reply:')||'').trim().toLowerCase();
+  if(!v||v.indexOf('@')<1) return;
+  const next=[...new Set([...(t.cc||[]), v])];
+  if(next.length===(t.cc||[]).length) return;
+  t.cc=next; log('Reply CC added',`#${t.id} · ${v}`); render();
+  _ccPatch(t, next);
+}
+function rmCc(tid,i){
+  if(!can('edit_props')||projLocked(tk(tid))) return;
+  const t=tk(tid); const gone=(t.cc||[])[i]; if(!gone) return;
+  const next=(t.cc||[]).filter((_,x)=>x!==i);
+  t.cc=next; log('Reply CC removed',`#${t.id} · ${gone}`); render();
+  _ccPatch(t, next);
+}
 function rmTag(tid,i){
   if(!can('edit_props')||projLocked(tk(tid))) return;
   const t=tk(tid); const before=t.tags.slice(); const gone=t.tags[i];

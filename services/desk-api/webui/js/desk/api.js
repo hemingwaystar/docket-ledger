@@ -202,7 +202,16 @@ function mapIn(d){
 }
 
 async function hydrate(keepView){
-  const r=await $fetch('/api/bootstrap');
+  let r;
+  try{ r=await $fetch('/api/bootstrap'); }
+  catch(err){
+    /* transport failure must RESOLVE, never reject (review catch: the
+       unhandledrejection net + a rejecting hydrate looped alerts forever
+       while desk-api restarted). Ledger/assets already guard this way. */
+    document.title='⚠ LIVE SYNC FAILED — Docket';
+    console.error('bootstrap unreachable', err);
+    return;
+  }
   if(r.status===401){ location.href='login.html'; return; }
   if(!r.ok){
     const d=await r.json().catch(()=>({}));

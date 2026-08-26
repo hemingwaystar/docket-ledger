@@ -19,8 +19,15 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   fi
   echo "DEPLOY_FORCE=1 — discarding local changes."
 fi
-git restore .
+git restore --staged --worktree .   # staged AND worktree — the force path's
+                                    # promise must match the action (review)
 git pull
+# non-root containers (uid/gid 10001) read the file-mounted secrets: compose
+# bind-mounts them with HOST ownership, so 0600 root-owned files would take
+# the whole suite down on the next up (review catch). Group-readable to the
+# containers' fixed gid, nothing wider.
+sudo chgrp 10001 secrets/* 2>/dev/null || true
+sudo chmod 640 secrets/* 2>/dev/null || true
 # build FIRST, then migrate, then swap containers (audit): migrating before
 # the minutes-long build left OLD code serving the NEW schema for the whole
 # build. Building first shrinks that window to the container swap.

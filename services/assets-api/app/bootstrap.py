@@ -180,14 +180,19 @@ def entity_events(request: Request, entity_id: str, limit: int = 300):
 
 @router.get("/api/audit")
 def audit_window(request: Request, date_from: str | None = None,
-                 date_to: str | None = None, limit: int = 1000):
+                 date_to: str | None = None, limit: int = 1000,
+                 tz_min: int = 0):
     """Audit rows for a DATE WINDOW — the view's from/to filters query this
     instead of silently filtering the newest-200 bootstrap tail (audit
-    finding). Dates are YYYY-MM-DD, inclusive."""
+    finding). Dates are YYYY-MM-DD, inclusive, in the CALLER's local day —
+    tz_min is JS getTimezoneOffset() (minutes WEST of UTC), so a
+    US-Eastern evening row on the 'to' date stays in the window (review)."""
     import re as _re
     for v in (date_from, date_to):
         if v is not None and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
             raise HTTPException(422, "dates must be YYYY-MM-DD")
+    if not -900 <= tz_min <= 900:
+        raise HTTPException(422, "tz_min out of range")
     with db.connect() as conn:
         who = auth.require(conn, request)
         if who["kind"] != "session":
@@ -196,11 +201,11 @@ def audit_window(request: Request, date_from: str | None = None,
         ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
         where, args = ["e.app IN ('assets', 'auth')"], []
         if date_from:
-            where.append("e.at >= %s::date")
-            args.append(date_from)
+            where.append("e.at >= %s::date + make_interval(mins => %s)")
+            args += [date_from, tz_min]
         if date_to:
-            where.append("e.at < %s::date + interval '1 day'")
-            args.append(date_to)
+            where.append("e.at < %s::date + interval '1 day' + make_interval(mins => %s)")
+            args += [date_to, tz_min]
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(f"""SELECT e.at, COALESCE(a.name, e.actor) AS who, e.action,
                                   e.entity, e.detail

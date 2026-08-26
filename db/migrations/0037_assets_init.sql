@@ -12,7 +12,9 @@
 --     with 'assets' or no assets permission row / audit row can ever land.
 --   * Terms are TYPED, not vendor presets (user decision 2026-08-20):
 --     term_months 1..120 (monthly=1, 3-yr=36...) + recurring flag. cost_cents
---     is per TERM, billed up front at term start — never amortized. Build 29
+--     LICENCES: per SEAT per term as of Build 27e (this file predates that
+--     — a Build 29 implementer must post unit_cost × seats). CONTRACTS: per
+--     TERM, billed up front at term start — never amortized. Build 29
 --     posts these to ledger.cost_lines; Build 30 raises lapse tickets 60d
 --     before non-recurring terms / warranties end (config seeded here).
 --   * assets.asset_events is the per-entity attributed event feed — Docket's
@@ -93,7 +95,7 @@ CREATE TABLE IF NOT EXISTS assets.licenses (
   recurring       boolean NOT NULL DEFAULT false,       -- auto-renews at term end (Build 30 advances it)
   term_started_on date NOT NULL DEFAULT current_date
                     CHECK (term_started_on > '2000-01-01' AND term_started_on < '2100-01-01'),
-  cost_cents      integer NOT NULL DEFAULT 0 CHECK (cost_cents >= 0),  -- per TERM, billed up front
+  cost_cents      integer NOT NULL DEFAULT 0 CHECK (cost_cents >= 0),  -- per SEAT per term as of 27e (was per-term when written)
   note            text NOT NULL DEFAULT '',
   archived_at     timestamptz,
   version         integer NOT NULL DEFAULT 1,

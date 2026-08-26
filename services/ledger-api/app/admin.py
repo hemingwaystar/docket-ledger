@@ -224,16 +224,24 @@ def put_type_rate(type_id: str, body: TypeRate, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "l_manage_types")
         with conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM ledger.activity_type_rates "
-                        "WHERE activity_type_id = %s AND rate_cents <> 0)", (type_id,))
+            # a REAL rate row is any nonzero rate, or a rate-only row (this
+            # endpoint writes billable NULL) — which is how a DELIBERATE $0
+            # rate differs from patch_type's billable-flip placeholders
+            # (rate 0 + billable set). Review catch: keying on rate<>0 alone
+            # would have silently repriced months of intentional $0 history.
+            cur.execute("""SELECT EXISTS (SELECT 1 FROM ledger.activity_type_rates
+                            WHERE activity_type_id = %s
+                              AND (rate_cents <> 0 OR billable IS NULL))""",
+                        (type_id,))
             (has_rows,) = cur.fetchone()
             if not has_rows:
-                # billable-flip placeholders (rate 0) must not shadow the
-                # first real rate from today onward — repair them in place
-                # (their billable flags stay untouched)
+                # billable-flip placeholders must not shadow the first real
+                # rate from today onward — repair them in place (their
+                # billable flags stay untouched)
                 cur.execute("""UPDATE ledger.activity_type_rates
                                   SET rate_cents = %s
-                                WHERE activity_type_id = %s AND rate_cents = 0""",
+                                WHERE activity_type_id = %s
+                                  AND rate_cents = 0 AND billable IS NOT NULL""",
                             (body.rate_cents, type_id))
             cur.execute("""INSERT INTO ledger.activity_type_rates
                              (activity_type_id, valid_from, rate_cents)

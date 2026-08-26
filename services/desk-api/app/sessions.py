@@ -265,18 +265,31 @@ def put_prefs(body: dict, request: Request):
         who = auth.require(conn, request)
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
+        key = f"uprefs:{who['agent_id']}"
         with conn.cursor() as cur:
+            # FOR UPDATE serializes concurrent tabs, the merge happens here,
+            # and the CAP bounds the MERGED object (review catch: bounding
+            # only the fragment let the stored prefs grow without limit)
+            cur.execute("SELECT value FROM shared.app_config WHERE key = %s FOR UPDATE",
+                        (key,))
+            row = cur.fetchone()
+            current = row[0] if row and isinstance(row[0], dict) else {}
+            merged = dict(current)
+            for k, v in body.items():
+                if v is None:
+                    merged.pop(k, None)
+                else:
+                    merged[k] = v
+            if len(json.dumps(merged).encode()) > PREFS_CAP:
+                raise HTTPException(413, "Prefs object exceeds the 16 KB cap")
             cur.execute("""INSERT INTO shared.app_config (key, value)
                            VALUES (%s, %s)
                            ON CONFLICT (key) DO UPDATE
-                             SET value = jsonb_strip_nulls(shared.app_config.value
-                                                           || EXCLUDED.value),
+                             SET value = EXCLUDED.value,
                                  updated_at = now(),
                                  updated_by = shared.current_actor(),
-                                 version = shared.app_config.version + 1
-                           RETURNING value""",
-                        (f"uprefs:{who['agent_id']}", raw))
-            (merged,) = cur.fetchone()
+                                 version = shared.app_config.version + 1""",
+                        (key, json.dumps(merged)))
         return {"ok": True, "prefs": merged}
 
 
@@ -453,6 +466,27 @@ def admin_set_password(body: AdminTarget, request: Request):
                    f"{name} — temp password issued in-app, must change, NO email sent "
                    f"— by {who['actor']}")
         return {"temp_password": temp, "note": "Shown once. Sessions revoked."}
+
+
+@router.post("/admin/unbind-entra")
+def admin_unbind_entra(body: AdminTarget, request: Request):
+    """Clear a stale Entra binding (review catch: the unbound-only SSO match
+    is safe, but an oid change — tenant migration, offboard/rehire — left
+    the agent locked out of SSO with no product-level recovery). The next
+    SSO sign-in with a matching email re-binds the new oid, audited."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_roles")
+        with conn.cursor() as cur:
+            aid, name = helpers.agent(cur, body.email)
+            cur.execute("""UPDATE shared.agents SET entra_object_id = NULL
+                            WHERE id = %s AND entra_object_id IS NOT NULL
+                           RETURNING id""", (aid,))
+            if cur.fetchone() is None:
+                raise HTTPException(409, "No Entra identity is bound to that agent")
+        auth.audit(conn, "auth", "Entra binding cleared", f"agent:{aid}",
+                   f"{name} — next SSO sign-in re-binds ({who['actor']})")
+        return {"ok": True, "note": "Next SSO sign-in with this email re-binds."}
 
 
 @router.post("/admin/reset-mfa")

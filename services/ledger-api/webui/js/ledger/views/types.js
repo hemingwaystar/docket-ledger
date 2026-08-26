@@ -65,11 +65,15 @@ function setTypeRate(id,v,srcEl){
   const today = new Date(Date.now()).toISOString().slice(0,10);
   a.rateHist = a.rateHist||[];
   const was = a.rate;
-  if(!a.rateHist.length){
+  /* 'unpriced' mirrors the server: no history at all, OR only the 0-cent
+     placeholder rows a billable flip writes (review catch: keying on
+     length alone made the message claim the opposite of the repricing) */
+  if(!a.rateHist.some(r=>r.rate>0)){
     /* FIRST-ever rate: the server anchors it at epoch on purpose (never
        price pre-existing time at $0) — so ALL open history reprices to
-       this. The old message claimed the opposite (audit). */
-    a.rateHist.push({ from:'1970-01-01', rate:nv });
+       this. The old message claimed the opposite (audit). Placeholder
+       0-cent rows are repaired server-side; mirror that locally. */
+    a.rateHist = [{ from:'1970-01-01', rate:nv }];
     a.rate = nv;
     log('Rate set (first ever)', `${a.name}: ${fmtMoney(nv)}/h across ALL history — the type was unpriced; every open entry reprices from $0`, id);
     toast(`${a.name}: ${fmtMoney(nv)}/h — applies to all existing open time (was unpriced).`);

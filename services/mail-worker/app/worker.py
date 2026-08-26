@@ -214,19 +214,22 @@ def find_thread(cur, msg):
     return None
 
 
-def _cc_addresses(msg, mailbox_address: str) -> list[str]:
+def _cc_addresses(msg, mailbox) -> list[str]:
     """Everyone ELSE on the inbound To/Cc lines — the people who expect to
     stay in the loop (audit: desk.tickets.cc was never written, so agent
-    replies silently CC'd no one). Our own mailbox and the sender drop out;
+    replies silently CC'd no one). ALL of our own mailboxes drop out (review
+    catch: filtering only the ingesting box turned To: support@ Cc: billing@
+    into a permanent internal-address CC on every reply), plus the sender;
     capped for sanity."""
-    box = (mailbox_address or "").lower()
+    owned = {a for a in (mailbox.get("owned") or [mailbox["address"]]) if a}
+    owned = {a.lower() for a in owned}
     sender = (((msg.get("from") or {}).get("emailAddress")) or {}).get("address", "")
     sender = (sender or "").lower()
     out = []
     for key in ("toRecipients", "ccRecipients"):
         for r in msg.get(key) or []:
             a = _clean(((r or {}).get("emailAddress") or {}).get("address", "")).strip().lower()
-            if a and a != box and a != sender and a not in out:
+            if a and a not in owned and a != sender and a not in out:
                 out.append(a)
     return out[:10]
 
@@ -236,7 +239,7 @@ def ingest_message(conn, mailbox, msg, token=None) -> str:
     sender = _clean((((msg.get("from") or {}).get("emailAddress")) or {}).get("address", ""))
     subject = _clean(msg.get("subject") or "").strip() or "(no subject)"
     auto = is_auto_mail(msg)
-    ccs = _cc_addresses(msg, mailbox["address"])
+    ccs = _cc_addresses(msg, mailbox)
     with conn.cursor() as cur:
         if mid:
             cur.execute("SELECT 1 FROM desk.articles WHERE message_id = %s", (mid,))
@@ -483,6 +486,13 @@ def poll_all(conn):
                          FROM desk.mailboxes WHERE NOT paused""")
         boxes = [{"id": r[0], "address": r[1], "group_id": r[2],
                   "default_priority_id": r[3]} for r in cur.fetchall()]
+    # every suite mailbox, paused included — the CC harvest must exclude ALL
+    # of our own addresses, not just the ingesting one (review catch)
+    with conn.cursor() as cur:
+        cur.execute("SELECT address FROM desk.mailboxes")
+        owned = [r[0] for r in cur.fetchall()]
+    for mb in boxes:
+        mb["owned"] = owned
     for mb in boxes:
         # savepoint per MAILBOX: anything escaping the per-message fence
         # (delta-link upsert, cursor reads) must not leave the shared tx

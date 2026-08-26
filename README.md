@@ -1,14 +1,16 @@
 # Hemingway Suite — Backend
 
-Docket (helpdesk) + Ledger (time & billing) over **one shared PostgreSQL**,
-deployed with Docker Compose behind a **host nginx** that owns TLS + HSTS.
-Everything below the proxy is loopback-only.
+Docket (helpdesk) + Ledger (time & billing) + Assets (ITAM) over **one
+shared PostgreSQL**, deployed with Docker Compose behind a **host nginx**
+that owns TLS + HSTS. Everything below the proxy is loopback-only.
 
 ```
  internet ──► host nginx (443, HSTS) ──► 127.0.0.1:8081  desk-api
                                      ──► 127.0.0.1:8082  ledger-api
+                                     ──► 127.0.0.1:8083  assets-api
               docker network "internal":  postgres ◄── desk-api / ledger-api /
-                                          mail-worker / migrate / db-backup
+                                          assets-api / mail-worker /
+                                          migrate / db-backup
 ```
 
 ## Segmentation (the point of the layout)
@@ -16,7 +18,7 @@ Everything below the proxy is loopback-only.
 | Layer | Boundary |
 |---|---|
 | Schemas | `shared` (directory/auth/config) · `desk` · `ledger` · `audit` (append-only) |
-| DB roles | `desk_api`, `ledger_api`, `mail_worker`, `assets_api` — least-privilege grants in `0001_init.sql` + `0037_assets_init.sql`; **DELETE granted nowhere** |
+| DB roles | `desk_api`, `ledger_api`, `mail_worker`, `assets_api` — least-privilege grants in `0001_init.sql` + `0037_assets_init.sql`; DELETE granted only where doctrine allows (staged-upload sweep, membership joins, auth throttle rows) |
 | Services | one container each; only the three APIs publish ports, loopback-only |
 | Secrets | app credentials envelope-encrypted in `shared.secrets`, unwrapped by the file-mounted KEK (`secrets/README.md`); desk-api, ledger-api (Odoo secret) and mail-worker mount it — assets-api never does |
 | Invariants | immutability, sentinels, state machines = **database triggers**, not API convention |
@@ -27,7 +29,7 @@ Everything below the proxy is loopback-only.
 cd secrets
 for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password pg_assets_api_password kek; do
   openssl rand -base64 32 | tr -d '\n' > "$f"
-  chmod 600 "$f"
+  chmod 640 "$f"; sudo chgrp 10001 "$f"   # group = the containers' non-root gid
 done
 cd .. && docker compose up -d --build
 docker compose logs migrate      # expect "apply 0001..., apply 0002..., migrations complete"
@@ -117,8 +119,8 @@ sudo docker-compose up -d --build desk-api ledger-api
 sudo docker compose exec desk-api python -m app.bootstrap you@yourdomain.com "Your Name"
 # open http://127.0.0.1:8081/ui/ (or via SSH tunnel), sign in, change the temp password
 ```
-NOTE: the session cookie ships with secure=False so it works pre-TLS; flip it
-in app/sessions.py when the nginx HTTPS front goes live.
+NOTE: the session cookie is Secure by DEFAULT now (audit builds). On a box
+with no TLS front yet, set `COOKIE_SECURE=false` in `.env` explicitly.
 
 Settings + Graph ingestion (this drop): /api/settings — app_config CRUD,
 WRITE-ONLY secrets api (envelope-encrypted under the KEK; metadata out,
