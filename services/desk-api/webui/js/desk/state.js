@@ -137,6 +137,7 @@ const TRIG_EVENTS = [
   { id:'state',    label:'State changed to …' },
   { id:'priority', label:'Priority changed' },
   { id:'owner',    label:'Owner assigned' },
+  { id:'assignee', label:'Assignees changed' },   /* 0044 (audit) */
 ];
 /* RBAC — same model as Ledger: a permission matrix assigned per role.
    Docket is the source of truth for roles; Ledger reads the same tables. */

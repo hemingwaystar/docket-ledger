@@ -223,7 +223,8 @@ def bootstrap(request: Request, limit: int = 500):
                              t.created_at, t.updated_at, t.version,
                              EXISTS (SELECT 1 FROM desk.articles fr
                                       WHERE fr.ticket_id = t.id AND fr.kind = 'reply'
-                                        AND NOT fr.is_auto) AS fr_met,
+                                        AND NOT fr.is_auto
+                                        AND fr.deleted_at IS NULL) AS fr_met,
                              COALESCE((SELECT array_agg(tag ORDER BY tag)
                                         FROM desk.ticket_tags tt WHERE tt.ticket_id = t.id), '{{}}') AS tags
                              FROM desk.tickets t

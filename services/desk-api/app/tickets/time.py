@@ -38,10 +38,12 @@ def add_time(ticket_id: int, body: NewTime, request: Request):
             if body.article_id:
                 cur.execute("""SELECT 1 FROM desk.articles
                                 WHERE id = %s AND ticket_id = %s
-                                  AND kind IN ('note', 'reply')""",
+                                  AND kind IN ('note', 'reply')
+                                  AND deleted_at IS NULL""",
                             (body.article_id, ticket_id))
                 if cur.fetchone() is None:
-                    raise HTTPException(422, "Article not on this ticket (or not a note/reply)")
+                    raise HTTPException(422, "Article not on this ticket "
+                                             "(or not a live note/reply)")
             try:
                 cur.execute("""INSERT INTO ledger.time_entries
                                  (ticket_id, task_id, client_id, tech_id, activity_type_id,

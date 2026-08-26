@@ -74,6 +74,9 @@ def wake_pending(conn) -> int:
             cur.execute("""INSERT INTO audit.events (app, action, entity, detail)
                            VALUES ('mail', 'Pending wake', %s, 'reopened by the scheduler')""",
                         (f"ticket:{tid}",))
+            # 'State changed to Open' triggers fire on automatic reopens too
+            # (audit: only manual changes emitted a state event)
+            automations.enqueue(cur, "state", tid, {"auto": False})
     return len(woken)
 
 
@@ -184,9 +187,20 @@ def is_auto_mail(msg) -> bool:
 def find_thread(cur, msg):
     m = SUBJECT_REF.search(msg.get("subject") or "")
     if m:
-        cur.execute("SELECT id FROM desk.tickets WHERE id = %s", (int(m.group(1)),))
-        if cur.fetchone():
-            return int(m.group(1))
+        # follow merges (audit): a reply quoting the OLD [#id] must land on
+        # the merge target, not reopen the closed stub. Depth-capped walk.
+        cur.execute("""WITH RECURSIVE f AS (
+                         SELECT id, merged_into_id, 0 AS d
+                           FROM desk.tickets WHERE id = %s
+                         UNION ALL
+                         SELECT t.id, t.merged_into_id, f.d + 1
+                           FROM desk.tickets t JOIN f ON t.id = f.merged_into_id
+                          WHERE f.d < 10)
+                       SELECT id FROM f WHERE merged_into_id IS NULL LIMIT 1""",
+                    (int(m.group(1)),))
+        row = cur.fetchone()
+        if row:
+            return row[0]
     for h in msg.get("internetMessageHeaders") or []:
         if h.get("name", "").lower() in ("in-reply-to", "references"):
             for ref in _clean(h.get("value", "")).split():
@@ -198,11 +212,29 @@ def find_thread(cur, msg):
     return None
 
 
+def _cc_addresses(msg, mailbox_address: str) -> list[str]:
+    """Everyone ELSE on the inbound To/Cc lines — the people who expect to
+    stay in the loop (audit: desk.tickets.cc was never written, so agent
+    replies silently CC'd no one). Our own mailbox and the sender drop out;
+    capped for sanity."""
+    box = (mailbox_address or "").lower()
+    sender = (((msg.get("from") or {}).get("emailAddress")) or {}).get("address", "")
+    sender = (sender or "").lower()
+    out = []
+    for key in ("toRecipients", "ccRecipients"):
+        for r in msg.get(key) or []:
+            a = _clean(((r or {}).get("emailAddress") or {}).get("address", "")).strip().lower()
+            if a and a != box and a != sender and a not in out:
+                out.append(a)
+    return out[:10]
+
+
 def ingest_message(conn, mailbox, msg, token=None) -> str:
     mid = _clean(msg.get("internetMessageId"))
     sender = _clean((((msg.get("from") or {}).get("emailAddress")) or {}).get("address", ""))
     subject = _clean(msg.get("subject") or "").strip() or "(no subject)"
     auto = is_auto_mail(msg)
+    ccs = _cc_addresses(msg, mailbox["address"])
     with conn.cursor() as cur:
         if mid:
             cur.execute("SELECT 1 FROM desk.articles WHERE message_id = %s", (mid,))
@@ -232,14 +264,20 @@ def ingest_message(conn, mailbox, msg, token=None) -> str:
                          f"#{ticket_id} “{subject[:80]}” from {sender}"
                          + (" — unrouted" if unrouted else "")))
         cur.execute("""INSERT INTO desk.articles
-                         (ticket_id, kind, author, mail_from, mail_to, message_id,
-                          body, body_html, is_auto, sent_at)
-                       VALUES (%s, 'mail_in', %s, %s, %s, %s, %s, %s, %s,
+                         (ticket_id, kind, author, mail_from, mail_to, mail_cc,
+                          message_id, body, body_html, is_auto, sent_at)
+                       VALUES (%s, 'mail_in', %s, %s, %s, %s::text[], %s, %s, %s, %s,
                                COALESCE(%s, now())) RETURNING id""",
-                    (ticket_id, sender or "unknown", sender, mailbox["address"], mid,
-                     body_text(msg), body_html(msg), auto,
+                    (ticket_id, sender or "unknown", sender, mailbox["address"],
+                     ccs, mid, body_text(msg), body_html(msg), auto,
                      msg.get("receivedDateTime")))
         (article_id,) = cur.fetchone()
+        if ccs and not auto:
+            # the ticket's CC set feeds agent replies (articles.py reads t.cc)
+            cur.execute("""UPDATE desk.tickets t
+                              SET cc = (SELECT array(SELECT DISTINCT x
+                                          FROM unnest(t.cc || %s::text[]) x))
+                            WHERE t.id = %s""", (ccs, ticket_id))
         if msg.get("hasAttachments") and token:
             ingest_attachments(cur, mailbox["address"], msg.get("id"),
                                article_id, token)
@@ -259,6 +297,9 @@ def ingest_message(conn, mailbox, msg, token=None) -> str:
                                VALUES (%s, 'sys', 'Automation',
                                        'Reopened — customer replied on a closed ticket', true)""",
                             (ticket_id,))
+                # the reopen IS a state change — 'state → Open' triggers see it
+                # (audit; the followup event alone never matched them)
+                automations.enqueue(cur, "state", ticket_id, {"auto": auto})
         cur.execute("UPDATE desk.tickets SET updated_at = now() WHERE id = %s", (ticket_id,))
     # automations: rules run on EVERY inbound message (top to bottom, later
     # rules see earlier changes), then the matching trigger event is queued.
@@ -346,8 +387,8 @@ def sweep_staged_uploads(conn) -> int:
 
 
 def poll_mailbox(conn, token, mailbox) -> dict:
-    select = ("subject,from,receivedDateTime,body,bodyPreview,"
-              "internetMessageId,internetMessageHeaders,hasAttachments")
+    select = ("subject,from,toRecipients,ccRecipients,receivedDateTime,body,"
+              "bodyPreview,internetMessageId,internetMessageHeaders,hasAttachments")
     with conn.cursor() as cur:
         cur.execute("SELECT delta_link FROM desk.graph_subscriptions WHERE mailbox_id = %s",
                     (mailbox["id"],))

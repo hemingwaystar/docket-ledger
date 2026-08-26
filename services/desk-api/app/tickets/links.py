@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Literal
 from .. import auth, db, helpers
-from .common import emit_event, live_parent_of, sys_note
+from .common import emit_event, live_parent_of, sys_article, sys_note
 
 router = APIRouter(prefix="/api")
 
@@ -147,12 +147,28 @@ def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
                 raise HTTPException(409, "Version conflict — re-read the ticket and retry")
             emit_event(cur, "state", ticket_id)
             for cid in kids:
+                # locked-project children are IMMUTABLE (the 423 doctrine the
+                # parent already honors) — skip them with a visible trace
+                # instead of force-closing past the guard (audit)
+                crow = helpers.ticket_or_404(cur, cid)
+                try:
+                    helpers.refuse_if_locked_project(crow)
+                except HTTPException:
+                    sys_note(cur, cid, f"Left open — approved locked project; "
+                                       f"not closed with parent #{ticket_id}")
+                    auth.audit(conn, "desk", "Cascade close skipped",
+                               f"ticket:{cid}",
+                               f"#{cid} · approved locked project kept open "
+                               f"(parent #{ticket_id}, {who['label']})")
+                    continue
                 # pending cleared like every close path (merge.py invariant) —
                 # a cascade-closed on-hold child must not be worker-reopened
                 cur.execute("""UPDATE desk.tickets SET state_id = %s,
                                       pending_until = NULL WHERE id = %s""",
                             (ccid, cid))
-                sys_note(cur, cid, f"Closed with parent #{ticket_id} ({body.state})")
+                # attributed (build 24 convention): the Audit block names WHO
+                # closed the parent, not a bare 'Automation'
+                sys_article(cur, cid, who, f"Closed with parent #{ticket_id} ({body.state})")
                 emit_event(cur, "state", cid)
                 auth.audit(conn, "desk", "Ticket closed by parent cascade",
                            f"ticket:{cid}", f"#{cid} · parent #{ticket_id} ({who['label']})")

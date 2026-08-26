@@ -13,7 +13,7 @@ from . import auth, db
 
 router = APIRouter(prefix="/api/automations")
 
-EVENTS = ("create", "followup", "state", "priority", "owner")
+EVENTS = ("create", "followup", "state", "priority", "owner", "assignee")
 
 
 class NewRule(BaseModel):

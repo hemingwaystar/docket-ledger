@@ -100,22 +100,6 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                                   WHERE ar.ticket_id = t.id AND ar.message_id IS NOT NULL), '{}')
                                 FROM desk.tickets t WHERE t.id = %s""", (ticket_id,))
                 title, cc_list, last_mid, all_mids = cur.fetchone()
-                if mailer.outbound_enabled(cur) and mb_outbound:
-                    files = []
-                    if body.attachment_ids:
-                        cur.execute("""SELECT filename, mime_type, content
-                                         FROM desk.attachments
-                                        WHERE id = ANY(%s::uuid[])
-                                          AND article_id IS NULL""",
-                                    (body.attachment_ids,))
-                        files = [(f, m, bytes(c)) for f, m, c in cur.fetchall()]
-                    out_mid = mailer.send_reply(
-                        cur, mailbox_address=mb_addr, display_name=mb_name or "",
-                        to=mail_to, cc=list(cc_list or []),
-                        subject=f"Service Ticket: [#{ticket_id}] {title}", body=body.body,
-                        in_reply_to=last_mid, references=list(all_mids or []),
-                        attachments=files)
-                    sent = True
             cur.execute("""INSERT INTO desk.articles
                              (ticket_id, kind, author, author_id, body,
                               mail_from, mail_to, message_id)
@@ -144,6 +128,31 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
                 except pg_errors.RaiseException as e:   # 0039 insert guard: period closed
                     raise HTTPException(409, e.diag.message_primary or "Billing period is closed")
                 entry_id, hours = cur.fetchone()
+            # the EXTERNAL send runs LAST (audit): every fallible DB statement
+            # is already in — a failure before this point rolls back with no
+            # customer email out the door, and a send failure rolls everything
+            # back so the thread never shows a reply that wasn't attempted.
+            # (Pre-audit the send ran FIRST: any later 409/constraint rolled
+            # back the article while the customer already had the mail, and a
+            # natural retry double-sent.)
+            if body.kind == "reply" and mailer.outbound_enabled(cur) and mb_outbound:
+                files = []
+                if body.attachment_ids:
+                    cur.execute("""SELECT filename, mime_type, content
+                                     FROM desk.attachments
+                                    WHERE id = ANY(%s::uuid[])
+                                      AND article_id = %s""",
+                                (body.attachment_ids, article_id))
+                    files = [(f, m, bytes(c)) for f, m, c in cur.fetchall()]
+                out_mid = mailer.send_reply(
+                    cur, mailbox_address=mb_addr, display_name=mb_name or "",
+                    to=mail_to, cc=list(cc_list or []),
+                    subject=f"Service Ticket: [#{ticket_id}] {title}", body=body.body,
+                    in_reply_to=last_mid, references=list(all_mids or []),
+                    attachments=files)
+                sent = True
+                cur.execute("UPDATE desk.articles SET message_id = %s WHERE id = %s",
+                            (out_mid, article_id))
             # ticket-audit sibling (build 24/25): the ADDITION of a note/reply is
             # a ticket event too, and now carries the CONTENT (capped) so the
             # audit shows WHAT was added, not just that something was — the UI

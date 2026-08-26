@@ -54,6 +54,17 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
                            SELECT %s, tag FROM desk.ticket_tags WHERE ticket_id = %s
                            ON CONFLICT DO NOTHING""", (body.into, ticket_id))
             cur.execute("DELETE FROM desk.ticket_tags WHERE ticket_id = %s", (ticket_id,))
+            # assignees + schedule blocks follow the work to the target —
+            # they were orphaned on the closed stub (audit): the schedule
+            # calendar kept drawing the stub's blocks forever
+            cur.execute("""INSERT INTO desk.ticket_assignees (ticket_id, agent_id)
+                           SELECT %s, agent_id FROM desk.ticket_assignees
+                            WHERE ticket_id = %s
+                           ON CONFLICT DO NOTHING""", (body.into, ticket_id))
+            cur.execute("DELETE FROM desk.ticket_assignees WHERE ticket_id = %s",
+                        (ticket_id,))
+            cur.execute("UPDATE desk.ticket_schedules SET ticket_id = %s WHERE ticket_id = %s",
+                        (body.into, ticket_id))
             cur.execute("""UPDATE desk.tickets d
                               SET cc = (SELECT array(SELECT DISTINCT x FROM unnest(d.cc || s.cc) x))
                              FROM desk.tickets s

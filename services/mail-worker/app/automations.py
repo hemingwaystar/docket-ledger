@@ -256,6 +256,10 @@ def apply_mail_rules(conn, ticket_id, meta):
                 if cur.rowcount:
                     cur.execute("SELECT label FROM desk.priorities WHERE rank = %s", (new_rank,))
                     did.append(f"priority → {cur.fetchone()[0]}")
+                    # priority triggers must see rule escalations too (audit:
+                    # they fired only for UI changes)
+                    enqueue(cur, "priority", ticket_id,
+                            {"auto": meta.get("auto", False)}, 1)
             if act.get("tag") and act["tag"] not in ctx["tags"]:
                 cur.execute("""INSERT INTO desk.ticket_tags (ticket_id, tag)
                                VALUES (%s, %s) ON CONFLICT DO NOTHING""",
@@ -333,27 +337,32 @@ def _autoassign(cur, ctx, mode):
 
 def _trigger_email(cur, ctx, body_tpl):
     """Same outbound resolution as agent replies — group_sendas override
-    (when live + outbound) → fed-by mailbox; records staged when outbound
-    is off. Returns a description or None (no recipient/mailbox)."""
+    (when live + outbound) → fed-by mailbox, RECEIVE-ONLY accepted like the
+    desk resolver (audit: requiring m.outbound here made trigger emails on
+    receive-only boards vanish with no article and no audit trail — the desk
+    path records 'RECORDED ONLY' instead). Returns a description or None
+    (no recipient/mailbox at all)."""
     to = ctx["contact_email"] or ctx["last_sender"]
     if not to:
         return None
-    cur.execute("""SELECT m.address, m.display_name
+    cur.execute("""SELECT m.address, m.display_name, m.outbound
                      FROM desk.group_sendas gs
                      JOIN desk.mailboxes m ON m.id = gs.mailbox_id
                     WHERE gs.group_id = %s AND NOT m.paused AND m.outbound""",
                 (ctx["group_id"],))
     mb = cur.fetchone()
     if mb is None:
-        cur.execute("""SELECT m.address, m.display_name FROM desk.mailboxes m
-                        WHERE m.group_id = %s AND NOT m.paused AND m.outbound
-                        ORDER BY m.address LIMIT 1""", (ctx["group_id"],))
+        cur.execute("""SELECT m.address, m.display_name, m.outbound
+                         FROM desk.mailboxes m
+                        WHERE m.group_id = %s AND NOT m.paused
+                        ORDER BY m.outbound DESC, m.address LIMIT 1""",
+                    (ctx["group_id"],))
         mb = cur.fetchone()
     if mb is None:
         return None
     body = _vars(body_tpl, ctx)
-    out_mid, sent = None, False
-    if mailer.outbound_enabled(cur):
+    out_mid, sent, failed = None, False, False
+    if mailer.outbound_enabled(cur) and mb[2]:
         cur.execute("""SELECT
                          (SELECT ar.message_id FROM desk.articles ar
                            WHERE ar.ticket_id = %s AND ar.message_id IS NOT NULL
@@ -370,6 +379,7 @@ def _trigger_email(cur, ctx, body_tpl):
                 in_reply_to=last_mid, references=list(all_mids or []))
             sent = True
         except mailer.MailError as exc:
+            failed = True
             _audit(cur, "Trigger send failed", ctx["id"], str(exc)[:200])
     cur.execute("""INSERT INTO desk.articles
                      (ticket_id, kind, author, body, mail_from, mail_to,
@@ -377,8 +387,14 @@ def _trigger_email(cur, ctx, body_tpl):
                    VALUES (%s, 'reply', 'Docket · trigger', %s, %s, %s, %s, true)""",
                 (ctx["id"], body, mb[0], to, out_mid))
     who = ctx["contact_name"] or to
-    return (f"emailed {who} from {mb[0].split('@')[0]}@" if sent
-            else f"reply to {who} recorded (outbound disabled)")
+    # three honest outcomes (audit: a FAILED send used to claim
+    # 'outbound disabled' while the thread showed a delivered-looking reply)
+    if sent:
+        return f"emailed {who} from {mb[0].split('@')[0]}@"
+    if failed:
+        return f"reply to {who} recorded — SEND FAILED, not delivered (see audit log)"
+    return (f"reply to {who} recorded ("
+            + ("sender mailbox is receive-only" if not mb[2] else "outbound disabled") + ")")
 
 
 def fire_triggers(conn, event, ticket_id, meta=None, depth=0):

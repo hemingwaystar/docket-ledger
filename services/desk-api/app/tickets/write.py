@@ -369,6 +369,9 @@ def set_assignees(ticket_id: int, body: Assignees, request: Request):
             # any version lock; author_id NULL for PAT callers (mirrors reclient).
             label = ("Assignees: " + ", ".join(names)) if names else "Assignees cleared"
             _sys(cur, ticket_id, who, label)
+            # 0044 (audit): assignment fan-out finally reaches the automation
+            # engine — 'Assignees changed' triggers can notify the added techs
+            emit_event(cur, "assignee", ticket_id)
             # mark the ticket 'updated' (build 22): an assignee change now bumps
             # updated_at/version like any other change. The bump is returned so
             # the client refreshes its optimistic-lock token (the side-table write
@@ -649,14 +652,18 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
         with conn.cursor() as cur:
             # 1) ticket + article — both 404 if absent / not on this ticket.
             trow = helpers.ticket_or_404(cur, ticket_id)
-            cur.execute("""SELECT kind, is_auto, author_id, body
+            cur.execute("""SELECT kind, is_auto, author_id, body, deleted_at
                              FROM desk.articles
                             WHERE id = %s AND ticket_id = %s""",
                         (article_id, ticket_id))
             art = cur.fetchone()
             if art is None:
                 raise HTTPException(404, "No such article on this ticket")
-            kind, is_auto, author_id, old_body = art
+            kind, is_auto, author_id, old_body, deleted_at = art
+            if deleted_at is not None:
+                # the 0036 tombstone is immutable — the audit trail preserves
+                # the content; a post-delete rewrite would diverge from it
+                raise HTTPException(409, "This note was deleted — tombstones can't be edited")
             # 2) not-editable-by-ANYONE refusals.
             if kind != "note":
                 raise HTTPException(409, "Only internal notes can be edited — "
@@ -683,11 +690,25 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
                 auth.need(who, "see_billing")
             actor = who.get("name") or who.get("label") or "API"
             # 5) apply. The guard permits note-body edits + the 0034 columns
-            #    (it only blocks body changes on NON-note kinds).
-            cur.execute("""UPDATE desk.articles
+            #    (it only blocks body changes on NON-note kinds). The freeze
+            #    re-check rides IN the UPDATE (audit: the step-3 read was
+            #    advisory only — an approval committing in the gap slipped
+            #    through; delete_article closed this race in Build 26,
+            #    edit_note was the survivor). Tombstones re-checked the same
+            #    way.
+            cur.execute("""UPDATE desk.articles a
                               SET body = %s, edited_at = now(), edited_by = %s
-                            WHERE id = %s RETURNING edited_at""",
+                            WHERE a.id = %s AND a.deleted_at IS NULL
+                              AND NOT EXISTS (SELECT 1 FROM ledger.time_entries e
+                                               WHERE e.article_id = a.id
+                                                 AND e.status <> 'void'
+                                                 AND (e.ts_approved_at IS NOT NULL
+                                                      OR ledger.period_locked(e.period_id)))
+                            RETURNING edited_at""",
                         (body.body, actor, article_id))
+            if cur.rowcount == 0:
+                raise HTTPException(423, "The linked timesheet was approved (or the "
+                                         "note deleted) while you edited — refresh")
             (edited_at,) = cur.fetchone()
             # link newly-staged uploads — the SAME mechanism add_article uses:
             # only rows still unlinked (article_id IS NULL) are claimed, so a
