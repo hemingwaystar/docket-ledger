@@ -27,7 +27,7 @@ function viewOverview(){
 
   <div class="grid g-4" style="margin-bottom:16px">
     <div class="card stat click" onclick="go('assets')"><div class="lab">Assets under management</div><div class="val">${live.length}</div><div class="sub">across ${new Set(live.map(a=>a.clientId)).size} clients</div></div>
-    <div class="card stat click" onclick="go('assets')"><div class="lab">Needs attention ≤ ${leadDays()}d</div><div class="val" style="color:${expiring.length?'var(--warn)':'inherit'}">${expiring.length}</div><div class="sub">${expiring.filter(n=>n.sev==='red').length} already lapsed / full</div></div>
+    <div class="card stat click" onclick="go('assets')"><div class="lab">Needs attention ≤ ${leadDays()}d</div><div class="val" style="color:${expiring.length?'var(--warn)':'inherit'}">${expiring.length}</div><div class="sub">${expiring.filter(n=>n.sev==='red').length} already lapsed</div></div>
     <div class="card stat click" onclick="go('licenses')"><div class="lab">Licence pools</div><div class="val">${liveLicenses().length}</div><div class="sub">${fullPools.length} at capacity</div></div>
     ${canSeeCosts()
       ? `<div class="card stat click" onclick="go('reports')"><div class="lab">Annualised spend</div><div class="val">${fmtMoney(licSpend+ctSpend)}</div><div class="sub">licences ${fmtMoney(licSpend)} · contracts ${fmtMoney(ctSpend)}</div></div>`

@@ -87,6 +87,14 @@ def patch_license(license_id: str, body: PatchLicense, request: Request):
         auth.need(who, "a_manage_licenses")
         sets, args, notes = [], [], []
         with conn.cursor() as cur:
+            # archived records are read-only except the restore itself
+            # (audit: every field stayed fully mutable server-side)
+            cur.execute("SELECT archived_at FROM assets.licenses WHERE id::text = %s", (license_id,))
+            _arow = cur.fetchone()
+            if _arow is None:
+                raise HTTPException(404, "No such licence")
+            if _arow[0] is not None and body.archived is not False:
+                raise HTTPException(409, "This licence is archived — restore it first")
             if body.product is not None:
                 p = body.product.strip()
                 if not p:

@@ -75,6 +75,14 @@ def patch_contract(contract_id: str, body: PatchContract, request: Request):
         auth.need(who, "a_manage_contracts")
         sets, args, notes = [], [], []
         with conn.cursor() as cur:
+            # archived records are read-only except the restore itself
+            # (audit: every field stayed fully mutable server-side)
+            cur.execute("SELECT archived_at FROM assets.contracts WHERE id::text = %s", (contract_id,))
+            _arow = cur.fetchone()
+            if _arow is None:
+                raise HTTPException(404, "No such contract")
+            if _arow[0] is not None and body.archived is not False:
+                raise HTTPException(409, "This contract is archived — restore it first")
             if body.vendor is not None:
                 v = body.vendor.strip()
                 if not v:

@@ -59,7 +59,9 @@ def wake_pending(conn) -> int:
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE desk.tickets t
-               SET state_id = (SELECT id FROM desk.ticket_states WHERE label = 'Open'),
+               SET state_id = (SELECT id FROM desk.ticket_states
+                                WHERE kind = 'open' AND active AND NOT is_system
+                                ORDER BY (label = 'Open') DESC, position LIMIT 1),
                    pending_until = NULL
              WHERE t.pending_until IS NOT NULL AND t.pending_until <= now()
                AND (SELECT s.kind FROM desk.ticket_states s
@@ -538,6 +540,13 @@ def main():
                     conn.rollback()
         except Exception as exc:
             print("worker pass failed:", exc)
+        try:
+            # compose healthcheck freshness stamp (audit: a wedged worker
+            # showed as Up forever — the only service with no healthcheck)
+            with open("/tmp/heartbeat", "w") as hb:
+                hb.write(str(int(time.time())))
+        except OSError:
+            pass
         time.sleep(INTERVAL)
 
 

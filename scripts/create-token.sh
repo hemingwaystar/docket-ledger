@@ -6,9 +6,15 @@
 #                 permission keys (e.g. view_audit l_view_all a_view).
 set -eu
 LABEL="${1:-api-token}"
+# label and scopes ride into a SQL string — constrain the charset instead of
+# trusting the caller (audit: the raw interpolation was injectable)
+case "$LABEL" in (*[!A-Za-z0-9._-]*|"")
+  echo "label must be non-empty and use only letters, digits, . _ -" >&2; exit 1;; esac
 shift 2>/dev/null || true
 SCOPES=""
 for s in "$@"; do
+  case "$s" in (*[!a-z0-9_]*|"")
+    echo "scope '$s' must use only lowercase letters, digits, _" >&2; exit 1;; esac
   SCOPES="${SCOPES}${SCOPES:+,}\"$s\""
 done
 TOKEN="$(openssl rand -hex 32)"

@@ -26,6 +26,10 @@ from . import auth, crypto, db, helpers, totp
 
 router = APIRouter(prefix="/auth")
 ph = PasswordHasher()          # argon2id defaults
+# verified against unknown/passwordless accounts so the 401 costs the same
+# argon2id time as a real check — the fast path was a user-enumeration
+# timing oracle (audit)
+_DUMMY_HASH = ph.hash("timing-oracle-pad")
 SESSION_HOURS = 12
 COOKIE = "hts_session"
 # False until the nginx TLS front is verified, then COOKIE_SECURE=true in
@@ -142,12 +146,20 @@ def login(body: Login, request: Request, response: Response):
             row = cur.fetchone()
             generic = HTTPException(401, "Invalid email or password")
             if row is None:
+                try:
+                    ph.verify(_DUMMY_HASH, body.password)   # timing pad (audit)
+                except VerifyMismatchError:
+                    pass
                 _throttle_fail(cur, tkeys)
                 conn.commit()  # keep the counter — the raise would roll it back
                 raise generic
             (agent_id, name, pw_hash, must_change, totp_enc, totp_enrolled_at,
              active, last_step) = row
             if not active or not pw_hash:
+                try:
+                    ph.verify(pw_hash or _DUMMY_HASH, body.password)
+                except Exception:                        # noqa: BLE001
+                    pass
                 _throttle_fail(cur, tkeys)
                 conn.commit()  # keep the counter — the raise would roll it back
                 raise generic

@@ -294,7 +294,10 @@ function removeSchedule(tid, schedId){
   t.articles.push(art('sys', me(), nowMs(), `Schedule removed${nm?' — '+nm:''}`));
   log('Schedule removed', `#${t.id}${nm?' · '+nm:''}`);
   render();
-  if(String(schedId).startsWith('sched-tmp-')) return;   /* never mirrored — nothing to DELETE */
+  if(String(schedId).startsWith('sched-tmp-')){
+    toast('That block is still saving — remove it again in a second.');   /* the add-POST reconcile would resurrect it (audit) */
+    return;
+  }
   $fetch('/api/tickets/'+tid+'/schedules/'+encodeURIComponent(schedId),{method:'DELETE'})
     .then(async r=>{ const d=await r.json().catch(()=>0); if(!r.ok) return oops(d);
       reconcileSched(t, d); });
@@ -307,6 +310,10 @@ function removeSchedule(tid, schedId){
 function toggleScheduleDone(tid, schedId, done){
   const t = tk(tid); if(!t) return;
   const s = (t.schedules||[]).find(x=>String(x.id)===String(schedId)); if(!s) return;
+  if(String(schedId).startsWith('sched-tmp-')){
+    toast('That block is still saving — tick it in a second.');   /* the add-POST reconcile silently discarded the stamp (audit) */
+    return;
+  }
   if(!(can('assign') || String(s.agentId)===String(state.meId))) return;
   s.completedAt = done ? nowMs() : null;
   s.completedBy = done ? (me()?.name || state.user.name) : null;
@@ -569,7 +576,11 @@ function vfySend(tid, method, masked){
   b.innerHTML='<div class="mini muted">Sending code…</div>';
   $fetch('/api/tickets/'+tid+'/verify/start',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:method})})
+    .catch(()=>{ b.innerHTML='<div class="notice lock">'+icon(IC.shield)+
+      '<div><b>Could not send.</b> Network failure — check the connection and retry.</div></div>';
+      return null; })   /* the modal used to wedge on 'Sending code…' (audit) */
     .then(async r=>{
+      if(!r) return;
       const d=await r.json().catch(()=>({}));
       if(!r.ok){
         b.innerHTML='<div class="notice lock">'+icon(IC.shield)+

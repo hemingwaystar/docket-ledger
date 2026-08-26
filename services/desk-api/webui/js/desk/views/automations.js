@@ -122,7 +122,7 @@ function viewAutomations(){
         <td><div class="cell-title">${esc(g.name)}</div></td>
         <td class="mini" style="padding-top:12px">${esc(TRIG_EVENTS.find(e=>e.id===g.event)?.label.replace('…','')||g.event)}${g.event==='state'&&g.eventValue?esc(st8(g.eventValue)?.label||g.eventValue):''}</td>
         <td class="mini" style="padding-top:12px">${esc(groupsWhen(g.conds, c=>`${c.field} ${c.op} “${c.value}”`) || 'always')}</td>
-        <td class="mini" style="padding-top:12px">${esc(g.actions.map(a=>({email:'email the customer',note:'internal note',tag:`tag “${a.value}”`,state:`state → ${st8(a.value)?.label||a.value}`,prio:`priority → ${prio(Number(a.value))?.label||a.value}`,group:`board → ${grp(a.value)?.name||a.value}`}[a.type])).join(' · '))}</td>
+        <td class="mini" style="padding-top:12px">${esc(g.actions.map(a=>({email:'email the customer',note:'internal note',tag:`tag “${a.value}”`,state:`state → ${st8(a.value)?.label||a.value}`,prio:`priority → ${prio(Number(a.value))?.label||a.value}`,group:`board → ${grp(a.value)?.name||a.value}`,autoassign:`auto-assign (${a.value==='least'?'least-loaded':'round-robin'})`}[a.type]||a.type)).join(' · '))}</td>
         <td class="num">${g.runs.toLocaleString()}</td>
         <td class="right"><button class="rowbtn" onclick="trigModal('${g.id}')">Edit</button>
           <button class="rowbtn" onclick="deleteTrig('${g.id}')">Delete</button></td>

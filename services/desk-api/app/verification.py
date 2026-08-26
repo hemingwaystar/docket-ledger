@@ -237,7 +237,9 @@ def check(ticket_id: int, body: Check, request: Request):
                 return {"result": "expired"}
 
             entered = re.sub(r"\D", "", body.code or "")
-            if hashlib.sha256(entered.encode()).hexdigest() == code_hash:
+            import hmac as _hmac
+            if _hmac.compare_digest(hashlib.sha256(entered.encode()).hexdigest(),
+                                    code_hash):
                 cur.execute("""UPDATE desk.verifications SET status = 'verified',
                                       resolved_at = now() WHERE id = %s""", (vid,))
                 # tag + the same system article the prototype posts

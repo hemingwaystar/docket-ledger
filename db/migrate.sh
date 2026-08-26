@@ -13,6 +13,10 @@ SQL
 
 for f in /db/migrations/*.sql; do
   name="$(basename "$f")"
+  # the filename rides into SQL literals below — repo files are trusted, but
+  # constrain the charset anyway (audit)
+  case "$name" in (*[!A-Za-z0-9._-]*)
+    echo "refusing migration with unexpected filename: $name" >&2; exit 1;; esac
   done="$(psql -tA -c "SELECT 1 FROM public.schema_migrations WHERE filename='$name'")"
   if [ "$done" = "1" ]; then
     echo "skip  $name"

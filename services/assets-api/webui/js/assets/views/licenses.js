@@ -68,7 +68,7 @@ function viewLicenses(){
         <td><div class="cell-title">${esc(l.product)}${l.archived?' <span class="chip grey slim"><span class="cdot"></span>Archived</span>':''}</div><div class="cell-meta">${esc(l.vendor||'—')}</div></td>
         <td>${esc(clientName(l.clientId))}</td>
         <td class="mono">${l.seatsUsed}/${l.seatsTotal}
-          ${can('a_manage_licenses')?`<span style="white-space:nowrap"><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',-1)">−</button><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',1)">+</button></span>`:''}</td>
+          ${can('a_manage_licenses')&&!l.archived?`<span style="white-space:nowrap"><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',-1)">−</button><button class="rowbtn" onclick="event.stopPropagation();seatAdj('${l.id}',1)">+</button></span>`:''}</td>
         <td><div class="bar" title="${pct}%"><i class="${cls}" style="width:${pct}%"></i></div><div class="mini" style="margin-top:3px">${l.seatsUsed>=l.seatsTotal?'<span style="color:var(--void)">at capacity</span>':pct+'% used'}</div></td>
         <td>${termLabel(l.termMonths,l.recurring)}</td>
         <td>${endCell(l.endsOn,l.recurring)}</td>

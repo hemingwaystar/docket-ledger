@@ -85,6 +85,14 @@ def patch_asset(asset_id: str, body: PatchAsset, request: Request):
         auth.need(who, "a_manage_assets")
         sets, args, notes = [], [], []
         with conn.cursor() as cur:
+            # archived records are read-only except the restore itself
+            # (audit: every field stayed fully mutable server-side)
+            cur.execute("SELECT archived_at FROM assets.assets WHERE id::text = %s", (asset_id,))
+            _arow = cur.fetchone()
+            if _arow is None:
+                raise HTTPException(404, "No such asset")
+            if _arow[0] is not None and body.archived is not False:
+                raise HTTPException(409, "This asset is archived — restore it first")
             if body.ci_tag is not None:
                 tag = body.ci_tag.strip()
                 if not tag:

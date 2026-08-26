@@ -145,8 +145,11 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                     sets.append("owner_id = %s"); args.append(aid)
                     notes.append(f"owner → {name}")
             if body.group is not None:
-                sets.append("group_id = %s"); args.append(helpers.group_id(cur, body.group))
-                notes.append(f"group → {body.group}")
+                gid = helpers.group_id(cur, body.group)
+                sets.append("group_id = %s"); args.append(gid)
+                cur.execute("SELECT name FROM shared.groups WHERE id = %s", (gid,))
+                gname = (cur.fetchone() or [body.group])[0]
+                notes.append(f"group → {gname}")   # the NAME, not a raw uuid (audit)
             if body.pending_until is not None:
                 if body.pending_until == "":
                     sets.append("pending_until = NULL"); notes.append("pending cleared")
@@ -290,8 +293,10 @@ def tags(ticket_id: int, body: Tags, request: Request):
                                VALUES (%s, %s) ON CONFLICT DO NOTHING""",
                             (ticket_id, t.lower().strip().replace(" ", "-")))
             for t in body.remove:
+                # normalized like the add path (audit: a raw value here could
+                # never match the stored normalized tag)
                 cur.execute("DELETE FROM desk.ticket_tags WHERE ticket_id = %s AND tag = %s",
-                            (ticket_id, t))
+                            (ticket_id, t.lower().strip().replace(" ", "-")))
             version = updated_ms = None
             if body.add or body.remove:
                 # ticket-audit sibling + 'updated' bump (build 22): a tag change

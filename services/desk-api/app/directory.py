@@ -14,7 +14,10 @@ router = APIRouter(prefix="/api/directory")
 @router.get("")
 def directory(request: Request):
     with db.connect() as conn:
-        auth.require(conn, request)
+        who = auth.require(conn, request)
+        # the whole agent/role/permission map is admin material — the UI
+        # gates Directory on these; the endpoint now does too (audit)
+        auth.need(who, "manage_settings", "manage_roles")
         with conn.cursor(row_factory=dict_row) as cur:
             out = {}
             cur.execute("SELECT id, name, active FROM shared.groups ORDER BY name")

@@ -45,7 +45,10 @@ function saveAssetsCfg(){
   if(!group){ toast('Name the Docket board lapse tickets should land on.'); return; }
   const next={ lapse_lead_days:lead, lapse_group:group,
     lapse_kinds:{warranty:g('st-kw').checked, license:g('st-kl').checked, contract:g('st-kc').checked} };
-  if(JSON.stringify(next)===JSON.stringify(state.cfg)){ toast('Nothing changed.'); return; }  /* diff-guard */
+  /* key-order-stable compare (audit: stringify vs Postgres jsonb key order
+     made the guard fail open after every hydrate) */
+  const flat=o=>JSON.stringify(Object.keys(o||{}).sort().map(k=>[k, typeof o[k]==='object'&&o[k]&&!Array.isArray(o[k])?Object.keys(o[k]).sort().map(kk=>[kk,o[k][kk]]):o[k]]));
+  if(flat(next)===flat(state.cfg)){ toast('Nothing changed.'); return; }  /* diff-guard */
   state.cfg=next;
   log('Settings changed', `lapse scan: ${lead}d lead → “${group}”`);
   render();

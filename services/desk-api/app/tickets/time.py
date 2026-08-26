@@ -6,7 +6,7 @@ from psycopg import errors as pg_errors
 from pydantic import BaseModel
 from .. import auth, db, helpers
 from .common import _sane_span
-from .write import _touch
+from .write import _sys, _touch
 
 router = APIRouter(prefix="/api")
 
@@ -129,8 +129,18 @@ def patch_time(entry_id: str, body: PatchTime, request: Request):
             updated = cur.fetchone()
             if updated is None:
                 raise HTTPException(409, "Entry is manager-approved — revoke the timesheet approval first")
+            version = updated_ms = None
+            if ticket_id is not None:
+                # the build-22 dual-write this endpoint skipped (audit): a
+                # time edit/void shows on the ticket's Audit block, marks it
+                # 'updated', and the version bump rides back to the client
+                _sys(cur, ticket_id, who,
+                     ("Time entry " + (" · ".join(notes) or "updated")
+                      + f" — {old_hours} → {updated[0]} h"))
+                version, updated_ms = _touch(cur, ticket_id)
         auth.audit(conn, "desk", "Time entry updated",
                    f"entry:{entry_id}",
                    (f"#{ticket_id} · " if ticket_id else "") + " · ".join(notes)
                    + f" · {old_hours} → {updated[0]} h")
-        return {"ok": True, "changed": notes, "hours": float(updated[0])}
+        return {"ok": True, "changed": notes, "hours": float(updated[0]),
+                "version": version, "updatedAt": updated_ms}

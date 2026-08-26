@@ -29,6 +29,12 @@ def classify_entry(entry_id: str, body: Classify, request: Request):
     (pre-submission), or void. Approved/period-locked rows: the DB freeze
     guard (SECURITY DEFINER since 0012) refuses and we return 409."""
     _sane_span(body.started_at, body.ended_at)
+    if body.void and (body.started_at is not None or body.ended_at is not None
+                      or body.activity_type is not None):
+        # a ride-along edit would inherit the LOOSER void gate and dodge the
+        # pre-submission rule (audit) — the flows are separate on purpose
+        raise HTTPException(422, "Void and edits are separate operations — "
+                                 "send them as separate calls")
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "l_edit_own", "l_edit_all")
