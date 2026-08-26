@@ -12,5 +12,11 @@
 --
 -- Default TRUE: existing mailboxes stay send-eligible, matching what the
 -- UI has displayed all along; receive-only is the deliberate opt-out.
+-- BEGIN/COMMIT retrofitted (audit): a mid-file failure must roll back clean
+-- and never leave unrecorded half-applied DDL. Applied DBs skip this file.
+BEGIN;
+
 ALTER TABLE desk.mailboxes
   ADD COLUMN outbound boolean NOT NULL DEFAULT true;
+
+COMMIT;

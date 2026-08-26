@@ -34,7 +34,13 @@ docker compose logs migrate      # expect "apply 0001..., apply 0002..., migrati
 curl http://127.0.0.1:8081/readyz && curl http://127.0.0.1:8082/readyz && curl http://127.0.0.1:8083/readyz
 ```
 
-Then install `nginx/hemingway.conf.example` on the host and reload nginx.
+Then install the TLS front — `nginx/helpdesk.hemingwaytechsolutions.com.conf`
+(NOT `hemingway.conf.example`, which is superseded and would break Docket's
+absolute paths — its own header says so): copy it to
+`/etc/nginx/sites-available/`, run the `__BIND_ADDR__` sed from the file's
+header, symlink into `sites-enabled/`, then `nginx -t && systemctl reload
+nginx`. To restore a backup on a fresh host, use `scripts/restore.sh` —
+the ordering matters (see the script's header).
 
 ## Day-2 operations
 

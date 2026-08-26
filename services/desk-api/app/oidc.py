@@ -182,21 +182,29 @@ def oidc_callback(request: Request, code: str | None = None,
             oid = claims.get("oid", "")
             email = (claims.get("preferred_username") or claims.get("email")
                      or claims.get("upn") or "").strip()
+            # email matches only UNBOUND agents (audit): once an oid is
+            # bound, a different Entra identity carrying the same email/UPN
+            # claim must never mint this agent's session — the email arm was
+            # a standing takeover path for tenant-controlled claims
             cur.execute("""SELECT id, name, email, entra_object_id FROM shared.agents
                             WHERE active AND (entra_object_id = %s
-                                              OR lower(email) = lower(%s))
+                                              OR (entra_object_id IS NULL
+                                                  AND lower(email) = lower(%s)))
                             ORDER BY (entra_object_id = %s) DESC LIMIT 1""",
                         (oid, email, oid))
             row = cur.fetchone()
             if row is None:
                 auth.audit(conn, "auth", "SSO sign-in refused", None,
-                           f"{email or oid} — no matching active agent")
+                           f"{email or oid} — no matching active agent "
+                           "(or the account is bound to a different Entra identity)")
                 return _login_err(f"No active agent matches {email or 'this account'}"
                                   " — an admin needs to add you in the Directory")
             agent_id, name, agent_email, known_oid = row
             if oid and not known_oid:
                 cur.execute("UPDATE shared.agents SET entra_object_id = %s WHERE id = %s",
                             (oid, agent_id))
+                auth.audit(conn, "auth", "Entra identity bound", f"agent:{agent_id}",
+                           f"{agent_email} ↔ oid {oid} (first SSO sign-in)")
 
             mapped = ""
             if c["role_mapping"]:

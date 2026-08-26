@@ -57,8 +57,9 @@ services:
       DATABASE_NAME: hemingway
       DATABASE_USER: desk_api
       DATABASE_PASSWORD_FILE: /run/secrets/pg_desk_api_password
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}   # trust X-Forwarded-* only from docker/nginx (audit)
       KEK_FILE: /run/secrets/kek
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}   # true once the nginx TLS front is verified
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}    # secure-by-default (audit); set false in .env ONLY while no TLS front exists
     secrets: [pg_desk_api_password, kek]
     ports:
       - "${BIND_ADDR:-127.0.0.1}:8081:8000"   # loopback by default; overlay IP via .env
@@ -79,6 +80,7 @@ services:
       DATABASE_NAME: hemingway
       DATABASE_USER: ledger_api
       DATABASE_PASSWORD_FILE: /run/secrets/pg_ledger_api_password
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}   # trust X-Forwarded-* only from docker/nginx (audit)
       KEK_FILE: /run/secrets/kek
     secrets: [pg_ledger_api_password, kek]
     ports:
@@ -100,6 +102,7 @@ services:
       DATABASE_NAME: hemingway
       DATABASE_USER: assets_api
       DATABASE_PASSWORD_FILE: /run/secrets/pg_assets_api_password
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.16.0.0/12}   # trust X-Forwarded-* only from docker/nginx (audit)
       # no KEK: Assets seals no secrets of its own (grant-of-KEK is per-service)
     secrets: [pg_assets_api_password]
     ports:
@@ -141,7 +144,7 @@ services:
     volumes:
       - ./backups:/backups
     entrypoint: ["/bin/sh", "-c",
-      "export PGPASSWORD=$$(cat /run/secrets/pg_superuser_password); while true; do pg_dump -Fc -f /backups/hemingway-$$(date +%F).dump && find /backups -name '*.dump' -mtime +14 -delete; sleep 86400; done"]
+      "export PGPASSWORD=$$(cat /run/secrets/pg_superuser_password); umask 077; while true; do if pg_dump -Fc -f /backups/hemingway-$$(date +%F).dump; then rm -f /backups/BACKUP-FAILED; find /backups -name '*.dump' -mtime +14 -delete; else echo BACKUP FAILED $$(date) >&2; date > /backups/BACKUP-FAILED; fi; sleep 86400; done"]
     networks: [internal]
 
 secrets:

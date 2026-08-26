@@ -15,6 +15,10 @@
 --     BOTH channels disabled (same default-off stance as mail.outbound_enabled);
 --     enabling a channel in Settings is the conscious go-live flip
 
+-- BEGIN/COMMIT retrofitted (audit): a mid-file failure must roll back clean
+-- and never leave unrecorded half-applied DDL. Applied DBs skip this file.
+BEGIN;
+
 CREATE TABLE desk.verifications (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     ticket_id     bigint      NOT NULL REFERENCES desk.tickets(id),
@@ -47,3 +51,5 @@ INSERT INTO shared.app_config (key, value) VALUES ('verification', jsonb_build_o
     'email', jsonb_build_object('enabled', false, 'from', ''),
     'ttlMin', 5, 'attempts', 3, 'postToThread', true))
 ON CONFLICT (key) DO NOTHING;
+
+COMMIT;

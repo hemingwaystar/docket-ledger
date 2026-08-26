@@ -13,6 +13,10 @@
 --   * INBOUND METADATA: content_id + is_inline from Graph fileAttachments,
 --     stored now so inline-image rendering can be added later without
 --     re-ingesting.
+-- BEGIN/COMMIT retrofitted (audit): a mid-file failure must roll back clean
+-- and never leave unrecorded half-applied DDL. Applied DBs skip this file.
+BEGIN;
+
 ALTER TABLE desk.attachments
   ALTER COLUMN article_id DROP NOT NULL,
   ADD COLUMN staged_by  uuid REFERENCES shared.agents(id),
@@ -23,3 +27,5 @@ CREATE INDEX attachments_staged_idx ON desk.attachments (created_at)
   WHERE article_id IS NULL;
 
 GRANT DELETE ON desk.attachments TO mail_worker;   -- staged-orphan sweep only
+
+COMMIT;

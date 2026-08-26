@@ -18,8 +18,13 @@ for f in /db/migrations/*.sql; do
     echo "skip  $name"
   else
     echo "apply $name"
-    psql -v ON_ERROR_STOP=1 -q -f "$f"
-    psql -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.schema_migrations(filename) VALUES ('$name')"
+    # apply + record in ONE psql invocation (audit): two processes left a
+    # crash window where applied DDL went unrecorded and every rerun then
+    # failed on already-created objects. Migrations self-wrap in
+    # BEGIN/COMMIT (house rule — 0021/0022/0023 were retrofitted), so a
+    # mid-file failure still rolls back clean and never reaches the record.
+    psql -v ON_ERROR_STOP=1 -q -f "$f" \
+         -c "INSERT INTO public.schema_migrations(filename) VALUES ('$name')"
   fi
 done
 
