@@ -346,7 +346,9 @@ function renderAudit(t){
 
 function saveTitle(tid){
   const t = tk(tid); if(!t || projLocked(t)) return;
-  if(!(can('edit_props') || t.ownerId===state.meId)) return;
+  /* the SERVER gate for a title change is edit_props (field-level, 31c) —
+     the owner exception here promised a rename it then reverted (audit) */
+  if(!can('edit_props')) return;
   const v = document.getElementById('ttl-'+tid).value.trim();
   if(!v){ toast('A ticket needs a title.'); return; }
   const was = TITLES[tid]||firstLine(t);

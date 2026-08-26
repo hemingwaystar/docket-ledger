@@ -25,7 +25,7 @@
 function viewDirectory(){
   const pgA = paginate('dirAgents', AGENTS);
   return `
-  <h3 style="margin:4px 0 10px;display:flex;align-items:center;gap:10px">Roles &amp; permissions <button class="btn sm" onclick="roleModal()">+ Add role</button></h3>
+  <h3 style="margin:4px 0 10px;display:flex;align-items:center;gap:10px">Roles &amp; permissions ${can('manage_roles')?`<button class="btn sm" onclick="roleModal()">+ Add role</button>`:''}</h3>
   ${rolesSection()}
   <div class="section-gap"></div>
   <div class="grid g-2">
@@ -71,9 +71,9 @@ function viewDirectory(){
             <span class="chip ${a.mfa?'st-solved':(a.mfaPending?'st-hold':'st-closed')}" style="padding:1px 8px"><span class="cdot"></span>${a.mfa?'MFA':(a.mfaPending?'MFA pending':'no MFA')}</span>
             <button class="rowbtn" onclick="authModal('${a.id}')">Auth…</button>`:''}
           <select style="width:auto" onchange="setAgentRole('${a.id}',this.value)" title="${AUTH_CFG.roleMapping?'Entra mapping is ON — manual changes are overwritten at next sign-in':'Manual assignment — this IS the role'}">${state.roleDefs.filter(r=>(r.active!==false || r.name===a.role) && r.name!=='Customer').map(r=>`<option value="${esc(r.name)}" ${a.role===r.name?'selected':''} ${r.active===false?'disabled':''}>${esc(r.name)}${r.active===false?' (archived)':''}</option>`).join('')}</select>
-          ${can('manage_settings')&&a.id!==state.meId?`<button class="rowbtn" onclick="deactivateAgent('${a.id}')">Deactivate</button>`:''}</div>`).join('')}
+          ${(can('manage_settings')||can('manage_roles'))&&a.id!==state.meId?`<button class="rowbtn" onclick="deactivateAgent('${a.id}')">Deactivate</button>`:''}</div>`).join('')}
         ${pagerBar(pgA)}
-        ${can('manage_settings')?`<button class="btn sm" style="margin-top:12px" onclick="agentModal()">+ Add person</button>`:''}
+        ${can('manage_settings')||can('manage_roles')?`<button class="btn sm" style="margin-top:12px" onclick="agentModal()">+ Add person</button>`:''}
         <div class="mini muted" style="margin-top:8px">${AUTH_CFG.roleMapping?'Roles assigned automatically from Entra groups — the selects preview, but the mapping wins at sign-in.':'Entra mapping is off: these selects are the source of truth for each person’s role.'} Deactivated people can’t sign in and leave the pickers; their tickets and time stay. Re-adding the same email restores them.</div>
       </div>
     </div>
@@ -88,6 +88,9 @@ function viewDirectory(){
    {secret, otpauth_uri} from mfaEnrollSelf. The modal lives outside the
    render() cycle, same scrim pattern as roleModal. */
 function authModal(tid, temp, enroll){
+  /* the reset endpoints need manage_roles — the panel used to render for
+     manage_settings-only admins whose every action 403'd (audit) */
+  if(!can('manage_roles')){ toast('Password/MFA resets need the manage_roles permission.'); return; }
   const a = agent(tid); if(!a) return;
   const m = document.getElementById('modal');
   const mfaStatus = a.mfa ? `enrolled ${a.mfaAt?fmtDT(a.mfaAt):''}`

@@ -13,7 +13,9 @@ function viewAudit(){
   const opt=(v,l,cur)=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`;
   const actions=[...new Set(state.audit.map(a=>a.action))].sort();
   const actors=[...new Set(state.audit.map(a=>a.actor).filter(Boolean))].sort();
-  const entities=[...new Set(state.audit.map(a=>a.entity).filter(Boolean))].sort();
+  /* area = the entityId PREFIX ('entry:…' → entry) — the old a.entity field
+     never existed, so the whole filter dimension was silently dead (audit) */
+  const entities=[...new Set(state.audit.map(a=>(a.entityId||'').split(':')[0]).filter(Boolean))].sort();
   const entLabel={entry:'Entries',period:'Billing periods',client:'Clients'};
   const filtered=auditFiltered();
   const pg=paginate('audit',filtered);
@@ -72,7 +74,7 @@ function auditFiltered(){
   let rows=state.audit.filter(a=>a.ts>=from && a.ts<=to);
   if(f.action&&f.action!=='all') rows=rows.filter(a=>a.action===f.action);
   if(f.actor &&f.actor!=='all')  rows=rows.filter(a=>a.actor===f.actor);
-  if(f.entity&&f.entity!=='all') rows=rows.filter(a=>(a.entity||'')===f.entity);
+  if(f.entity&&f.entity!=='all') rows=rows.filter(a=>((a.entityId||'').split(':')[0])===f.entity);
   if(f.q){ const q=f.q.toLowerCase(); rows=rows.filter(a=>((a.action||'')+' '+(a.detail||'')+' '+(a.actor||'')).toLowerCase().includes(q)); }
   return rows;
 }
@@ -85,9 +87,10 @@ function auditPreset(p){
   render();
 }
 function auditCSV(){
-  const q=v=>{ v=String(v==null?'':v); return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const q=v=>{ v=String(v==null?'':v); if(/^[=+\-@]/.test(v)) v="'"+v; /* formula-injection guard (audit) */
+    return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   const lines=[['When','Event','Detail','Actor','Area'].join(',')];
-  auditFiltered().forEach(a=>lines.push([new Date(a.ts).toISOString(), a.action, a.detail, a.actor, a.entity||''].map(q).join(',')));
+  auditFiltered().forEach(a=>lines.push([new Date(a.ts).toISOString(), a.action, a.detail, a.actor, (a.entityId||'').split(':')[0]].map(q).join(',')));
   return lines.join('\r\n');
 }
 function downloadAudit(){

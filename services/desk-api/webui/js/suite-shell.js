@@ -28,7 +28,10 @@ window.addEventListener('message', ev=>{
   const d = ev.data || {};
   if(d.src!==srcId) return;                /* the envelope must match the frame */
   if(d.type==='suite-nav'){ show(FRAMES[d.app]?d.app:'docket'); return; }
-  Object.keys(FRAMES).forEach(k=>{ if(k!==srcId) fr(FRAMES[k]).postMessage(d, location.origin); });
+  /* target each frame's OWN origin — on direct-port (NetBird) access the
+     ledger/assets frames are :8082/:8083, and posting with location.origin
+     made the browser silently drop every relayed message (audit) */
+  Object.keys(FRAMES).forEach(k=>{ if(k!==srcId) fr(FRAMES[k]).postMessage(d, FRAME_ORIGIN[k]); });
   if(d.type==='open-ticket' && srcId!=='docket'){ show(view==='split'?'split':'docket'); }
 });
 
@@ -36,6 +39,11 @@ window.addEventListener('message', ev=>{
    under /ledger/ and /assets/; on direct NetBird access each stays on its
    own service port */
 const stdPort = location.port===''||location.port==='443'||location.port==='80';
+const FRAME_ORIGIN = {
+  docket: location.origin,
+  ledger: stdPort? location.origin : location.protocol+'//'+location.hostname+':8082',
+  assets: stdPort? location.origin : location.protocol+'//'+location.hostname+':8083',
+};
 document.getElementById('fr-ledger').src = stdPort
   ? '/ledger/ui/ledger.html'
   : location.protocol + '//' + location.hostname + ':8082/ui/ledger.html';

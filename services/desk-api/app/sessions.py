@@ -241,8 +241,11 @@ PREFS_CAP = 16 * 1024                  # bytes of serialized JSON — sanity, no
 
 @router.put("/me/prefs")
 def put_prefs(body: dict, request: Request):
-    """The whole prefs object, upserted as one value (read back via bootstrap
-    me.prefs). Session-only: the key is derived from the session's agent."""
+    """CHANGED prefs keys, MERGED top-level into the stored object (audit:
+    the whole-object replace let two open tabs clobber each other,
+    last-writer-wins). A null value clears its key. Returns the merged
+    object so the client syncs to the truth. Session-only: the key is
+    derived from the session's agent."""
     raw = json.dumps(body)
     if len(raw.encode()) > PREFS_CAP:
         raise HTTPException(413, "Prefs object exceeds the 16 KB cap")
@@ -254,11 +257,15 @@ def put_prefs(body: dict, request: Request):
             cur.execute("""INSERT INTO shared.app_config (key, value)
                            VALUES (%s, %s)
                            ON CONFLICT (key) DO UPDATE
-                             SET value = EXCLUDED.value, updated_at = now(),
+                             SET value = jsonb_strip_nulls(shared.app_config.value
+                                                           || EXCLUDED.value),
+                                 updated_at = now(),
                                  updated_by = shared.current_actor(),
-                                 version = shared.app_config.version + 1""",
+                                 version = shared.app_config.version + 1
+                           RETURNING value""",
                         (f"uprefs:{who['agent_id']}", raw))
-        return {"ok": True, "prefs": body}
+            (merged,) = cur.fetchone()
+        return {"ok": True, "prefs": merged}
 
 
 class ChangePassword(BaseModel):

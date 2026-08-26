@@ -311,7 +311,11 @@ function applyDeleteSelected(){
       return;
     }
     e.zDeleted=true;
-    notifyDocket({ type:'entry-removed', ticket:e.zTicket, techId:e.techId, typeId:e.typeId, h:e.hours, eid:(window._docketRev||{})[e.id]||null });
+    notifyDocket({ type:'entry-removed', ticket:e.zTicket, techId:e.techId, typeId:e.typeId, h:e.hours,
+      /* a server row's id IS the docket eid (same table) — the session map
+         only covers live-bridged ghosts (audit: null eids forced Docket
+         onto the hours heuristic) */
+      eid: srvId(e.id)? e.id : ((window._docketRev||{})[e.id]||null) });
     e.status='void'; e.voidedAt=Date.now(); e.voidReason='Removed in Docket';
     voided.push(e);
     log('Voided (removed in Docket)',`${esc(client(e.clientId).name)} · #${e.zTicket}: entry #${e.zEntryId} removed in Docket — ledger row voided (not billed), retained for audit`,e.id);
@@ -347,7 +351,8 @@ function saveTime(id){
   const was={s:e.startedAt,en:e.endedAt};
   e.startedAt=s; e.endedAt=n; e.hours=Math.round((n-s)/3600000*100)/100;
   log('Time edited',`${esc(client(e.clientId).name)} · #${e.zTicket} → ${fmtDate(s)} ${fmtTime(s)}–${fmtTime(n)} · ${fmtHours(e.hours)} h`+(e.zEntryId?' · Docket record updated':''),e.id);
-  notifyDocket({ type:'entry-updated', ticket:e.zTicket, techId:e.techId, typeId:e.typeId, oldH:_oldH, h:e.hours, startedAt:e.startedAt, endedAt:e.endedAt, eid:(window._docketRev||{})[e.id]||null });
+  notifyDocket({ type:'entry-updated', ticket:e.zTicket, techId:e.techId, typeId:e.typeId, oldH:_oldH, h:e.hours, startedAt:e.startedAt, endedAt:e.endedAt,
+    eid: srvId(e.id)? e.id : ((window._docketRev||{})[e.id]||null) });
   toast(`Updated to ${fmtHours(e.hours)} h${e.zEntryId?' — shared record updated; Docket sees it immediately':''}`);
   render();
   if(e.startedAt===was.s&&e.endedAt===was.en) return;

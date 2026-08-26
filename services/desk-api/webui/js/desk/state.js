@@ -321,9 +321,14 @@ function savePrefs(part){
   Object.keys(next).forEach(k=>{ if(next[k]===null) delete next[k]; });
   if(JSON.stringify(next)===JSON.stringify(state.prefs)) return;
   state.prefs = next; render();
+  /* send ONLY the changed keys — the server merges top-level (audit: the
+     whole-object PUT let two open tabs clobber each other's prefs,
+     last-writer-wins). null still clears its key server-side. */
   $fetch('/auth/me/prefs',{method:'PUT',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify(state.prefs)})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); })
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(part)})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      const d=await r.json().catch(()=>null);
+      if(d&&d.prefs) state.prefs=d.prefs;      /* the merged truth */ })
     .catch(()=>oops());
 }
 
@@ -391,8 +396,12 @@ function signOut(){
     .finally(()=>{ try{ (window.top||window).location.href='/ui/login.html'; }
                    catch(e){ location.href='/ui/login.html'; } });
 }
-/* CSV: rows = array of arrays; downloads client-side */
-function csvEsc(v){ v = String(v ?? ''); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+/* CSV: rows = array of arrays; downloads client-side. Leading =,+,-,@ gets
+   an apostrophe — neutralize spreadsheet formula/DDE injection (audit;
+   ticket titles come from email subjects). Same guard as assets. */
+function csvEsc(v){ v = String(v ?? '');
+  if(/^[=+\-@]/.test(v)) v = "'"+v;
+  return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
 function downloadCSV(name, rows){
   const csv = rows.map(r=>r.map(csvEsc).join(',')).join('\n');
   const a = document.createElement('a');

@@ -17,6 +17,12 @@ const ABASE=location.pathname.startsWith('/assets/')?'/assets':'';
 const $fetch=(p,o)=>fetch(ABASE+p,{credentials:'same-origin',...(o||{})});
 
 function mapIn(d){
+  if(d.bundle){ /* served-bundle staleness (audit): after a deploy, a
+     long-lived tab must OFFER a reload, not run old JS forever */
+    if(window._BUNDLE&&window._BUNDLE!==d.bundle&&!document.getElementById('staleBar')){
+      document.body.insertAdjacentHTML('beforeend','<div id="staleBar" style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:9999;background:#152029;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.35)">A new version was deployed &mdash; <a href="#" onclick="location.reload();return false" style="color:#7fd4b5;font-weight:600">reload this tab</a></div>');
+    }
+    if(!window._BUNDLE) window._BUNDLE=d.bundle; }
   state.clients.length=0;   d.clients.forEach(c=>state.clients.push(c));
   state.assets.length=0;    d.assets.forEach(a=>state.assets.push(a));
   state.licenses.length=0;  d.licenses.forEach(l=>state.licenses.push(l));

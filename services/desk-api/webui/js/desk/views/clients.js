@@ -328,7 +328,10 @@ function saveClient(cid){
     tz:g('clTz'), since:g('clSince'), notes:profile.notes });
   if(isNew) CLIENTS.push(c);
   log(isNew?'Client created':'Client updated', `${c.name} · @${c.domain}`);
-  bridgeSend('dir-client-upsert', { client:{ id:c.id, name:c.name, active:c.status!=='archived' }, isNew });
+  /* existing clients broadcast now; a NEW client broadcasts only after the
+     server id arrives — the optimistic 'cN' id seeded phantom rows in
+     Ledger/Assets whose edits then 404'd (audit) */
+  if(!isNew) bridgeSend('dir-client-upsert', { client:{ id:c.id, name:c.name, active:c.status!=='archived' }, isNew });
   toast(`${c.name} ${isNew?'created':'updated'}.`);
   closeModal();
   if(isNew){ openClient(c.id); } else render();
@@ -339,6 +342,8 @@ function saveClient(cid){
       .then(async r=>{ const d=await r.json().catch(()=>({}));
         if(!r.ok) return oops(d);
         if(state.clientId===c.id) state.clientId=d.id;
+        c.id=d.id;   /* the bridge peers get the REAL id */
+        bridgeSend('dir-client-upsert', { client:{ id:d.id, name:c.name, active:true }, isNew:true });
         hydrate(); });
   }else{
     const patch = {name, profile}; if(dom) patch.domains=[dom];   // blank leaves server domains untouched

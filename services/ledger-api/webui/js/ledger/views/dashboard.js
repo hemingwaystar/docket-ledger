@@ -10,24 +10,31 @@ function viewDashboard(){
   const live = state.entries.filter(e=>e.status!=='void');
   // current-period figures: entries whose period is still open
   const openEntries = live.filter(e=>!isLocked(e));
-  let billH=0, nonbillH=0, amt=0, unclass=0;
-  openEntries.forEach(e=>{ const p=priced(e); if(p.unclassified) unclass++; billH+=p.billable?p.h:0; nonbillH+=p.billable?0:p.h; amt+=p.amount; });
-  const totalH=billH+nonbillH;
+  /* same bucketing rules as Reports (audit: the two pages disagreed):
+     unclassified hours count NEITHER billable nor non-billable */
+  let billH=0, nonbillH=0, unclassH=0, amt=0, unclass=0;
+  openEntries.forEach(e=>{ const p=priced(e);
+    if(p.unclassified){ unclass++; unclassH+=p.h; }
+    else if(p.billable) billH+=p.h;
+    else nonbillH+=p.h;
+    amt+=p.amount; });
+  const totalH=billH+nonbillH+unclassH;
 
   // group current open work by client
   const byClient={};
   openEntries.forEach(e=>{ (byClient[e.clientId]=byClient[e.clientId]||[]).push(e); });
   const clientCards = Object.keys(byClient).map(cid=>{
-    const c=client(cid), es=byClient[cid]; const per=periodFor(c.cycle, es[0].startedAt);
+    const c=client(cid), es=byClient[cid]; const per=entryPeriod(es[0]);
+    const mixed = !es.every(e=>entryPeriod(e).key===per.key);   /* older open periods ride along */
     let h=0,a=0,u=0; es.forEach(e=>{const p=priced(e); h+=p.h; a+=p.amount; if(p.unclassified)u++;});
-    return {c,per,h,a,u,n:es.length};
+    return {c,per,mixed,h,a,u,n:es.length};
   }).sort((x,y)=>y.a-x.a);
   const pgD=paginate('dashClients',clientCards);
 
   return `
   <div class="grid g-4">
-    <div class="card stat"><div class="lab">Unbilled this cycle</div><div class="val money">${fmtMoney(amt)}</div><div class="sub">across ${clientCards.length} clients</div></div>
-    <div class="card stat"><div class="lab">Billable hours</div><div class="val tape">${fmtHours(billH)}<span class="u">h</span></div><div class="sub">${fmtHours(nonbillH)} h non-billable</div></div>
+    <div class="card stat"><div class="lab">Unbilled — all open periods</div><div class="val money">${fmtMoney(amt)}</div><div class="sub">across ${clientCards.length} clients</div></div>
+    <div class="card stat"><div class="lab">Billable hours</div><div class="val tape">${fmtHours(billH)}<span class="u">h</span></div><div class="sub">${fmtHours(nonbillH)} h non-billable${unclassH?` · ${fmtHours(unclassH)} h unclassified`:''}</div></div>
     <div class="card stat"><div class="lab">Entries pending</div><div class="val tape">${openEntries.length}</div><div class="sub">${totalH.toFixed(2)} h logged</div></div>
     <div class="card stat"><div class="lab">Needs classifying</div><div class="val tape" style="color:${unclass?'var(--warn)':'var(--ink)'}">${unclass}</div><div class="sub">${unclass?'blocks period close':'all classified'}</div></div>
   </div>
@@ -43,7 +50,7 @@ function viewDashboard(){
         ${pgD.slice.map(x=>`
           <tr>
             <td><div class="cell-title">${esc(x.c.name)}</div><div class="cell-meta">client #${x.c.zorg} · shared with Docket</div></td>
-            <td><span class="chip nonbill" style="text-transform:capitalize">${x.c.cycle}</span> <span class="mini">${x.per.label}</span></td>
+            <td><span class="chip nonbill" style="text-transform:capitalize">${x.c.cycle}</span> <span class="mini">${x.per.label}${x.mixed?' + older open periods':''}</span></td>
             <td>${x.n}${x.u?` · <span style="color:var(--warn)">${x.u} unclassified</span>`:''}</td>
             <td class="num">${fmtHours(x.h)}</td>
             <td class="num" style="font-weight:600">${fmtMoney(x.a)}</td>

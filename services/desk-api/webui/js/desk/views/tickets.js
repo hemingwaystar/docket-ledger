@@ -364,12 +364,17 @@ function bulkApply(k, v){
     ids.forEach(id=>{
       const t = tk(id); if(!t || t.mergedInto) return;
       if(k==='tag'){
-        if(can('edit_props') && !t.tags.includes(v)){
-          t.tags.push(v); n++;
+        /* normalize like addTag/the server (audit: the raw prompt value
+           made ghost chips), skip locked projects, sync the version bump */
+        const nv=v.toLowerCase().trim().replace(/\s+/g,'-');
+        if(can('edit_props') && nv && !t.tags.includes(nv) && !projLocked(t)){
+          t.tags.push(nv); n++;
           $fetch('/api/tickets/'+id+'/tags',{method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({add:[v],remove:[]})})
-            .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+            body:JSON.stringify({add:[nv],remove:[]})})
+            .then(async r=>{ const d=await r.json().catch(()=>({}));
+              if(!r.ok) return oops(d);
+              if(d.version){ t.version=d.version; t.updatedAt=d.updatedAt||t.updatedAt; } });
         }
         return;
       }
@@ -504,7 +509,7 @@ function viewTicket(){
              <button class="btn sm primary" onclick="saveTitle(${t.id})">Save</button>
              <button class="btn sm ghost" onclick="state.editTitle=null;render()">Cancel</button></div>`
         : `<h2 style="display:flex;align-items:center;gap:8px">${esc(TITLES[t.id]||firstLine(t))} <span class="tk-num">#${t.id}</span>
-             ${can('edit_props')||t.ownerId===state.meId?`<button class="rowbtn" onclick="state.editTitle=${t.id};render()" title="Rename — audited">Edit</button>`:''}
+             ${can('edit_props')?`<button class="rowbtn" onclick="state.editTitle=${t.id};render()" title="Rename — audited">Edit</button>`:''}
              ${can('edit_props')&&!t.mergedInto?`<button class="rowbtn" onclick="mergeModal(${t.id})" title="Move this whole ticket into another">Merge…</button><button class="rowbtn" onclick="linkModal(${t.id})" title="Two-way related link">Link…</button><button class="rowbtn" onclick="childModal(${t.id})" title="Make another ticket a child of this one">Add child…</button>`:''}</h2>`}
       <div class="cell-meta" style="margin-top:3px">${stateChip(t)} &nbsp;${prioTag(t.prio)} &nbsp;<span class="mini">·</span>&nbsp;
         <span class="mini">${can('view_clients')?`<a href="#" onclick="openClient('${c.id}');return false" style="text-decoration:none;border-bottom:1px dotted var(--ink-3)">${esc(c.name)}</a>`:esc(c.name)} · ${esc(p?.name||'')} &lt;${esc(p?.email||'')}&gt;</span>
@@ -825,6 +830,9 @@ function attachTime(tid, aid){
 
 function editTimeEntry(tid, i, k, v, srcEl){
   const t = tk(tid), e = t.time[i]; if(!e) return;
+  if(!srvId(e.eid)){ /* mid-save (audit): mutating now would toast success and
+                        silently never reach the server */
+    toast('This entry is still saving — try again in a second.'); commitRender(srcEl); return; }
   if(projLocked(t)){ toast('Approved project — time is frozen. Admin unlock available on the checklist card.'); commitRender(srcEl); return; }
   if(!(can('see_billing') || (can('log_time') && e.techId===state.meId))) return;
   const was = { s:e.startedAt, en:e.endedAt, ty:e.typeId, ta:e.taskId };
@@ -865,6 +873,9 @@ function editTimeEntry(tid, i, k, v, srcEl){
 function removeTimeEntry(tid, i){
   if(projLocked(tk(tid))){ toast('Approved project — time is frozen.'); return; }
   const t = tk(tid), e = t.time[i]; if(!e) return;
+  if(!srvId(e.eid)){ /* mid-save (audit): removing now would claim a voided
+                        Ledger row while the server row survives and BILLS */
+    toast('This entry is still saving — try again in a second.'); return; }
   if(!(can('see_billing') || (can('log_time') && e.techId===state.meId))) return;
   const holder = t.articles.find(a=>a.time===e);
   if(holder) delete holder.time;

@@ -144,7 +144,8 @@ function rtotalCSV(k,t){
     case 'amount':return t.amount.toFixed(2); case 'avg':return (t.billH>0?t.avg:0).toFixed(2); default:return ''; }
 }
 function reportCSV(rep){
-  const q=v=>{ v=String(v); return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const q=v=>{ v=String(v); if(/^[=+\-@]/.test(v)) v="'"+v; /* formula-injection guard (audit) */
+    return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   const lines=[rep.cols.map(c=>q(c.l)).join(',')];
   rep.rows.forEach(row=> lines.push(rep.cols.map(c=>q(rcellCSV(c.k,row))).join(',')));
   if(rep.rows.length) lines.push(rep.cols.map((c,i)=> i===0?q('TOTAL'):q(rtotalCSV(c.k,rep.totals))).join(','));
@@ -196,7 +197,11 @@ function exportUtilCSV(){
     const tot = es.reduce((s,e)=>s+e.hours,0), bil = es.filter(e=>priced(e).billable).reduce((s,e)=>s+e.hours,0);
     data.push([t.name+(t.active===false?' (deactivated)':''), tot.toFixed(2), bil.toFixed(2), tot?(bil/tot*100).toFixed(1):'0']);
   });
-  const csv = data.map(r=>r.join(',')).join('\n');
+  /* quoted + formula-guarded like every other export (audit: this one was
+     bare join(',') — a comma in a name shifted columns) */
+  const q=v=>{ v=String(v); if(/^[=+\-@]/.test(v)) v="'"+v;
+    return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const csv = data.map(r=>r.map(q).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = `ledger-utilization-${mkey}.csv`; a.click();
   log('CSV exported', `utilization ${mkey}`);

@@ -62,6 +62,9 @@ function permLabel(pid){
 }
 
 function togglePerm(name, pid){
+  /* the server needs manage_roles — the ungated checkbox optimistically
+     flipped, then 403'd and reverted for manage_settings-only admins (audit) */
+  if(!can('manage_roles')){ toast('Editing role permissions needs the manage_roles permission.'); return; }
   const r = state.roleDefs.find(x=>x.name===name); if(!r) return;
   const had = r.perms.has(pid);
   if(had) r.perms.delete(pid); else r.perms.add(pid);
@@ -77,6 +80,7 @@ function togglePerm(name, pid){
 /* Presets cover the Docket matrix; l_* AND a_* grants ride untouched. The
    whole diff lands in ONE PATCH — add[]/remove[] batched. */
 function applyPreset(name, preset){
+  if(!can('manage_roles')){ toast('Editing role permissions needs the manage_roles permission.'); return; }
   const r = state.roleDefs.find(x=>x.name===name); if(!r) return;
   const target = new Set(PRESETS[preset]);
   const add    = [...target].filter(p=>!r.perms.has(p));

@@ -191,6 +191,7 @@ tr.rpt-total td:first-child{color:var(--ink-3);text-transform:uppercase;letter-s
 
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .seg{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px}
+.seg.wrap{flex-wrap:wrap;display:flex} /* ledger.css's modifier — desk used the class with no rule (audit) */
 .rpt-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .rpt-lab{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);width:70px;flex:0 0 70px;font-weight:600}
 .seg button{border:0;background:none;padding:6px 12px;border-radius:6px;font-size:12.5px;color:var(--ink-2);font-weight:500;display:inline-flex;align-items:center;gap:6px}

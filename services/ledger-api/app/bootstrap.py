@@ -12,6 +12,26 @@ from .helpers import entry_scope_where
 router = APIRouter()
 
 
+def _bundle_stamp():
+    """Served-bundle fingerprint (audit) — the UI offers a reload when a
+    deploy changes it; desk bootstrap.py documents the pattern."""
+    import hashlib
+    import os
+    h = hashlib.sha1()
+    root = os.path.join(os.path.dirname(__file__), "..", "webui")
+    for dirpath, _dirs, files in sorted(os.walk(root)):
+        for f in sorted(files):
+            try:
+                st = os.stat(os.path.join(dirpath, f))
+                h.update(f"{f}:{st.st_size}:{int(st.st_mtime)}".encode())
+            except OSError:
+                pass
+    return h.hexdigest()[:12]
+
+
+BUNDLE = _bundle_stamp()
+
+
 @router.get("/api/bootstrap")
 def bootstrap(request: Request, limit: int = 1000):
     """Ledger prototype-shaped state: directory, entries, periods, projects."""
@@ -20,7 +40,8 @@ def bootstrap(request: Request, limit: int = 1000):
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
         ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
-        out = {"me": {"name": who["name"], "email": who["email"],
+        out = {"bundle": BUNDLE,
+               "me": {"name": who["name"], "email": who["email"],
                       "initials": "".join(w[0] for w in who["name"].split()[:2]).upper(),
                       "perms": sorted(who["perms"])}}
         with conn.cursor(row_factory=dict_row) as cur:

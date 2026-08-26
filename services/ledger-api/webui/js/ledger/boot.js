@@ -7,3 +7,11 @@
 render();
 window.addEventListener('focus',()=>{ if(!window.__h||Date.now()-window.__h>30000){window.__h=Date.now();hydrate();} });
 hydrate();
+
+/* transport-failure net (audit): an optimistic mutation whose fetch REJECTED
+   (network drop) used to keep its success toast and local state — no oops,
+   no rehydrate. HTTP refusals are handled at each call site; this catches
+   the transport layer. */
+window.addEventListener('unhandledrejection', ev=>{ ev.preventDefault();
+  console.error('server mirror failed', ev.reason);
+  try{ oops(0); }catch(_e){} });

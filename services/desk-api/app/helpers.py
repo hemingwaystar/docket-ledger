@@ -39,8 +39,11 @@ def state_id(cur, label):
 
 
 def priority_id(cur, label):
-    return one(cur, "SELECT id FROM desk.priorities WHERE lower(label) = lower(%s) AND active",
-               (label,), "Unknown priority")[0]
+    # id-or-label (audit's ids-not-strings class): a label rename between the
+    # caller's hydrate and its click must not 404 an edit the ids identify
+    return one(cur, """SELECT id FROM desk.priorities
+                        WHERE (lower(label) = lower(%s) OR id::text = %s) AND active""",
+               (label, label), "Unknown priority")[0]
 
 
 def activity_type_id(cur, handle):

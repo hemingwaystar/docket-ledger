@@ -42,7 +42,8 @@ function schedStep(dir){
   const s = sched(), d = new Date(s.anchor);
   if(s.mode==='day') d.setDate(d.getDate()+dir);
   else if(s.mode==='week') d.setDate(d.getDate()+7*dir);
-  else d.setMonth(d.getMonth()+dir);
+  else { d.setDate(1); d.setMonth(d.getMonth()+dir); }  /* clamp first — on the
+    29th-31st a raw setMonth overflowed into skipped/repeated months (audit) */
   s.anchor = d.getTime(); render();
 }
 

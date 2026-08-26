@@ -8,13 +8,18 @@
    ========================================================================== */
 window._docketMap = {};   /* docket eid → ledger entry id */
 window._docketRev = {};   /* ledger entry id → docket eid */
-function notifyDocket(payload){ try{ if(window.parent!==window) window.parent.postMessage(Object.assign({src:'ledger'}, payload), location.origin); }catch(e){} }
+/* the SHELL's origin, not ours: on direct-port access Ledger runs at :8082
+   while the shell is at :8081 — posting with location.origin made the
+   browser silently drop every message (audit). Behind nginx the two match. */
+const PARENT_ORIGIN = (typeof LBASE!=='undefined'&&LBASE)? location.origin
+  : location.protocol+'//'+location.hostname+':8081';
+function notifyDocket(payload){ try{ if(window.parent!==window) window.parent.postMessage(Object.assign({src:'ledger'}, payload), PARENT_ORIGIN); }catch(e){} }
 function openDirectoryInDocket(){
-  if(window.parent!==window){ window.parent.postMessage({src:'ledger', type:'open-directory'}, location.origin); }
+  if(window.parent!==window){ window.parent.postMessage({src:'ledger', type:'open-directory'}, PARENT_ORIGIN); }
   else toast('Open the suite (suite.html) to jump between the apps.');
 }
 function openInDocket(ticket){
-  if(window.parent!==window){ window.parent.postMessage({src:'ledger', type:'open-ticket', ticket}, location.origin); }
+  if(window.parent!==window){ window.parent.postMessage({src:'ledger', type:'open-ticket', ticket}, PARENT_ORIGIN); }
   else toast('Open the suite (suite.html) to jump between the apps.');
 }
 window.addEventListener('message', ev=>{
@@ -57,7 +62,12 @@ window.addEventListener('message', ev=>{
   const findByHeuristic = ()=> state.entries.find(x=> x.zTicket===d.ticket && x.techId===d.techId
       && x.status!=='void' && !x.zDeleted && Math.abs(x.hours-(d.oldH!=null?d.oldH:d.h))<0.011);
   if(d.type==='time-updated'){
-    const id = window._docketMap[d.eid]; let e = id && state.entries.find(x=>x.id===id);
+    /* the docket eid IS the ledger row uuid (same table) — match server
+       rows DIRECTLY before the session map or the hours heuristic, which
+       could pick the wrong same-tech same-hours row (audit) */
+    const id = window._docketMap[d.eid];
+    let e = (d.eid && state.entries.find(x=>x.id===d.eid))
+         || (id && state.entries.find(x=>x.id===id));
     if(!e) e = findByHeuristic();
     if(!e) return;
     if(e.status==='approved' || e.status==='locked' || isLocked(e) || e.tsApproved){
@@ -76,7 +86,9 @@ window.addEventListener('message', ev=>{
     render();
   }
   if(d.type==='time-removed'){
-    const id = window._docketMap[d.eid]; let e = id && state.entries.find(x=>x.id===id);
+    const id = window._docketMap[d.eid];
+    let e = (d.eid && state.entries.find(x=>x.id===d.eid))
+         || (id && state.entries.find(x=>x.id===id));
     if(!e) e = findByHeuristic();
     if(!e) return;
     if(e.status==='approved' || e.status==='locked' || isLocked(e) || e.tsApproved){

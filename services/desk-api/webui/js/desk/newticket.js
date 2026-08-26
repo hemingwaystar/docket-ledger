@@ -39,6 +39,13 @@ function newTicketModal(preClient){
 }
 function ntContacts(sel){
   const c = client(document.getElementById('ntClient').value);
+  if(!c){
+    /* plain open, no client picked yet — an empty placeholder combo, not a
+       TypeError on every New-ticket click (audit) */
+    document.getElementById('ntContactWrap').innerHTML =
+      combo('ntContact', [{v:'', label:'— pick a client first —', sub:''}], '', null, 'Search contacts…');
+    return;
+  }
   /* contact is optional — with none picked, no open email can go out (the
      trigger engine skips when there is no recipient) */
   const opts = [{v:'', label:'— no contact —', sub:'no open email goes out'},

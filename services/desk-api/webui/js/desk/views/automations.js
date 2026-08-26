@@ -39,7 +39,7 @@ function viewAutomations(){
     <div class="card-head flush"><h3>Microsoft Graph authentication</h3><span class="hint">one app registration · every mailbox and the verification sender ride on it</span></div>
     <div class="setting-row" style="align-items:flex-start"><div class="sl">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-          <span class="mini muted">tenant</span><span class="tape">${esc(AUTH_CFG.tenant)}</span>
+          <span class="mini muted">tenant</span><input type="text" value="${esc(GRAPH_AUTH.tenant||'')}" class="in-mono" style="width:200px" placeholder="contoso.onmicrosoft.com" onchange="graphSet('tenant',this.value,this)" ${GRAPH_AUTH.connected?'disabled title="Disconnect before changing the app registration"':''}>
           <span class="mini muted">app (client) ID</span><input type="text" value="${esc(GRAPH_AUTH.clientId)}" class="in-mono" style="width:200px" onchange="graphSet('clientId',this.value,this)" ${GRAPH_AUTH.connected?'disabled title="Disconnect before changing the app registration"':''}>
         </div>
         ${secretRow('graphSecret')}

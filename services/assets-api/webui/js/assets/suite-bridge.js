@@ -7,9 +7,14 @@
    openInDocket() is wired for Build 28's asset↔ticket links (the desk
    side starts accepting {src:'assets'} then).
    ========================================================================== */
-function notifyDocket(payload){ try{ if(window.parent!==window) window.parent.postMessage(Object.assign({src:'assets'}, payload), location.origin); }catch(e){} }
+/* the SHELL's origin, not ours — on direct-port access Assets runs at :8083
+   while the shell is :8081; location.origin made the browser silently drop
+   every message (audit). Behind nginx the two match. */
+const PARENT_ORIGIN = (typeof ABASE!=='undefined'&&ABASE)? location.origin
+  : location.protocol+'//'+location.hostname+':8081';
+function notifyDocket(payload){ try{ if(window.parent!==window) window.parent.postMessage(Object.assign({src:'assets'}, payload), PARENT_ORIGIN); }catch(e){} }
 function openInDocket(ticket){
-  if(window.parent!==window){ window.parent.postMessage({src:'assets', type:'open-ticket', ticket}, location.origin); }
+  if(window.parent!==window){ window.parent.postMessage({src:'assets', type:'open-ticket', ticket}, PARENT_ORIGIN); }
   else toast('Open the suite (suite.html) to jump between the apps.');
 }
 window.addEventListener('message', ev=>{

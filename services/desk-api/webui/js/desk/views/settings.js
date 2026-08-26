@@ -97,7 +97,7 @@ function archiveGroup(gid){
 
 /* ---- agents: add / deactivate / membership / role (shared.agents) ------- */
 function agentModal(){
-  if(!can('manage_settings')) return;
+  if(!(can('manage_settings')||can('manage_roles'))) return;  /* the server accepts either (audit) */
   const m = document.getElementById('modal');
   m.innerHTML = `
     <div class="modal-head"><h3>Add person</h3><p>Creates the agent record sign-in matches on — SSO users can sign in the moment they’re added. Group membership drives ticket visibility here and client access in Ledger.</p></div>
@@ -139,7 +139,7 @@ function saveAgent(){
       setTimeout(()=>hydrate(),400); });           /* swap temp id for server truth */
 }
 function deactivateAgent(tid){
-  if(!can('manage_settings')) return;
+  if(!(can('manage_settings')||can('manage_roles'))) return;  /* the server accepts either (audit) */
   const a = agent(tid); if(!a) return;
   if(tid===state.meId){ toast('You can’t deactivate yourself — another admin has to.'); return; }
   if(!confirm(`Deactivate ${a.name}? They can’t sign in and leave the pickers; their tickets and time stay. Re-adding the same email restores them.`)) return;

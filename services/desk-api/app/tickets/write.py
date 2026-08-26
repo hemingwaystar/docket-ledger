@@ -103,8 +103,10 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
             if body.title is not None:
                 sets.append("title = %s"); args.append(body.title); notes.append(f"title → {body.title}")
             if body.state is not None:
+                # id-or-label (audit's ids-not-strings class)
                 cur.execute("""SELECT id, kind, is_system FROM desk.ticket_states
-                                WHERE lower(label) = lower(%s) AND active""", (body.state,))
+                                WHERE (lower(label) = lower(%s) OR id::text = %s)
+                                  AND active""", (body.state, body.state))
                 strow = cur.fetchone()
                 if strow is None:
                     raise HTTPException(404, "Unknown state")

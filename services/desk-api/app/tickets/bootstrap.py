@@ -8,6 +8,29 @@ from .common import ST_MAP, visibility_where
 router = APIRouter(prefix="/api")
 
 
+def _bundle_stamp():
+    """Fingerprint of the SERVED webui files, computed once at boot. The UI
+    compares it across hydrates and offers a reload when a deploy changed
+    the bundle — an open suite tab used to run old JS against the new
+    API/DB contract indefinitely (audit; the Build-13 lesson, finally in
+    code)."""
+    import hashlib
+    import os
+    h = hashlib.sha1()
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "webui")
+    for dirpath, _dirs, files in sorted(os.walk(root)):
+        for f in sorted(files):
+            try:
+                st = os.stat(os.path.join(dirpath, f))
+                h.update(f"{f}:{st.st_size}:{int(st.st_mtime)}".encode())
+            except OSError:
+                pass
+    return h.hexdigest()[:12]
+
+
+BUNDLE = _bundle_stamp()
+
+
 @router.get("/bootstrap")
 def bootstrap(request: Request, limit: int = 500):
     """The whole app state, shaped exactly like the prototype's in-page state
@@ -17,7 +40,8 @@ def bootstrap(request: Request, limit: int = 500):
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
         ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
-        out = {"me": {"id": str(who["agent_id"]), "name": who["name"],
+        out = {"bundle": BUNDLE,
+               "me": {"id": str(who["agent_id"]), "name": who["name"],
                       "email": who["email"], "perms": sorted(who["perms"]),
                       "initials": "".join(w[0] for w in who["name"].split()[:2]).upper()}}
         with conn.cursor(row_factory=dict_row) as cur:
