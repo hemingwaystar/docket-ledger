@@ -295,7 +295,13 @@ def approve(ticket_id: int, body: Approve, request: Request):
             status, *_ = _project(cur, ticket_id)
             if status != "review":
                 raise HTTPException(409, f"Project is in {status}, not review")
-            aid, name = helpers.agent(cur, body.approver_email)
+            # actor of record: the SESSION's own identity, never a body-supplied
+            # email a caller could use to attribute the approval to another
+            # agent (audit). A PAT/integration still names the approver in body.
+            if who["kind"] == "session":
+                aid, name = who["agent_id"], who["name"]
+            else:
+                aid, name = helpers.agent(cur, body.approver_email)
             cur.execute("""UPDATE desk.projects
                               SET status = 'approved', approved_at = now(), approved_by = %s
                             WHERE ticket_id = %s""", (aid, ticket_id))

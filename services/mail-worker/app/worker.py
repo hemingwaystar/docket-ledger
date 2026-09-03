@@ -17,8 +17,11 @@ Ingestion per message — §10.8/10.14 encoded:
     ticket is an approved locked project (follow-up filed, state untouched)
   * no match → new ticket via the routing ladder: exact contact → client
     domain (contact auto-created) → sentinel catch-all + 'unrouted' tag
-Outbound send (replies via Graph) is a coming build — ingestion never sends
-mail, so no auto-reply loop risk exists yet by design.
+Outbound send is live elsewhere (agent replies in desk-api's mailer; trigger
+emails in automations.py via the worker's mailer) — but INGESTION itself never
+sends: the poll/ingest path here only reads and files. The loop guard lives in
+the trigger engine (email actions refuse events born from auto-generated mail,
+meta.auto), so an auto-reply can't answer a mailer-daemon and ping-pong.
 """
 import html
 import json

@@ -85,12 +85,13 @@ def send_reply(cur, *, mailbox_address: str, display_name: str,
     msg.set_content(body)
 
     token = _token(cur)
-    raw = msg.as_bytes()
-    if len(raw) > 4 * 1024 * 1024:
-        # Graph's sendMail MIME cap — same guard the desk mailer carries
-        # (audit: this copy lacked it and would 413 opaquely)
-        raise MailError("Message exceeds Graph's 4 MB MIME limit")
-    mime = base64.b64encode(raw).decode()
+    mime = base64.b64encode(msg.as_bytes()).decode()
+    if len(mime) > 4 * 1024 * 1024:
+        # Graph's sendMail cap is 4 MB of the BASE64 payload, not the raw MIME —
+        # measure the encoded size, exactly like desk-api's mailer (audit: the
+        # raw-bytes check let a message up to ~5.3 MB encoded slip past here and
+        # then 413 opaquely at Graph).
+        raise MailError("Message exceeds Graph's 4 MB (base64) MIME limit")
     resp = httpx.post(
         f"https://graph.microsoft.com/v1.0/users/{mailbox_address}/sendMail",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "text/plain"},

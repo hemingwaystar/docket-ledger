@@ -33,7 +33,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from . import auth, crypto, db, mailer
+from . import auth, crypto, db, helpers, mailer
 
 router = APIRouter(prefix="/api/tickets")
 
@@ -137,6 +137,12 @@ def start(ticket_id: int, body: Start, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "verify_identity")
         with conn.cursor() as cur:
+            # object-scope guard (audit 32g class): a verify_identity holder must
+            # be able to SEE the ticket, not merely hold the perm — otherwise a
+            # scoped session could fire an SMS/email to a contact and stamp
+            # identity-verified on ANY ticket by id. 404 (not 403) hides
+            # existence, like ticket_or_404 elsewhere.
+            helpers.ticket_or_404(cur, ticket_id, who)
             v = _vcfg(cur)
             ch = v[body.channel]
             if not ch.get("enabled"):
@@ -217,6 +223,7 @@ def check(ticket_id: int, body: Check, request: Request):
         who = auth.require(conn, request)
         auth.need(who, "verify_identity")
         with conn.cursor() as cur:
+            helpers.ticket_or_404(cur, ticket_id, who)   # object-scope guard (see start())
             v = _vcfg(cur)
             cur.execute("""SELECT id, channel, masked, code_hash, expires_at < now(),
                                   attempts_left, status

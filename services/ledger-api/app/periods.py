@@ -87,12 +87,19 @@ def approve_period(period_id: str, body: PeriodApprove, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'l_approve')
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",
-                        (body.approver_email,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(422, "Unknown approver")
-            aid, name = row
+            # actor of record: the SESSION's own identity, never a body-supplied
+            # email a caller could use to attribute the lock to another agent
+            # (audit). A PAT/integration carries no session identity, so it
+            # still names the approver in the body.
+            if who["kind"] == "session":
+                aid, name = who["agent_id"], who["name"]
+            else:
+                cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",
+                            (body.approver_email,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(422, "Unknown approver")
+                aid, name = row
             # lock the period row FIRST: the 0039 insert guard takes FOR
             # SHARE on it, so any in-flight time INSERT commits (and is
             # counted below) or waits behind this approval — an unclassified

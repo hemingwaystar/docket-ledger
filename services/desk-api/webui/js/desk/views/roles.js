@@ -9,6 +9,11 @@
    Endpoints: POST /api/directory/roles · PATCH /api/directory/roles/{name}
    (note / rename / entra_group / active / add[] / remove[]) ·
    DELETE /api/directory/roles/{name}.
+   Suite bridge: role create/rename/note/archive/delete and Ledger-perm
+   toggles mirror to an open Ledger tab via bridgeSend (dir-role-upsert /
+   dir-role-perms / dir-role-delete) — the same live directory-sync the
+   client/group/agent/type editors do; Ledger reconciles from the DB on its
+   next hydrate regardless.
    Invariants: custom roles archive/restore (PATCH {active} — archived =
    hidden from pickers, holders keep it until reassigned) and hard-delete
    (DELETE — the ONE user-approved exception to no-DELETE, migration 0030);
@@ -71,6 +76,11 @@ function togglePerm(name, pid){
   log('Role updated', `${name} · ${r.perms.has(pid)?'granted':'revoked'} “${permLabel(pid)}” — applies at next sign-in`);
   render();
   if(r.perms.has(pid)===had) return;                    /* diff-guard (row 21) */
+  /* mirror Ledger-perm changes to an open Ledger tab (dir-role-perms carries
+     the FULL l_ set, prefix stripped — Ledger's suite-bridge full-replaces).
+     Docket/Assets perms don't concern Ledger, so only l_ toggles ride. */
+  if(pid.startsWith('l_')) bridgeSend('dir-role-perms', { role:{ name, note:r.note,
+    perms:[...r.perms].filter(p=>p.startsWith('l_')).map(p=>p.slice(2)) } });
   const payload = r.perms.has(pid)? {add:[pid]} : {remove:[pid]};
   $fetch('/api/directory/roles/'+encodeURIComponent(name),{method:'PATCH',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
@@ -108,6 +118,7 @@ function archiveRole(name){
   r.active = to;
   log(to?'Role restored':'Role archived', `${name} · ${to?'back in the pickers':'hidden from pickers — current holders keep it until reassigned'}`);
   toast(`Role “${name}” ${to?'restored':'archived'}.`);
+  bridgeSend('dir-role-upsert', { role:{ name, active:to } });   /* mirror to an open Ledger tab */
   render();
   $fetch('/api/directory/roles/'+encodeURIComponent(name),{method:'PATCH',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({active:to})})
@@ -126,6 +137,7 @@ function deleteRole(name){
   if(state.openRole===name) state.openRole=null;
   log('Role deleted', `${name} · hard-deleted — the audit log keeps its history`);
   toast(`Role “${name}” deleted.`);
+  bridgeSend('dir-role-delete', { name });   /* mirror to an open Ledger tab */
   render();
   $fetch('/api/directory/roles/'+encodeURIComponent(name),{method:'DELETE'})
     .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
@@ -164,6 +176,9 @@ function saveRole(oldName){
     closeModal(); render();
     if(!changed) return;                                /* diff-guard (row 21) */
     const payload = {note}; if(name!==oldName) payload.rename=name;
+    /* mirror the rename/note to an open Ledger tab (oldName lets its bridge
+       find the row it renames; perms ride untouched — no ledgerPerms sent) */
+    bridgeSend('dir-role-upsert', { role:(name!==oldName? {oldName, name, note} : {name, note}) });
     $fetch('/api/directory/roles/'+encodeURIComponent(oldName),{method:'PATCH',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
       .then(async r2=>{ if(!r2.ok) return oops(await r2.json().catch(()=>0)); });
@@ -172,6 +187,7 @@ function saveRole(oldName){
   state.roleDefs.push({ name, note, perms:new Set(), members:0, core:false, entra:'', active:true });
   log('Role added', `${name} — grant permissions in the matrix; assign people via the matching Entra group`);
   toast(`Role “${name}” saved — applies in both apps.`);
+  bridgeSend('dir-role-upsert', { role:{ name, note, ledgerPerms:[] } });   /* new role → an open Ledger tab */
   closeModal(); render();
   $fetch('/api/directory/roles',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({name, note})})

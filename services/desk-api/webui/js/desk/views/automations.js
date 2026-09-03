@@ -4,7 +4,7 @@
    The builders only shape the jsonb definitions and CRUD them — execution is
    the mail-worker's engine (0019); no matching or firing happens here.
    Owns: viewAutomations · goBoard · ruleWhen/ruleThen · graphSet ·
-   graphConnect/graphReconsent · graphDisconnect · toggleMailbox ·
+   graphConnect/graphReconsent · graphTestSend · graphDisconnect · toggleMailbox ·
    mailboxModal/saveMailbox · toggleOutboundMaster · sendasSet (the routing
    card's per-board sender picker) · toggleRule2/toggleTrig/
    deleteTrig/moveRule · ruleModal machinery + saveRule · trigModal machinery
@@ -16,7 +16,8 @@
    POST /api/automations/rules/order · POST /api/settings/mailboxes ·
    PATCH /api/settings/mailboxes/{address} · POST /api/settings/mail/outbound ·
    PATCH /api/settings/groups/{group_id}/sendas ·
-   POST /api/settings/graph/test · POST /api/settings/graph/disconnect ·
+   POST /api/settings/graph/test · POST /api/settings/graph/test-send ·
+   POST /api/settings/graph/disconnect ·
    PUT /api/settings/config/graph · PUT /api/settings/config/auth ·
    PUT /api/settings/config/sla · PUT /api/settings/config/business_hours ·
    POST /api/settings/canned · PATCH /api/settings/canned/{id}.
@@ -48,7 +49,7 @@ function viewAutomations(){
           : 'Not authenticated — mailboxes are paused and verification emails can’t send until an admin consents.'}</p>
       </div>
       ${GRAPH_AUTH.connected
-        ? `<button class="rowbtn" onclick="graphReconsent()">Renew consent</button><button class="rowbtn" onclick="graphDisconnect()">Disconnect</button><span class="chip st-solved"><span class="cdot"></span>Authenticated</span>`
+        ? `<button class="rowbtn" onclick="graphTestSend()" title="Send one real test message — proves Mail.Send consent + the app access policy before go-live">Send test email</button><button class="rowbtn" onclick="graphReconsent()">Renew consent</button><button class="rowbtn" onclick="graphDisconnect()">Disconnect</button><span class="chip st-solved"><span class="cdot"></span>Authenticated</span>`
         : `<button class="btn sm primary" onclick="graphConnect()">Authenticate with Microsoft</button><span class="chip st-closed"><span class="cdot"></span>Disconnected</span>`}
     </div>
   </div>
@@ -176,6 +177,24 @@ function graphConnect(){
       setTimeout(()=>hydrate(),400); });
 }
 function graphReconsent(){ graphConnect(); }
+/* outbound pre-flight (POST /api/settings/graph/test-send): graphConnect only
+   proves the token; Mail.Send consent and the application access policy fail
+   only on a REAL send, so this sends one plain test through the exact mailer
+   path agent replies use — surfacing those failures with Graph's own error
+   BEFORE go-live. Not gated on outbound_enabled: an explicit admin action to a
+   self-chosen address is pre-flight, not customer mail. */
+function graphTestSend(){
+  const to=(prompt('Send a Graph outbound test to which address?\n(proves Mail.Send consent + the app access policy before go-live)')||'').trim();
+  if(!to) return;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)){ toast('That doesn’t look like an email address.'); return; }
+  const sender=(prompt('Send FROM which mailbox? Leave blank for the first unpaused outbound mailbox.\n(pass verify@… to test the verification sender)')||'').trim();
+  toast('Sending the outbound pre-flight test…');
+  $fetch('/api/settings/graph/test-send',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(sender?{to,sender}:{to})})
+    .then(async r=>{ const d=await r.json().catch(()=>({}));
+      if(!r.ok) return oops(d);                          /* 409/502 carries Graph's own error */
+      toast(`Test sent from ${d.sent_from} → ${to}. If it lands, outbound is go.`); });
+}
 function graphDisconnect(){
   GRAPH_AUTH.connected = false;
   const live = MAILBOXES.filter(m=>m.status==='connected');
