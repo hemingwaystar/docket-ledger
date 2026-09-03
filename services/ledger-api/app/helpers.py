@@ -62,6 +62,77 @@ def _sane_span(started: str | None, ended: str | None):
                                      "sane window — check the year")
 
 
+def _retainer_overage(cur, client_id, period_id, period_key):
+    """Server-side mirror of the UI's retainerMath (core.js) — the ONE place
+    the retainer agreement turns into a billed amount (audit 32g: it was
+    persisted + displayed but applied to no billed total, so retainer clients
+    were over-billed the full hours).
+
+    Returns None when no retainer applies — the caller then bills normally.
+    Applies (returns the overage breakdown) only when BOTH the retainers module
+    is on (app_config 'retainers'.enabled — "turn off if Odoo owns agreements")
+    AND the client has an ENABLED agreement. When it applies the period bills
+    ONLY the overage hours (used − included) at the agreement rate; the covered
+    hours are prepaid by the retainer fee (invoiced separately), exactly as the
+    on-screen overage math shows.
+
+    included = includedHours + a one-period rollover of the prior period's
+    unused included hours, capped at rollover_cap_hours (mirrors prevPeriodKey/
+    prevUsed). Overage rate = the agreement rate, else the client-wide rate
+    override, else the UI's $150 fallback."""
+    cur.execute("SELECT value FROM shared.app_config WHERE key = 'retainers'")
+    row = cur.fetchone()
+    module = row[0] if row and isinstance(row[0], dict) else {}
+    if not module.get("enabled"):
+        return None
+    cur.execute("""SELECT included_hours, overage_rate_cents, rollover_cap_hours
+                     FROM ledger.retainers WHERE client_id = %s AND enabled""",
+                (client_id,))
+    r = cur.fetchone()
+    if r is None:
+        return None
+    included_hours, overage_rate_cents, rollover_cap = float(r[0]), r[1], float(r[2])
+
+    def _billable_hours(pid):
+        cur.execute("""SELECT COALESCE(sum(e.hours), 0)
+                         FROM ledger.time_entries e
+                         CROSS JOIN LATERAL ledger.priced(e) AS p
+                        WHERE e.period_id = %s AND e.status <> 'void' AND p.billable""",
+                    (pid,))
+        return float(cur.fetchone()[0])
+
+    used_h = _billable_hours(period_id)
+
+    rollover_h = 0.0
+    if rollover_cap > 0:
+        # the immediately-preceding materialized period (key order = the UI's
+        # sorted prevPeriodKey for same-cycle keys)
+        cur.execute("""SELECT id FROM ledger.billing_periods
+                        WHERE client_id = %s AND period_key < %s
+                        ORDER BY period_key DESC LIMIT 1""", (client_id, period_key))
+        prev = cur.fetchone()
+        if prev is not None:
+            prev_used = _billable_hours(prev[0])
+            rollover_h = min(max(included_hours - prev_used, 0.0), rollover_cap)
+
+    included_h = included_hours + rollover_h
+    overage_h = max(used_h - included_h, 0.0)
+
+    if overage_rate_cents is not None:
+        rate_cents = int(overage_rate_cents)
+    else:
+        cur.execute("""SELECT rate_cents FROM ledger.client_rates
+                        WHERE client_id = %s AND activity_type_id IS NULL
+                          AND rate_cents IS NOT NULL
+                        ORDER BY valid_from DESC LIMIT 1""", (client_id,))
+        cw = cur.fetchone()
+        rate_cents = int(cw[0]) if cw and cw[0] is not None else 15000
+
+    return {"used_h": round(used_h, 2), "included_h": round(included_h, 2),
+            "rollover_h": round(rollover_h, 2), "overage_h": round(overage_h, 2),
+            "rate_cents": rate_cents, "amount_cents": round(overage_h * rate_cents)}
+
+
 def _export_payload(cur, period_id):
     cur.execute("""SELECT bp.client_id, bp.period_key, bp.status, c.name
                      FROM ledger.billing_periods bp
@@ -73,15 +144,43 @@ def _export_payload(cur, period_id):
     client_id, period_key, status, client_name = row
     if status == "open":
         raise HTTPException(409, "Approve the period before exporting")
-    cur.execute("""
-        SELECT at.name, p.rate_cents, round(sum(e.hours), 2)
-          FROM ledger.time_entries e
-          CROSS JOIN LATERAL ledger.priced(e) AS p
-          JOIN ledger.activity_types at ON at.id = e.activity_type_id
-         WHERE e.period_id = %s AND e.status <> 'void' AND p.billable
-         GROUP BY at.name, p.rate_cents ORDER BY at.name""", (period_id,))
-    lines = [{"name": n, "quantity": float(q), "price_unit": r / 100.0, "uom": "Hours"}
-             for n, r, q in cur.fetchall()]
+    # retainer clients bill ONLY overage (audit 32g): a single overage line at
+    # the agreement rate instead of the per-activity-type ladder — the covered
+    # hours are prepaid by the retainer fee (invoiced separately), exactly as
+    # the on-screen retainerMath shows. Non-retainer clients bill as before.
+    retainer = _retainer_overage(cur, client_id, period_id, period_key)
+    if retainer is None:
+        cur.execute("""
+            SELECT at.name, p.rate_cents, round(sum(e.hours), 2)
+              FROM ledger.time_entries e
+              CROSS JOIN LATERAL ledger.priced(e) AS p
+              JOIN ledger.activity_types at ON at.id = e.activity_type_id
+             WHERE e.period_id = %s AND e.status <> 'void' AND p.billable
+             GROUP BY at.name, p.rate_cents ORDER BY at.name""", (period_id,))
+        lines = [{"name": n, "quantity": float(q), "price_unit": r / 100.0, "uom": "Hours"}
+                 for n, r, q in cur.fetchall()]
+        cur.execute("""
+            SELECT COALESCE(sum(p.amount_cents), 0)
+              FROM ledger.time_entries e
+              CROSS JOIN LATERAL ledger.priced(e) AS p
+             WHERE e.period_id = %s AND e.status <> 'void' AND p.billable""",
+            (period_id,))
+        hourly_cents = int(cur.fetchone()[0])
+    else:
+        if retainer["overage_h"] > 0:
+            lines = [{
+                "name": (f"Retainer overage — {retainer['used_h']:.2f} h used / "
+                         f"{retainer['included_h']:.2f} h included"),
+                "quantity": retainer["overage_h"],
+                "price_unit": retainer["rate_cents"] / 100.0, "uom": "Hours"}]
+        else:
+            # under the retainer — one $0 line documents the coverage so the
+            # draft invoice isn't empty (a bare no-line invoice reads as an error)
+            lines = [{
+                "name": (f"Within retainer — {retainer['used_h']:.2f} h used / "
+                         f"{retainer['included_h']:.2f} h included (no overage)"),
+                "quantity": retainer["used_h"], "price_unit": 0.0, "uom": "Hours"}]
+        hourly_cents = retainer["amount_cents"]
     flat_cents = 0
     cur.execute("""
         SELECT fl.project_title, fl.line_label, fl.amount_cents
@@ -93,19 +192,13 @@ def _export_payload(cur, period_id):
         flat_cents += cents
         lines.append({"name": f"{title} — {label}", "quantity": 1,
                       "price_unit": cents / 100.0, "uom": "Fee"})
-    # the AUTHORITATIVE total is the same per-entry integer-cents sum the
-    # period cards show (ledger.priced) — never a float recompute over the
-    # grouped lines, which drifted by cents from every other money path
-    # (audit). Odoo's own draft recompute of quantity×price_unit can still
-    # differ from this by a cent on grouped lines; total_cents is the truth.
-    cur.execute("""
-        SELECT COALESCE(sum(p.amount_cents), 0)
-          FROM ledger.time_entries e
-          CROSS JOIN LATERAL ledger.priced(e) AS p
-         WHERE e.period_id = %s AND e.status <> 'void' AND p.billable""",
-        (period_id,))
-    (hourly_cents,) = cur.fetchone()
-    total_cents = int(hourly_cents) + flat_cents
+    # the AUTHORITATIVE hourly total is the integer-cents figure computed above
+    # (per-entry ledger.priced for a normal client, the overage amount for a
+    # retainer one) — never a float recompute over the grouped lines, which
+    # drifted by cents from every other money path (audit). Odoo's own draft
+    # recompute of quantity×price_unit can still differ by a cent on grouped
+    # lines; total_cents is the truth.
+    total_cents = hourly_cents + flat_cents
     cur.execute("SELECT value FROM shared.app_config WHERE key = 'ledger'")
     row = cur.fetchone()
     cfg = row[0] if row and isinstance(row[0], dict) else {}
@@ -113,5 +206,6 @@ def _export_payload(cur, period_id):
             "move_type": "out_invoice", "state": "draft",
             "currency": cfg.get("currency", "USD"),
             "invoice_line_ids": lines,
+            "retainer": retainer,   # None for normal clients; overage breakdown otherwise
             "total_cents": total_cents,
             "total": total_cents / 100.0}

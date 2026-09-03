@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 from . import auth, db
-from .helpers import _export_payload
+from .helpers import _export_payload, _retainer_overage
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ def list_periods(request: Request, client: str | None = None):
         # period cards carry billed totals — money-side roles only (audit)
         auth.need(who, 'l_approve', 'l_export', 'l_see_amounts')
         sql = """
-          SELECT bp.id, c.name AS client, bp.period_key, bp.status,
+          SELECT bp.id, bp.client_id, c.name AS client, bp.period_key, bp.status,
                  bp.approved_at, bp.exported_at, bp.export_ref,
                  count(e.id) FILTER (WHERE e.status <> 'void') AS entries,
                  round(COALESCE(sum(e.hours) FILTER (WHERE e.status <> 'void'), 0), 2) AS hours,
@@ -33,14 +33,39 @@ def list_periods(request: Request, client: str | None = None):
             LEFT JOIN ledger.time_entries e ON e.period_id = bp.id
             LEFT JOIN LATERAL ledger.priced(e) AS p ON TRUE
         """
-        args = []
+        conds, args = [], []
         if client:
-            sql += " WHERE (c.name = %s OR c.id::text = %s)"
+            conds.append("(c.name = %s OR c.id::text = %s)")
             args += [client, client]
+        # scope period cards to clients the caller may access (audit 32g): entry
+        # reads already do this via entry_scope_where, but list_periods didn't —
+        # so an l_see_amounts role like Dispatcher (no l_approve/l_export/
+        # l_all_clients) could read billed dollar totals for clients its access
+        # is restricted from. Same client_access rule as helpers.entry_scope_where;
+        # l_approve / l_export / l_all_clients (and PATs) see every client.
+        if who["kind"] == "session" and not (who["perms"] & {"l_approve", "l_export", "l_all_clients"}):
+            conds.append("""NOT EXISTS (SELECT 1 FROM ledger.client_access ca
+                WHERE ca.client_id = bp.client_id
+                  AND ((ca.mode = 'restricted' AND NOT %s = ANY(ca.tech_ids))
+                    OR (ca.mode = 'group' AND NOT EXISTS
+                         (SELECT 1 FROM shared.agent_groups ag
+                           WHERE ag.agent_id = %s AND ag.group_id = ANY(ca.group_ids)))))""")
+            args += [who["agent_id"], who["agent_id"]]
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
         sql += " GROUP BY bp.id, c.name ORDER BY bp.period_key DESC, c.name"
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, args)
             rows = cur.fetchall()
+        # retainer clients: the period's billable total is the OVERAGE, not the
+        # full-hours sum (audit 32g) — mirror _export_payload and the on-screen
+        # retainerMath so the card total, the fallback page and the invoice all
+        # agree. Plain cursor (positional rows, as _retainer_overage expects).
+        with conn.cursor() as rcur:
+            for r in rows:
+                ov = _retainer_overage(rcur, r["client_id"], r["id"], r["period_key"])
+                if ov is not None:
+                    r["hourly_amount_cents"] = ov["amount_cents"]
         # billed dollars ship only with l_see_amounts (same rule everywhere);
         # approve/export roles without it still see hours and entry counts
         if who["kind"] == "session" and "l_see_amounts" not in who["perms"]:

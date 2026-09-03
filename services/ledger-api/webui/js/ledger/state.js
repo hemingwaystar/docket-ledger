@@ -95,7 +95,11 @@ function go(view){ if(!canView(view)) view='dashboard'; state.view=view; closeMe
    A person's effective permissions are the union of their roles' permission
    sets, resolved server-side and delivered by bootstrap `me` (l_* perms,
    prefix stripped in mapIn). */
-// nav item -> permission required to see it (null = any signed-in user)
+// nav item -> permission required to see it (null = any signed-in user).
+// NOTE (audit 32g): 'view_clients' is a UI-ONLY convenience gate — the ledger
+// backend never checks it (client/billing data is gated by l_see_amounts +
+// l_view_all + client_access instead). Toggling it only shows/hides this tab;
+// it grants/withholds no server data. Do not mistake it for an enforced control.
 const NAV_PERM={ dashboard:null, timesheets:'view', approvals:'approve', clients:'view_clients', types:'manage_types',
   periods:'approve', reports:'view', export:'export', audit:'view_audit', directory:'manage_settings', settings:'manage_settings' };
 

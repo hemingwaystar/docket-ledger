@@ -169,8 +169,8 @@ function viewTickets(){
     ${can('assign')?`<select onchange="bulkApply('owner',this.value)" title="Sets the single owner of every selected ticket"><option value="">Owner…</option>${AGENTS.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
     <span style="display:inline-block;min-width:170px;vertical-align:middle" title="Tick techs, then Assign — they're added to every selected ticket; the owner is unchanged">${multiCombo('bulkAsg', AGENTS.filter(a=>a.active!==false).map(a=>({v:a.id,label:a.name})), state.bulkAsg||[], 'setBulkAsg', 'Assign to…', true)}</span>
     <button class="btn sm" ${(state.bulkAsg&&state.bulkAsg.length)?'':'disabled'} onclick="bulkAddTechs()">Assign${(state.bulkAsg&&state.bulkAsg.length)?' '+state.bulkAsg.length:''}</button>`:''}
-    ${can('edit_props')?`<select onchange="bulkApply('st',this.value)"><option value="">Set state…</option>${aSTATES().filter(x=>!x.system).map(x=>`<option value="${x.id}">${x.label}</option>`).join('')}</select>
-    <select onchange="bulkApply('prio',this.value)"><option value="">Set priority…</option>${aPRIOS().map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
+    ${can('edit_props')?`<select onchange="bulkApply('st',this.value)"><option value="">Set state…</option>${aSTATES().filter(x=>!x.system).map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('')}</select>
+    <select onchange="bulkApply('prio',this.value)"><option value="">Set priority…</option>${aPRIOS().map(p=>`<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select>
     <button class="btn sm" onclick="bulkApply('tag', prompt('Tag to add:'))">+ tag</button>`:''}
     <button class="btn sm ghost" onclick="state.bulk=[];render()">Clear</button>
   </div>`:''}

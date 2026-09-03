@@ -38,7 +38,7 @@ def add_article(ticket_id: int, body: NewArticle, request: Request):
             auth.need(who, "log_time")
             _sane_span(body.time.started_at, body.time.ended_at)
         with conn.cursor() as cur:
-            row = helpers.ticket_or_404(cur, ticket_id)
+            row = helpers.ticket_or_404(cur, ticket_id, who)
             helpers.refuse_if_locked_project(row)
             client_id = row[1]
             if body.time:

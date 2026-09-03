@@ -99,7 +99,7 @@ def patch_ticket(ticket_id: int, body: PatchTicket, request: Request):
                                        body.group, body.pending_until, body.cc)):
             auth.need(who, 'edit_props')
         with conn.cursor() as cur:
-            row = helpers.ticket_or_404(cur, ticket_id)
+            row = helpers.ticket_or_404(cur, ticket_id, who)
             helpers.refuse_if_locked_project(row)
             sets, args, notes = [], [], []
             old_kind = new_kind = None
@@ -235,7 +235,7 @@ def reclient_ticket(ticket_id: int, body: Reclient, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'edit_props')
         with conn.cursor() as cur:
-            row = helpers.ticket_or_404(cur, ticket_id)
+            row = helpers.ticket_or_404(cur, ticket_id, who)
             helpers.refuse_if_locked_project(row)
             new_id = helpers.client_id(cur, body.client)
             cur.execute("SELECT name, is_sentinel FROM shared.clients WHERE id = %s",
@@ -297,7 +297,7 @@ def tags(ticket_id: int, body: Tags, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'edit_props')
         with conn.cursor() as cur:
-            row = helpers.ticket_or_404(cur, ticket_id)
+            row = helpers.ticket_or_404(cur, ticket_id, who)
             helpers.refuse_if_locked_project(row)
             for t in body.add:
                 cur.execute("""INSERT INTO desk.ticket_tags (ticket_id, tag)
@@ -348,7 +348,7 @@ def set_assignees(ticket_id: int, body: Assignees, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'assign')
         with conn.cursor() as cur:
-            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id, who))
             # Resolve + validate the requested set. Only ACTIVE agents may be
             # assigned; unknown/inactive ids are SKIPPED (documented) rather
             # than 422 — a stale UI selection must not fail the whole save, and
@@ -512,7 +512,7 @@ def add_schedule(ticket_id: int, body: NewSchedule, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'assign')
         with conn.cursor() as cur:
-            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id, who))
             # Only ACTIVE agents may be scheduled — a hard 422 (a single-tech
             # add, unlike the assignee full-replace, has no other row to keep).
             cur.execute("SELECT id, name FROM shared.agents WHERE id::text = %s AND active",
@@ -550,7 +550,7 @@ def remove_schedule(ticket_id: int, schedule_id: int, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'assign')
         with conn.cursor() as cur:
-            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id, who))
             cur.execute("""DELETE FROM desk.ticket_schedules
                             WHERE id = %s AND ticket_id = %s RETURNING agent_id""",
                         (schedule_id, ticket_id))
@@ -580,7 +580,7 @@ def complete_schedule(ticket_id: int, schedule_id: int, body: ScheduleDone, requ
     with db.connect() as conn:
         who = auth.require(conn, request)
         with conn.cursor() as cur:
-            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id))
+            helpers.refuse_if_locked_project(helpers.ticket_or_404(cur, ticket_id, who))
             cur.execute("""SELECT s.agent_id, a.name, s.starts_at, s.ends_at
                              FROM desk.ticket_schedules s
                              JOIN shared.agents a ON a.id = s.agent_id
@@ -669,7 +669,7 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
         who = auth.require(conn, request)
         with conn.cursor() as cur:
             # 1) ticket + article — both 404 if absent / not on this ticket.
-            trow = helpers.ticket_or_404(cur, ticket_id)
+            trow = helpers.ticket_or_404(cur, ticket_id, who)
             cur.execute("""SELECT kind, is_auto, author_id, body, deleted_at
                              FROM desk.articles
                             WHERE id = %s AND ticket_id = %s""",
@@ -819,7 +819,7 @@ def delete_article(ticket_id: int, article_id: str, request: Request):
         who = auth.require(conn, request)   # any ticket-accessing session; PATs pass
         with conn.cursor() as cur:
             # 1) ticket + article — both 404 if absent / not on this ticket.
-            trow = helpers.ticket_or_404(cur, ticket_id)
+            trow = helpers.ticket_or_404(cur, ticket_id, who)
             cur.execute("""SELECT kind, is_auto, body, deleted_at
                              FROM desk.articles
                             WHERE id = %s AND ticket_id = %s""",

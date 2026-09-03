@@ -10,10 +10,15 @@ this directory is gitignored except for this README):
     pg_assets_api_password   runtime role: assets_api
     kek                      32 random bytes, base64 — the key-encryption key
 
-Generate them:
+Generate them. The API containers run as non-root uid/gid **10001** and read
+these files over the read-only bind mount, so each must be group-readable by
+gid 10001 — a `chmod 600` root/owner-only file makes every service crash-loop
+on the first `docker compose up`. (scripts/deploy.sh re-applies this on every
+deploy; set it here so the very first bring-up works too.)
 
     for f in pg_superuser_password pg_desk_api_password pg_ledger_api_password pg_mail_worker_password pg_assets_api_password kek; do
-      openssl rand -base64 32 | tr -d '\n' > "$f"; chmod 600 "$f"
+      openssl rand -base64 32 | tr -d '\n' > "$f"
+      sudo chgrp 10001 "$f" && chmod 640 "$f"
     done
 
 ## Why a file-mounted KEK

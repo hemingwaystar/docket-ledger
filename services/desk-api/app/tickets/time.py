@@ -30,7 +30,7 @@ def add_time(ticket_id: int, body: NewTime, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'log_time')
         with conn.cursor() as cur:
-            row = helpers.ticket_or_404(cur, ticket_id)
+            row = helpers.ticket_or_404(cur, ticket_id, who)
             helpers.refuse_if_locked_project(row)
             client_id = row[1]
             tech_id, tech_name = helpers.agent(cur, body.technician_email)
@@ -95,7 +95,7 @@ def patch_time(entry_id: str, body: PatchTime, request: Request):
             else:
                 auth.need(who, 'log_time', 'see_billing')
             if ticket_id is not None:
-                trow = helpers.ticket_or_404(cur, ticket_id)
+                trow = helpers.ticket_or_404(cur, ticket_id, who)
                 helpers.refuse_if_locked_project(trow)
             sets, args, notes = [], [], []
             if body.started_at is not None:

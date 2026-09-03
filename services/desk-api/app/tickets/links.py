@@ -25,8 +25,8 @@ def link_tickets(ticket_id: int, body: LinkSpec, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'edit_props')
         with conn.cursor() as cur:
-            src = helpers.ticket_or_404(cur, ticket_id)
-            dst = helpers.ticket_or_404(cur, body.other)
+            src = helpers.ticket_or_404(cur, ticket_id, who)
+            dst = helpers.ticket_or_404(cur, body.other, who)
             if src[4] or dst[4]:
                 raise HTTPException(422, "Merged tickets can't be linked")
             if body.kind == "related":
@@ -80,7 +80,7 @@ def unlink_tickets(ticket_id: int, body: UnlinkSpec, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'edit_props')
         with conn.cursor() as cur:
-            helpers.ticket_or_404(cur, ticket_id)
+            helpers.ticket_or_404(cur, ticket_id, who)
             cur.execute("""UPDATE desk.ticket_links
                               SET voided_at = now(), voided_by = %s
                             WHERE kind = %s AND voided_at IS NULL
@@ -113,7 +113,7 @@ def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'close')
         with conn.cursor() as cur:
-            row = helpers.ticket_or_404(cur, ticket_id)
+            row = helpers.ticket_or_404(cur, ticket_id, who)
             helpers.refuse_if_locked_project(row)
             if row[4]:
                 raise HTTPException(409, "Merged tickets can't be closed")
@@ -139,6 +139,11 @@ def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
                               AND c.merged_into_id IS NULL
                             ORDER BY l.dst_id""", (ticket_id,))
             kids = [r[0] for r in cur.fetchall()]
+            closed = []   # children ACTUALLY closed — locked-project kids are
+                          # skipped below (kept open), so the narration, audit
+                          # line and response must report these, not the full
+                          # candidate list (audit 32g: they used `kids` and so
+                          # claimed skipped children were closed)
             cur.execute("""UPDATE desk.tickets SET state_id = %s, pending_until = NULL
                             WHERE id = %s AND version = %s RETURNING version""",
                         (strow[0], ticket_id, body.version))
@@ -172,12 +177,13 @@ def close_cascade(ticket_id: int, body: CascadeSpec, request: Request):
                 emit_event(cur, "state", cid)
                 auth.audit(conn, "desk", "Ticket closed by parent cascade",
                            f"ticket:{cid}", f"#{cid} · parent #{ticket_id} ({who['label']})")
-            if kids:
+                closed.append(cid)
+            if closed:
                 sys_note(cur, ticket_id,
-                         f"Closed with {len(kids)} child ticket{'' if len(kids) == 1 else 's'}: "
-                         + ", ".join(f"#{k}" for k in kids))
+                         f"Closed with {len(closed)} child ticket{'' if len(closed) == 1 else 's'}: "
+                         + ", ".join(f"#{k}" for k in closed))
         auth.audit(conn, "desk", "Ticket closed with children", f"ticket:{ticket_id}",
                    f"#{ticket_id} → {body.state} · children: "
-                   + (", ".join(f"#{k}" for k in kids) or "none open")
+                   + (", ".join(f"#{k}" for k in closed) or "none")
                    + f" ({who['label']})")
-        return {"ok": True, "closed_children": kids, "version": updated[0]}
+        return {"ok": True, "closed_children": closed, "version": updated[0]}

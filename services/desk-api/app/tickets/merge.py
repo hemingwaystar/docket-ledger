@@ -24,8 +24,8 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'edit_props')
         with conn.cursor() as cur:
-            src = helpers.ticket_or_404(cur, ticket_id)
-            dst = helpers.ticket_or_404(cur, body.into)
+            src = helpers.ticket_or_404(cur, ticket_id, who)
+            dst = helpers.ticket_or_404(cur, body.into, who)
             helpers.refuse_if_locked_project(src)
             if src[4]:
                 raise HTTPException(409, "Source is already merged")
@@ -42,6 +42,15 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
             cur.execute("UPDATE desk.articles SET ticket_id = %s WHERE ticket_id = %s",
                         (body.into, ticket_id))
             moved_articles = cur.rowcount
+            # NOTE (audit 32g): articles ALL move, but time entries move only from
+            # OPEN periods — a locked/exported entry stays on the source stub while
+            # its article rides to the target, splitting the pair across two ticket
+            # numbers. This is intentional (a locked entry is billed under the
+            # source number and the immutability trigger would refuse the move) and
+            # SAFE: the note edit/delete freeze checks key on article_id, not
+            # ticket_id (write.py edit_note/delete_article), so the moved article
+            # still freezes on its locked entry. The only artifact is the ledger
+            # display join surfacing an article on a different ticket than its entry.
             cur.execute("""UPDATE ledger.time_entries e SET ticket_id = %s
                             FROM ledger.billing_periods bp
                            WHERE bp.id = e.period_id AND bp.status = 'open'
@@ -65,6 +74,13 @@ def merge(ticket_id: int, body: MergeSpec, request: Request):
                         (ticket_id,))
             cur.execute("UPDATE desk.ticket_schedules SET ticket_id = %s WHERE ticket_id = %s",
                         (body.into, ticket_id))
+            # the moved blocks change the target's earliest future start — re-derive
+            # its pending_until exactly like add/remove/complete do (audit 32g: merge
+            # alone skipped this, so a paused target woke at its stale resume time,
+            # or never). The source's pending_until is cleared to NULL below with
+            # the merge-close write, so only the target needs the recompute.
+            from .write import _sync_pending
+            _sync_pending(cur, body.into)
             cur.execute("""UPDATE desk.tickets d
                               SET cc = (SELECT array(SELECT DISTINCT x FROM unnest(d.cc || s.cc) x))
                              FROM desk.tickets s

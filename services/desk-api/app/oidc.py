@@ -174,10 +174,23 @@ def oidc_callback(request: Request, code: str | None = None,
                 return _login_err("Token already expired — clock trouble?")
             if claims.get("nonce") != flow.get("n"):
                 return _login_err("Sign-in flow could not be verified — try again")
+            # issuer binding (audit 32g: iss was never checked). The v2.0
+            # issuer must name the SAME tenant as the tid claim — a token whose
+            # iss and tid disagree is malformed/forged. This holds for every
+            # tenant config and, combined with the GUID check below, pins the
+            # issuer to the configured tenant.
+            tid_claim = claims.get("tid", "").lower()
+            if not tid_claim or claims.get("iss", "") != \
+                    f"https://login.microsoftonline.com/{tid_claim}/v2.0":
+                return _login_err("Token issuer mismatch")
             tenant = c["tenant"].lower()
-            if len(tenant) == 36 and tenant.count("-") == 4 \
-                    and claims.get("tid", "").lower() != tenant:
-                return _login_err("Token tenant mismatch")
+            if len(tenant) == 36 and tenant.count("-") == 4:
+                # single-tenant deployment (tenant is a GUID): the token's tenant
+                # MUST be ours. With the iss==.../{tid}/... binding above, this
+                # also pins iss to the configured tenant, closing the
+                # "any tenant with the same client_id" path.
+                if tid_claim != tenant:
+                    return _login_err("Token tenant mismatch")
 
             oid = claims.get("oid", "")
             email = (claims.get("preferred_username") or claims.get("email")

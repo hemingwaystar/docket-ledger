@@ -212,7 +212,7 @@ function mailboxModal(id){
           <option value="shared" ${m0.type!=='licensed'?'selected':''}>Shared mailbox</option>
           <option value="licensed" ${m0.type==='licensed'?'selected':''}>Licensed mailbox</option></select></div>
         <div class="field"><label>Board (group)</label><select id="mbGroup">${aGROUPS().map(g=>`<option value="${g.id}" ${m0.groupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select></div>
-        <div class="field"><label>Default priority</label><select id="mbPrio">${aPRIOS().map(p=>`<option value="${p.id}" ${(m0.prio||2)===p.id?'selected':''}>${p.label}</option>`).join('')}</select></div>
+        <div class="field"><label>Default priority</label><select id="mbPrio">${aPRIOS().map(p=>`<option value="${p.id}" ${(m0.prio||2)===p.id?'selected':''}>${esc(p.label)}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>Description</label><input type="text" id="mbDesc" value="${esc(m0.desc||'')}" placeholder="What lands here"></div>
       <label class="mini" style="display:flex;gap:8px;align-items:center;margin-top:4px"><input type="checkbox" id="mbOut" ${(id? m0.outbound : true)?'checked':''} style="width:auto"> Outbound enabled — agents can send replies as this address. Shared mailboxes also need <span class="tape">Mail.Send</span> in the access policy; uncheck for alert-only inboxes like noc@.</label>
@@ -350,7 +350,7 @@ function trigModal(id){
       <div class="field"><label>Name</label><input type="text" id="tgName" value="${esc(g0.name)}" placeholder="e.g. Auto-reply (on new tickets)"></div>
       <div class="grid g-2" style="gap:12px">
         <div class="field"><label>Activated by</label><select id="tgEvent" onchange="trigEventChanged()">${TRIG_EVENTS.map(e=>`<option value="${e.id}" ${g0.event===e.id?'selected':''}>${e.label}</option>`).join('')}</select></div>
-        <div class="field" id="tgStateWrap" style="${g0.event==='state'?'':'display:none'}"><label>… to state</label><select id="tgEventState">${aSTATES().map(s=>`<option value="${s.id}" ${g0.eventValue===s.id?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div class="field" id="tgStateWrap" style="${g0.event==='state'?'':'display:none'}"><label>… to state</label><select id="tgEventState">${aSTATES().map(s=>`<option value="${s.id}" ${g0.eventValue===s.id?'selected':''}>${esc(s.label)}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label>Only if (rows must ALL match; OR groups match any — within a row, several picked values or commas mean any-of; leave empty for always)</label><div id="tgConds"></div>
         <button class="btn sm ghost" onclick="trigAddCond()">+ condition</button>
@@ -421,8 +421,8 @@ function trigDrawActs(){
     const val =
       a.type==='email'||a.type==='note' ? `<textarea rows="3" oninput="_trigDraft.actions[${i}].value=this.value" placeholder="Template — variables like #{ticket.number} and #{customer.name} fill in at send time">${esc(a.value||'')}</textarea>` :
       a.type==='tag' ? `<input type="text" value="${esc(a.value||'')}" oninput="_trigDraft.actions[${i}].value=this.value" placeholder="tag name">` :
-      a.type==='state' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aSTATES().filter(s=>!s.system).map(s=>`<option value="${s.id}" ${a.value===s.id?'selected':''}>${s.label}</option>`).join('')}</select>` :
-      a.type==='prio' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aPRIOS().map(p=>`<option value="${p.id}" ${String(a.value)===String(p.id)?'selected':''}>${p.label}</option>`).join('')}</select>` :
+      a.type==='state' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aSTATES().filter(s=>!s.system).map(s=>`<option value="${s.id}" ${a.value===s.id?'selected':''}>${esc(s.label)}</option>`).join('')}</select>` :
+      a.type==='prio' ? `<select onchange="_trigDraft.actions[${i}].value=this.value">${aPRIOS().map(p=>`<option value="${p.id}" ${String(a.value)===String(p.id)?'selected':''}>${esc(p.label)}</option>`).join('')}</select>` :
       a.type==='autoassign' ? `<select onchange="_trigDraft.actions[${i}].value=this.value"><option value="rr" ${a.value!=='least'?'selected':''}>Round-robin within the board</option><option value="least" ${a.value==='least'?'selected':''}>Least-loaded agent on the board</option></select>` :
       `<select onchange="_trigDraft.actions[${i}].value=this.value">${aGROUPS().map(g=>`<option value="${g.id}" ${a.value===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`;
     return `<div style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-start">
@@ -475,7 +475,7 @@ function ruleModal(id){
       <div class="field"><label>Then</label>
         <div class="grid g-2" style="gap:12px">
           <div class="field"><label>Move to board</label><select id="raGroup"><option value="">— leave as is —</option>${aGROUPS().map(g=>`<option value="${g.id}" ${r0.act.groupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select></div>
-          <div class="field"><label>Set priority</label><select id="raPrio"><option value="">— leave as is —</option>${aPRIOS().map(p=>`<option value="${p.id}" ${r0.act.prio===p.id?'selected':''}>${p.label}</option>`).join('')}<option value="min3" ${r0.act.prioAtLeast===3?'selected':''}>at least High</option><option value="min4" ${r0.act.prioAtLeast===4?'selected':''}>at least Urgent</option></select></div>
+          <div class="field"><label>Set priority</label><select id="raPrio"><option value="">— leave as is —</option>${aPRIOS().map(p=>`<option value="${p.id}" ${r0.act.prio===p.id?'selected':''}>${esc(p.label)}</option>`).join('')}<option value="min3" ${r0.act.prioAtLeast===3?'selected':''}>at least High</option><option value="min4" ${r0.act.prioAtLeast===4?'selected':''}>at least Urgent</option></select></div>
           <div class="field"><label>Add tag</label><input type="text" id="raTag" value="${esc(r0.act.tag||'')}" placeholder="optional"></div>
           <div class="field" style="padding-top:22px">
             <label class="mini" style="display:flex;gap:6px;align-items:center;text-transform:none;letter-spacing:0"><input type="checkbox" id="raNotify" ${r0.act.notify?'checked':''} style="width:auto"> notify the board</label>

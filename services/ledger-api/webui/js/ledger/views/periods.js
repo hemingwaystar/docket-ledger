@@ -63,9 +63,14 @@ function perChip(ps){
 /* one period's entry math — the same tallies the per-period cards ran */
 function pfTally(clientId, pk){
   const es=state.entries.filter(e=>e.clientId===clientId && entryPeriod(e).key===pk);
-  let h=0,a=0,unclass=0,voided=0,submitted=0,approved=0;
-  es.forEach(e=>{const p=priced(e); if(e.status==='void'){voided++;return;} h+=p.h; a+=p.amount; if(p.unclassified)unclass++; if(e.submitted||isLocked(e))submitted++; if(e.tsApproved||isLocked(e))approved++;});
-  const flat=projFlatTotal(clientId,pk); a+=flat;
+  let h=0,hourly=0,unclass=0,voided=0,submitted=0,approved=0;
+  es.forEach(e=>{const p=priced(e); if(e.status==='void'){voided++;return;} h+=p.h; hourly+=p.amount; if(p.unclassified)unclass++; if(e.submitted||isLocked(e))submitted++; if(e.tsApproved||isLocked(e))approved++;});
+  const flat=projFlatTotal(clientId,pk);
+  /* retainer clients bill only the OVERAGE (audit 32g) — the billed amount now
+     mirrors the retainer card's math AND the server export, so what the
+     operator approves matches the invoice. Hours (h) still show gross worked. */
+  const rm=retainerFor(client(clientId))? retainerMath(clientId, pk) : null;
+  const a=(rm? rm.overageAmt : hourly)+flat;
   return {h,a,unclass,voided,submitted,approved,flat,live:es.length-voided};
 }
 /* compact per-period actions for history rows — the SAME wired functions
@@ -194,7 +199,7 @@ function approvePeriod(clientId,pk){
       const ps=periodState(clientId,pk);
       if(ps.status!=='open') return;   /* mirror only a real flip */
       ps.status='approved'; ps.approvedAt=Date.now(); ps.approvedBy=state.user.name;
-      log('Period approved',`${esc(c.name)} · ${per.label} · ${es.length} entries locked`,clientId+'|'+pk);
+      log('Period approved',`${esc(c.name)} · ${perLabel} · ${es.length} entries locked`,clientId+'|'+pk);
       toast(`Period locked — ${es.length} entries are now immutable`); render();
       /* PERIODS rows carry server keys — translate ours (bug #22's boundary) */
       const srv=PERIODS.find(x=>x.clientId===clientId&&x.key===srvPeriodKey(pk));

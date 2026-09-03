@@ -51,7 +51,7 @@ def activity_type_id(cur, handle):
                (handle, handle), "Unknown activity type")[0]
 
 
-def ticket_or_404(cur, ticket_id):
+def ticket_or_404(cur, ticket_id, who=None):
     cur.execute("""SELECT t.id, t.client_id, t.is_project, t.version, t.merged_into_id,
                           COALESCE(p.status, '') AS project_status,
                           COALESCE(p.unlocked, false) AS project_unlocked
@@ -61,6 +61,20 @@ def ticket_or_404(cur, ticket_id):
     row = cur.fetchone()
     if row is None:
         raise HTTPException(404, "No such ticket")
+    if who is not None:
+        # object-scope guard (audit 32g): a mutation caller must be able to
+        # SEE the ticket, not merely hold the action permission — otherwise a
+        # view_group/view_own role could edit/reassign/merge/void-time on ANY
+        # ticket just by supplying its id. Reuses the ONE read-visibility
+        # definition. 404 (not 403) so a hidden ticket's existence is never
+        # confirmed. view_all and PATs resolve to "TRUE" and skip the probe.
+        from .tickets.common import visibility_where
+        vis, vargs = visibility_where(who, "t")
+        if vis != "TRUE":
+            cur.execute(f"SELECT 1 FROM desk.tickets t WHERE t.id = %s AND {vis}",
+                        [ticket_id, *vargs])
+            if cur.fetchone() is None:
+                raise HTTPException(404, "No such ticket")
     return row
 
 

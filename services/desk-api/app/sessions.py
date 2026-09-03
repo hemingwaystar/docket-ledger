@@ -32,10 +32,13 @@ ph = PasswordHasher()          # argon2id defaults
 _DUMMY_HASH = ph.hash("timing-oracle-pad")
 SESSION_HOURS = 12
 COOKIE = "hts_session"
-# False until the nginx TLS front is verified, then COOKIE_SECURE=true in
-# .env → compose passes it through → restart desk-api. After the flip,
-# sign-in works only over https (direct NetBird :8081 logins stop — by design).
-COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+# Secure-by-default (audit 32g): an UNSET env var now yields True, so any
+# launch path (bare uvicorn, a different orchestrator, staging) issues Secure
+# session/OIDC cookies unless COOKIE_SECURE is explicitly set false. The
+# explicit "false" opt-out remains for a box with no TLS front yet (direct
+# NetBird :8081 http sign-in stops working while true — by design). compose
+# still passes ${COOKIE_SECURE:-true} through.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("1", "true", "yes")
 
 
 # brute-force throttle (0040): 5 failures in a 15-minute window lock the key
