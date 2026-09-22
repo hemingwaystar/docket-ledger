@@ -61,11 +61,15 @@ const CANNED = [];
 const TITLES = {};       // ticket id → display title
 const AGENT_SIGS = {};   // agent id → derived name·role line (the signature fallback)
 /* signatures (0047): the editable sign-off appended to outgoing replies.
+   `enabled` = the global off switch (app_config 'signatures') — false when an
+   external service (Exclaimer, a transport rule) owns sign-offs, so Docket
+   appends none; default true.
    `mine` = this agent's own personal signature ('' → falls back to AGENT_SIGS);
-   `groups` = group id → board footer. Both mirror desk.signatures; the composer
-   appends mine then the ticket board's (replySignature). Edited via
-   PUT /api/signatures/me (self-service) and /groups/{id} (manage_settings). */
-const SIG = { mine:'', groups:{} };
+   `groups` = group id → board footer. mine/groups mirror desk.signatures; the
+   composer appends mine then the ticket board's (replySignature). Edited via
+   PUT /api/signatures/me (self-service) and /groups/{id} (manage_settings);
+   the global switch via PUT /api/settings/config/signatures (manage_settings). */
+const SIG = { enabled:true, mine:'', groups:{} };
 const VCFG = { sms:{enabled:false}, email:{enabled:false}, ttlMin:5, attempts:3, postToThread:true };
 const AUTH_CFG = {};
 /* the ONE Entra app registration every mailbox + the verification sender

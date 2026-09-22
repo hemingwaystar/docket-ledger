@@ -1058,6 +1058,7 @@ function setComposer(k,v){ state.composer[k]=v;
    carry a sign-off), then the ticket board's footer if one is set. Mirrors
    the server's desk.signatures the composer POSTs into the reply body. */
 function replySignature(t){
+  if(!SIG.enabled) return '';   /* global off switch — an external service (Exclaimer) owns sign-offs */
   const mine = (SIG.mine||'').trim() || AGENT_SIGS[state.meId] || '';
   const grp  = t ? (SIG.groups[t.groupId]||'').trim() : '';
   return [mine, grp].filter(Boolean).join('\n\n');
@@ -1121,7 +1122,7 @@ function renderComposer(t){
         ${CANNED.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
       </select>
       <label class="rowbtn" style="cursor:pointer" title="Attach files — stored in object storage, scanned, then linked to this ${cm.kind==='reply'?'email':'note'}">📎 attach<input type="file" multiple style="display:none" onchange="addAtts(this)"></label>
-      ${cm.kind==='reply'?`<button class="rowbtn" onclick="signatureModal()" title="Edit your personal sign-off — appended to every reply you send">✒ signature</button>`:''}
+      ${cm.kind==='reply'&&SIG.enabled?`<button class="rowbtn" onclick="signatureModal()" title="Edit your personal sign-off — appended to every reply you send">✒ signature</button>`:''}
       <span class="time-tools" style="display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="timer-pill ${running?'run':''}" id="timerPill" title="The clock fills the end time while you type — or set date, start and end yourself; hours are always derived from the span">
         <span class="tdot"></span>

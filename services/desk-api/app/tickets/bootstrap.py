@@ -159,7 +159,16 @@ def bootstrap(request: Request, limit: int = 500):
                     sig_mine = r["body"]
                 elif r["owner_kind"] == "group" and r["group_id"] is not None:
                     sig_groups[str(r["group_id"])] = r["body"]
-            out["signatures"] = {"mine": sig_mine, "groups": sig_groups}
+            # the global off switch (app_config key 'signatures'): when an
+            # external service (Exclaimer, an M365 transport rule) appends
+            # sign-offs at the mail gateway, flip this off so Docket doesn't
+            # stack a second one. Absent = enabled (composer behaves as before).
+            cur.execute("SELECT value FROM shared.app_config WHERE key = 'signatures'")
+            row = cur.fetchone()
+            sig_cfg = row["value"] if row else {}
+            sig_enabled = (sig_cfg or {}).get("enabled", True) is not False
+            out["signatures"] = {"enabled": sig_enabled,
+                                 "mine": sig_mine, "groups": sig_groups}
             cur.execute("""SELECT key, value, updated_at, updated_by FROM shared.app_config
                             WHERE key IN ('graph','auth','verification')""")
             cfgs = {r["key"]: r for r in cur.fetchall()}

@@ -159,7 +159,9 @@ function mapIn(d){
   AGENTS.forEach(a=>{ AGENT_SIGS[a.id]=a.name+(a.role?' · '+a.role:''); });
   /* signatures (0047): my personal sign-off + every board footer, mirrored
      from desk.signatures. Absent = empty; replySignature() falls mine back
-     to the derived AGENT_SIGS line so replies keep a sign-off by default. */
+     to the derived AGENT_SIGS line so replies keep a sign-off by default.
+     enabled = the global off switch (default true); false suppresses all. */
+  SIG.enabled = !d.signatures || d.signatures.enabled !== false;
   SIG.mine = (d.signatures && d.signatures.mine) || '';
   SIG.groups = (d.signatures && d.signatures.groups) || {};
   if(d.authCfg) Object.assign(AUTH_CFG, d.authCfg);

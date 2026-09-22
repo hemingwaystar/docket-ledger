@@ -13,8 +13,9 @@
    dashHiddenDefault/setDashHiddenDefault/setDefaultGroup/deskUiPush (+ deskOvs/
    ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
    vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows ·
-   boardSigModal/saveBoardSig (0047: per-board reply footers, manage_settings —
-   personal signatures are self-service from the composer, tickets.js).
+   sigEnabledToggle/boardSigModal/saveBoardSig (0047: the global reply-signature
+   off switch + per-board footers, manage_settings — personal signatures are
+   self-service from the composer, tickets.js).
    Endpoints: POST /api/directory/groups · PATCH /api/directory/groups/{id} ·
    POST /api/directory/agents · PATCH /api/directory/agents/{email} ·
    POST /api/directory/types · PATCH /api/directory/types/{id} ·
@@ -833,9 +834,22 @@ function tokenRows(){
 }
 
 /* ---- the Settings page -------------------------------------------------- */
-/* ---- board signatures (0047): the per-board footer appended to replies.
-   Admin only — manage_settings, matching the server gate. Personal signatures
-   are self-service and edited from the composer (tickets.js signatureModal). */
+/* ---- signatures: global off switch + per-board footers (0047). All
+   manage_settings. Personal signatures are self-service from the composer. */
+/* the global toggle (app_config 'signatures'): off = Docket appends no reply
+   sign-off at all, for when an external service (Exclaimer, an M365 transport
+   rule) owns them and a second would stack. Optimistic + mirror, oops reverts. */
+function sigEnabledToggle(){
+  if(!can('manage_settings')) return;
+  const next = !SIG.enabled;
+  SIG.enabled = next;
+  log('Reply signatures '+(next?'enabled':'disabled'),
+      next?'Docket appends agent + board sign-offs':'suppressed — external service owns sign-offs');
+  render();
+  $fetch('/api/settings/config/signatures',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({value:{enabled:next}})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
 function boardSigModal(gid){
   if(!can('manage_settings')) return;
   const g = grp(gid); if(!g) return;
@@ -880,7 +894,15 @@ function viewSettings(){
     </div>
     <div class="card card-pad">
       <div class="card-head flush"><h3>Signatures</h3><span class="hint">board footers on replies · agents set their own from the composer</span></div>
+      <div class="setting-row"><div class="sl"><b>Reply signatures</b><p>${SIG.enabled
+        ? 'Docket appends the sending agent’s signature (and any board footer) to each reply.'
+        : 'Off — Docket appends nothing. Turn this off when an external service (Exclaimer, an M365 transport rule) adds signatures at the gateway, so they don’t stack.'}</p></div>
+        <button class="rowbtn" onclick="sigEnabledToggle()">${SIG.enabled?'Disable':'Enable'}</button>
+        <span class="chip ${SIG.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${SIG.enabled?'On':'Off'}</span></div>
+      ${SIG.enabled?'':`<div class="notice info" style="margin:2px 0 10px"><div>Signatures are globally disabled — the board footers below and every agent’s personal signature are <b>not</b> appended until re-enabled.</div></div>`}
+      <div style="${SIG.enabled?'':'opacity:.5'}">
       ${aGROUPS().map(g=>{ const s=(SIG.groups[g.id]||'').trim(); return `<div class="setting-row"><div class="sl"><b>${esc(g.name)}</b><p>${s?esc(s.slice(0,80))+(s.length>80?'…':''):'<span class="muted">no board footer — replies carry only the agent’s own sign-off</span>'}</p></div><button class="rowbtn" onclick="boardSigModal('${jsq(g.id)}')">${s?'Edit':'Set'}</button></div>`;}).join('')}
+      </div>
       <div class="mini muted" style="margin-top:8px">A board footer is appended to every reply sent from that board, below the sending agent’s personal signature. Each agent edits their own signature from the reply composer (the <b>✒ signature</b> button).</div>
     </div>
     <div class="card card-pad">

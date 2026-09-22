@@ -28,7 +28,10 @@ router = APIRouter(prefix="/api/settings")
 # l_manage_settings-gated routes — desk perms could silently clobber billing
 # config (audit). 'projects' was read by nothing. Ledger owns all three now.
 CONFIG_KEYS = ("auth", "graph", "mail", "verification", "business_hours",
-               "sla", "desk_ui")
+               "sla", "desk_ui", "signatures")   # signatures: {"enabled": bool}
+                                                  # — global off switch when an
+                                                  # external service (Exclaimer,
+                                                  # a transport rule) owns sign-offs
 
 
 @router.get("/config")
