@@ -59,7 +59,13 @@ const RULES = [];
 const TRIGGERS = [];
 const CANNED = [];
 const TITLES = {};       // ticket id → display title
-const AGENT_SIGS = {};   // agent id → display line (name · role); nothing mails these
+const AGENT_SIGS = {};   // agent id → derived name·role line (the signature fallback)
+/* signatures (0047): the editable sign-off appended to outgoing replies.
+   `mine` = this agent's own personal signature ('' → falls back to AGENT_SIGS);
+   `groups` = group id → board footer. Both mirror desk.signatures; the composer
+   appends mine then the ticket board's (replySignature). Edited via
+   PUT /api/signatures/me (self-service) and /groups/{id} (manage_settings). */
+const SIG = { mine:'', groups:{} };
 const VCFG = { sms:{enabled:false}, email:{enabled:false}, ttlMin:5, attempts:3, postToThread:true };
 const AUTH_CFG = {};
 /* the ONE Entra app registration every mailbox + the verification sender

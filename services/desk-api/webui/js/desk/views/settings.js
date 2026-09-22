@@ -12,7 +12,9 @@
    decor, 0028) · deskUiCard/ovModal/saveOverview/moveOverview/hideOverview/
    dashHiddenDefault/setDashHiddenDefault/setDefaultGroup/deskUiPush (+ deskOvs/
    ensureDeskOvs/ovSlug/ovSummary helpers) · vcfgSet/vcfgToggle/
-   vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows.
+   vcfgTogglePost · secretRow/secretSave · tokensRefresh/tokenRows ·
+   boardSigModal/saveBoardSig (0047: per-board reply footers, manage_settings —
+   personal signatures are self-service from the composer, tickets.js).
    Endpoints: POST /api/directory/groups · PATCH /api/directory/groups/{id} ·
    POST /api/directory/agents · PATCH /api/directory/agents/{email} ·
    POST /api/directory/types · PATCH /api/directory/types/{id} ·
@@ -831,6 +833,31 @@ function tokenRows(){
 }
 
 /* ---- the Settings page -------------------------------------------------- */
+/* ---- board signatures (0047): the per-board footer appended to replies.
+   Admin only — manage_settings, matching the server gate. Personal signatures
+   are self-service and edited from the composer (tickets.js signatureModal). */
+function boardSigModal(gid){
+  if(!can('manage_settings')) return;
+  const g = grp(gid); if(!g) return;
+  const m = document.getElementById('modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${esc(g.name)} — board signature</h3><p>Appended to every reply sent from this board, below the sending agent’s own signature. Leave it blank to clear it.</p></div>
+    <div class="modal-body"><div class="field"><label>Board footer</label><textarea id="bsigBody" rows="6" style="width:100%;font:inherit;font-size:13px" placeholder="e.g. Hemingway Tech Solutions · support@hemingwaytechsolutions.com · (555) 000-0000">${esc(SIG.groups[gid]||'')}</textarea></div></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveBoardSig('${jsq(gid)}')">Save</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('bsigBody').focus();
+}
+function saveBoardSig(gid){
+  const body = document.getElementById('bsigBody').value.replace(/\r\n/g,'\n').trim();
+  const g = grp(gid);
+  if(body) SIG.groups[gid]=body; else delete SIG.groups[gid];   /* optimistic */
+  log('Board signature updated', `${g?g.name:gid} · `+(body?'footer set':'footer cleared'));
+  closeModal(); render();
+  $fetch('/api/signatures/groups/'+encodeURIComponent(gid),{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({body})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+
 function viewSettings(){
   const smsProv = VCFG.sms.provider||'voip.ms';
   return `
@@ -850,6 +877,11 @@ function viewSettings(){
       <div class="card-head flush"><h3>Canned responses</h3><span class="hint">insert from the composer · template variables render per ticket</span></div>
       ${CANNED.map(c=>`<div class="setting-row"><div class="sl"><b>${esc(c.name)}</b><p>${esc(c.body.slice(0,80))}…</p></div><button class="rowbtn" onclick="cannedModal('${c.id}')">Edit</button></div>`).join('')}
       <button class="btn sm" style="margin-top:12px" onclick="cannedModal()">+ Add canned response</button>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Signatures</h3><span class="hint">board footers on replies · agents set their own from the composer</span></div>
+      ${aGROUPS().map(g=>{ const s=(SIG.groups[g.id]||'').trim(); return `<div class="setting-row"><div class="sl"><b>${esc(g.name)}</b><p>${s?esc(s.slice(0,80))+(s.length>80?'…':''):'<span class="muted">no board footer — replies carry only the agent’s own sign-off</span>'}</p></div><button class="rowbtn" onclick="boardSigModal('${jsq(g.id)}')">${s?'Edit':'Set'}</button></div>`;}).join('')}
+      <div class="mini muted" style="margin-top:8px">A board footer is appended to every reply sent from that board, below the sending agent’s personal signature. Each agent edits their own signature from the reply composer (the <b>✒ signature</b> button).</div>
     </div>
     <div class="card card-pad">
       <div class="card-head flush"><h3>Business hours</h3><span class="hint">SLA clocks only run inside these</span></div>

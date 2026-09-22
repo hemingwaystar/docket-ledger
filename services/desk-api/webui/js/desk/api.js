@@ -157,6 +157,11 @@ function mapIn(d){
   if(d.notifs){ state.notifs.length=0; d.notifs.forEach(n=>state.notifs.push(n)); }
   d.tickets.forEach(t=>{ if(t.title) TITLES[t.id]=t.title; });
   AGENTS.forEach(a=>{ AGENT_SIGS[a.id]=a.name+(a.role?' · '+a.role:''); });
+  /* signatures (0047): my personal sign-off + every board footer, mirrored
+     from desk.signatures. Absent = empty; replySignature() falls mine back
+     to the derived AGENT_SIGS line so replies keep a sign-off by default. */
+  SIG.mine = (d.signatures && d.signatures.mine) || '';
+  SIG.groups = (d.signatures && d.signatures.groups) || {};
   if(d.authCfg) Object.assign(AUTH_CFG, d.authCfg);
   if(d.graph){
     GRAPH_AUTH.connected=!!d.graph.connected;

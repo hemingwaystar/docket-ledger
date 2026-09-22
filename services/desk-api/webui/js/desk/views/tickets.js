@@ -19,7 +19,10 @@
    sent internal NOTE — body + added attachments, optimistic then PATCH, audited) ·
    addTag/rmTag · checkPendingWakes · composerTimerStart/
    timerSeconds/timerStartMs/setTW/composerSpan/composerH/tickTimer (1 s
-   interval)/timerReset · setComposer/renderComposer/sendArticle.
+   interval)/timerReset · replySignature/signatureModal/saveMySignature
+   (0047: the personal sign-off appended to replies, edited self-service from
+   the composer — SIG.mine, falling back to the derived name·role line) ·
+   setComposer/renderComposer/sendArticle.
    Endpoints:
      POST  /api/tickets/{id}/articles   (sendArticle; staged files first via
                                          stageUploads → POST /api/uploads)
@@ -1050,6 +1053,42 @@ function setComposer(k,v){ state.composer[k]=v;
   }
 }
 
+/* the sign-off appended to an outgoing reply: the agent's own personal
+   signature (falling back to the derived name·role line so replies always
+   carry a sign-off), then the ticket board's footer if one is set. Mirrors
+   the server's desk.signatures the composer POSTs into the reply body. */
+function replySignature(t){
+  const mine = (SIG.mine||'').trim() || AGENT_SIGS[state.meId] || '';
+  const grp  = t ? (SIG.groups[t.groupId]||'').trim() : '';
+  return [mine, grp].filter(Boolean).join('\n\n');
+}
+
+/* personal signature editor — self-service, reachable from the composer so
+   every agent (not just admins, who alone see Settings) can set their own.
+   PUT /api/signatures/me; empty clears it (replies fall back to name·role). */
+function signatureModal(){
+  const m = document.getElementById('modal');
+  const fallback = AGENT_SIGS[state.meId] || (state.user.name||'');
+  m.innerHTML = `
+    <div class="modal-head"><h3>Your signature</h3><p>Appended to every reply you send. Leave it blank to fall back to your name and role.</p></div>
+    <div class="modal-body">
+      <div class="field"><label>Signature</label><textarea id="sigBody" rows="6" style="width:100%;font:inherit;font-size:13px" placeholder="${esc(fallback)}">${esc(SIG.mine||'')}</textarea></div>
+      <div class="mini muted">Plain text — it rides in the reply body above any board footer. Internal notes never get a signature.</div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveMySignature()">Save</button></div>`;
+  document.getElementById('scrim').classList.add('open');
+  document.getElementById('sigBody').focus();
+}
+function saveMySignature(){
+  const body = document.getElementById('sigBody').value.replace(/\r\n/g,'\n').trim();
+  SIG.mine = body;                                  /* optimistic — reply path reads this */
+  log('Signature updated', body ? 'personal sign-off set' : 'personal sign-off cleared');
+  closeModal(); render();
+  $fetch('/api/signatures/me',{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({body})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+}
+
 function renderComposer(t){
   const cm = state.composer;
   const running = state.timer && state.timer.ticketId===t.id;
@@ -1082,6 +1121,7 @@ function renderComposer(t){
         ${CANNED.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
       </select>
       <label class="rowbtn" style="cursor:pointer" title="Attach files — stored in object storage, scanned, then linked to this ${cm.kind==='reply'?'email':'note'}">📎 attach<input type="file" multiple style="display:none" onchange="addAtts(this)"></label>
+      ${cm.kind==='reply'?`<button class="rowbtn" onclick="signatureModal()" title="Edit your personal sign-off — appended to every reply you send">✒ signature</button>`:''}
       <span class="time-tools" style="display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="timer-pill ${running?'run':''}" id="timerPill" title="The clock fills the end time while you type — or set date, start and end yourself; hours are always derived from the span">
         <span class="tdot"></span>
@@ -1140,7 +1180,7 @@ function sendArticle(tid){
     }
   }
   /* --- all checks passed; mutations begin --- */
-  const sig = cm.kind==='reply' ? AGENT_SIGS[state.meId] : null;
+  const sig = cm.kind==='reply' ? replySignature(t) : '';
   const outBody = sig ? body + '\n\n' + sig : body;
   const a = art(cm.kind==='reply'?'reply':'note', me(), nowMs(), outBody);
   if(cm.kind==='reply'){

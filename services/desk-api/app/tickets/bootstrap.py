@@ -146,6 +146,20 @@ def bootstrap(request: Request, limit: int = 500):
                             WHERE active ORDER BY name""")
             out["canned"] = [{"id": str(r["id"]), "name": r["name"], "body": r["body"]}
                              for r in cur.fetchall()]
+            # signatures (0001 stub, wired 0047): the composer appends the
+            # caller's OWN personal sign-off then the ticket board's footer, if
+            # set. Ship this session's personal signature (only its own — a
+            # personal signature is self-owned) and every board signature (not
+            # PII; any agent replying from that board needs the footer).
+            cur.execute("""SELECT owner_kind, agent_id, group_id, body
+                             FROM desk.signatures""")
+            sig_mine, sig_groups = "", {}
+            for r in cur.fetchall():
+                if r["owner_kind"] == "agent" and str(r["agent_id"]) == str(who["agent_id"]):
+                    sig_mine = r["body"]
+                elif r["owner_kind"] == "group" and r["group_id"] is not None:
+                    sig_groups[str(r["group_id"])] = r["body"]
+            out["signatures"] = {"mine": sig_mine, "groups": sig_groups}
             cur.execute("""SELECT key, value, updated_at, updated_by FROM shared.app_config
                             WHERE key IN ('graph','auth','verification')""")
             cfgs = {r["key"]: r for r in cur.fetchall()}
