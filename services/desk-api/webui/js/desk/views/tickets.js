@@ -995,7 +995,9 @@ function checkPendingWakes(){
       woke = true;
     }
   });
-  if(woke) render();
+  /* a woken ticket needs a repaint, but not while someone's typing — defer it
+     (flushed by tickTimer the moment the caret leaves a text field) */
+  if(woke){ if(editingText()) window.__wakeDirty = true; else render(); }
 }
 
 /* ---------------- composer + the native timer ---------------- */
@@ -1028,6 +1030,8 @@ function composerSpan(){
 function composerH(){ const {a,b} = composerSpan(); const h = spanH(a,b); return isNaN(h)? 0 : h; }
 function tickTimer(){
   checkPendingWakes();
+  /* flush a wake repaint that was deferred while the user was typing */
+  if(window.__wakeDirty && !editingText()){ window.__wakeDirty=false; render(); return; }
   const el=document.getElementById('timerClock');
   if(el && state.timer && state.timer.ticketId===state.ticketId) el.textContent = fmtClock(timerSeconds());
   if(state.timer && !(state.composer.tw&&state.composer.tw.manual)){

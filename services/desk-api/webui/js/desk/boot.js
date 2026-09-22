@@ -8,8 +8,9 @@
 
 render();                     /* Loading… card until the first hydrate lands */
 
-/* refresh on focus, throttled */
-window.addEventListener('focus',()=>{ if(Date.now()-HYD>30000){HYD=Date.now();hydrate();} });
+/* refresh on focus, throttled — but never yank a full rehydrate out from
+   under someone typing (composer/search); it can wait until they're done */
+window.addEventListener('focus',()=>{ if(Date.now()-HYD>30000 && !editingText()){HYD=Date.now();hydrate();} });
 
 /* the bell: server notifications are authoritative — the worker's scanner
    writes the notices; this only pulls them */
@@ -21,7 +22,9 @@ setInterval(async()=>{
     const unread=a=>a.filter(x=>!x.read).length, before=unread(state.notifs);
     state.notifs.length=0; (d.notifs||[]).forEach(n=>state.notifs.push(n));
     const bb=document.getElementById('bellBox');
-    if(unread(state.notifs)!==before && !(bb&&bb.style.display==='block')) render();
+    /* don't re-render mid-keystroke — the unread count is already in state and
+       the badge repaints on the next natural render (or when typing stops) */
+    if(unread(state.notifs)!==before && !(bb&&bb.style.display==='block') && !editingText()) render();
   }catch(e){}
 },60000);
 

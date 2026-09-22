@@ -35,6 +35,20 @@ function renderNav(){
   document.getElementById('userAv').textContent = state.user.initials;
 }
 
+/* true while the caret is in a text field (the composer note/reply, a search
+   box, any typed input). The SILENT background re-renders — the 60 s notif
+   poll, wake-timer flips, the focus rehydrate — defer while this is true, so
+   they never rebuild the textarea out from under someone mid-sentence (the
+   focus/caret restore below is a backstop for user-initiated renders, but a
+   rebuild landing between keystrokes could still drop the in-flight text). */
+function editingText(){
+  const a = document.activeElement; if(!a) return false;
+  if(a.id === 'composeBody') return true;
+  const tag = a.tagName;
+  return tag === 'TEXTAREA' ||
+         (tag === 'INPUT' && /^(text|search|email|tel|url|number|password)$/.test(a.type || 'text'));
+}
+
 function render(){
   if(!state.hydrated){
     document.getElementById('content').innerHTML =
