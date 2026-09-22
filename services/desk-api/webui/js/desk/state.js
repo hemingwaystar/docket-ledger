@@ -22,7 +22,7 @@ const state = {
   prefs:{},            // per-user UI prefs — bootstrap me.prefs; savePrefs() mirrors
   user:{ name:'', initials:'', role:'' },
   overview:'myopen', qf:{ group:[], prio:[], client:[], st:[], tag:[], scope:'', q:'' },   /* multi-selects: empty = all; scope ''=anyone */
-  composer:{ kind:'reply', typeId:null, logTime:true },
+  composer:{ kind:'reply', typeId:null, logTime:true, body:'' },
   notifs:[], bulk:[], bulkAsg:[], searchQ:'',   /* bulkAsg = techs staged for the bulk "Assign to…" multi-select */
   timer:null,          // { ticketId, startedReal }  — the native note timer
   verify:{},           // ticketId → { code, method, masked, attempts, expires }

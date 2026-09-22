@@ -2,6 +2,11 @@
    js/desk/views/tickets.js — the queue and the ticket case file, plus the
    whole working loop: composer (reply/note + the native timer), time
    entries, tags, title, bulk actions and CSV export.
+   Composer invariant: the draft lives in state.composer.body (never only in
+   the DOM), so the many background re-renders — the 60 s notif poll, focus
+   rehydrate, wake timers, oops()/rehydrate — repaint it instead of wiping it.
+   Every path that touches the textarea (oninput, kind switch, insertCanned,
+   addAtts/rmAtt) writes state.composer.body; sendArticle/openTicket clear it.
    Owns: ovPred/overviews (OverviewDef evaluator)/setOverview/setQF/viewTickets ·
    tabsModal/tabsDraw/tabsRow/tabsMove/tabsToggle/tabsAddCustom/tabsRmCustom/
    tabsSave (per-user queue-tab prefs) · bulkToggle/bulkApply/setBulkAsg/
@@ -792,6 +797,8 @@ function insertCanned(tid, sel){
   const ta = document.getElementById('composeBody');
   const rendered = trigVars(t, c.body);
   ta.value = ta.value ? (ta.value.replace(/\s+$/,'') + '\n\n' + rendered) : rendered;
+  state.composer.body = ta.value;   /* keep state authoritative — a poll/wake
+                                       re-render must not wipe the insertion */
   ta.focus();
   composerTimerStart(tid);
 }
@@ -896,13 +903,13 @@ function addAtts(inp){
   const cm = state.composer; cm.atts = cm.atts||[];
   [...inp.files].forEach(f=>{ if(!cm.atts.some(x=>x.name===f.name && x.size===f.size)) cm.atts.push({ name:f.name, size:f.size, type:f.type||'application/octet-stream', _file:f }); });
   inp.value='';
-  const body = document.getElementById('composeBody')?.value; render();
-  const b2 = document.getElementById('composeBody'); if(b2 && body!=null) b2.value = body;
+  const el = document.getElementById('composeBody'); if(el) state.composer.body = el.value;
+  render();
 }
 function rmAtt(i){
   state.composer.atts.splice(i,1);
-  const body = document.getElementById('composeBody')?.value; render();
-  const b2 = document.getElementById('composeBody'); if(b2 && body!=null) b2.value = body;
+  const el = document.getElementById('composeBody'); if(el) state.composer.body = el.value;
+  render();
 }
 
 /* ---- tags ---- */
@@ -1033,11 +1040,12 @@ function timerReset(){ state.timer=null; state.composer.tw=null; const el=docume
 function setComposer(k,v){ state.composer[k]=v;
   if(k==='kind'){
     /* full re-render so the button label, meta line, placeholder and time
-       tools all follow the tab — preserving whatever's typed */
-    const body = document.getElementById('composeBody')?.value;
+       tools all follow the tab — the draft rides along in state.composer.body,
+       which renderComposer paints back into the textarea (like every other
+       render trigger: the notif poll, focus rehydrate, wake timers, oops) */
+    const el = document.getElementById('composeBody');
+    if(el) state.composer.body = el.value;
     render();
-    const b2 = document.getElementById('composeBody');
-    if(b2 && body!=null){ b2.value = body; }
     return;
   }
 }
@@ -1067,7 +1075,7 @@ function renderComposer(t){
     <div id="attStage" style="display:${(state.composer.atts||[]).length?'flex':'none'};gap:6px;flex-wrap:wrap;padding:8px 14px 0">
       ${(state.composer.atts||[]).map((f,i)=>`<span class="chip" style="background:#eef2f1"><span>📎 ${esc(f.name)}</span><span class="mini muted">${fmtKB(f.size)}</span><button class="rowbtn" style="padding:0 5px" onclick="rmAtt(${i})">×</button></span>`).join('')}
     </div>
-    <textarea id="composeBody" placeholder="${cm.kind==='reply'?'Write to the customer — the clock below runs while you type…':'Note for the team — the clock below runs while you type…'}" onfocus="composerTimerStart(${t.id})" oninput="composerTimerStart(${t.id})"></textarea>
+    <textarea id="composeBody" placeholder="${cm.kind==='reply'?'Write to the customer — the clock below runs while you type…':'Note for the team — the clock below runs while you type…'}" onfocus="composerTimerStart(${t.id})" oninput="state.composer.body=this.value;composerTimerStart(${t.id})">${esc(cm.body||'')}</textarea>
     <div class="composer-foot">
       <select style="width:auto;max-width:170px;font-size:12px" onchange="insertCanned(${t.id}, this)" title="Insert a canned response — template variables render for this ticket">
         <option value="">✏ canned…</option>
@@ -1168,6 +1176,7 @@ function sendArticle(tid){
   }
   t.updatedAt = nowMs();
   log(cm.kind==='reply'?'Reply sent':'Note added', `#${t.id} ${TITLES[t.id]||''}`.trim() + (logged?` · ${fmtHours(logged.h)}h → Ledger (${atype(logged.typeId).name})`:'') + (a.atts?` · ${a.atts.length} attachment${a.atts.length===1?'':'s'}`:''));
+  cm.body='';
   state.timer=null;
   toast(cm.kind==='reply'
     ? (logged? `Reply sent · ${fmtHours(logged.h)} h logged to Ledger.` : 'Reply sent.')

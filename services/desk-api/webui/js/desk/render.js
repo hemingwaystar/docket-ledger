@@ -13,7 +13,7 @@
    ========================================================================== */
 
 function go(v){ if(!canView(v)) v='dashboard'; state.view=v; render(); }
-function openTicket(id){ const t=tk(id); if(!ticketVisible(t)) { toast('That ticket is outside your access.'); return; } state.ticketId=id; state.view='ticket'; state.composer={kind:'reply', typeId:null, logTime:true}; render(); }
+function openTicket(id){ const t=tk(id); if(!ticketVisible(t)) { toast('That ticket is outside your access.'); return; } state.ticketId=id; state.view='ticket'; state.composer={kind:'reply', typeId:null, logTime:true, body:''}; render(); }
 function openClient(id){ if(!can('view_clients')) return; state.clientId=id; state.clf={st:[],tag:[],owner:[],q:'',from:'',to:''}; state.view='clientv'; render(); }
 
 function renderNav(){
