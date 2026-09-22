@@ -27,6 +27,7 @@
   --surface-2:#fafbf9;    /* subtle fill */
   --line:#e3e7e4;         /* hairlines */
   --line-2:#eef1ee;
+  --divider:#c7cfc9;      /* visible row divider — settings & property list rows */
   --brand:#0e6e63;        /* primary action / brand (petrol teal) */
   --brand-ink:#0a4a43;
   --brand-wash:#e7f1ef;
@@ -173,7 +174,7 @@ a{color:inherit}
   text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);
   font-weight:600;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2)
 }
-.tbl td{padding:11px 12px;border-bottom:1px solid var(--line-2);vertical-align:top}
+.tbl td{padding:11px 12px;border-bottom:1px solid var(--divider);vertical-align:top}
 .tbl tr:last-child td{border-bottom:0}
 .tbl .num{text-align:right;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tbl tbody tr:hover{background:var(--surface-2)}
@@ -243,7 +244,7 @@ select:disabled{opacity:.55;cursor:not-allowed}
 .notice.info{background:var(--brand-wash);color:var(--brand-ink);border:1px solid #cfe4e0}
 .notice.lock{background:var(--locked-wash);color:var(--locked);border:1px solid #d7dee2}
 .notice svg{width:17px;height:17px;flex:0 0 auto;margin-top:1px}
-.setting-row{display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--line-2)}
+.setting-row{display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--divider)}
 .setting-row:last-child{border-bottom:0}
 .setting-row .sl{flex:1}
 .setting-row .sl b{font-weight:600;font-size:13.5px}
@@ -326,7 +327,7 @@ td.audit-detail{overflow-wrap:anywhere}
 
 /* the case file: articles on a spine with a mono time tape */
 .thread{position:relative;padding-left:0}
-.art{display:flex;gap:12px;padding:14px 0;border-bottom:1px solid var(--line-2)}
+.art{display:flex;gap:12px;padding:14px 0;border-bottom:1px solid var(--divider)}
 .art:last-child{border-bottom:0}
 .art .avatar{width:28px;height:28px;font-size:11px;background:var(--locked-wash);color:var(--ink-2)}
 .art.agent .avatar{background:var(--brand);color:#fff}
@@ -341,12 +342,12 @@ td.audit-detail{overflow-wrap:anywhere}
 .art.note .art-body{background:var(--warn-wash);border-color:#ecdcb6;color:#5d430e}
 .art.reply .art-body{background:var(--surface);border-color:var(--line)}
 .art-time{margin-top:7px}
-.art.sys{padding:7px 0;border-bottom:1px solid var(--line-2)}
+.art.sys{padding:7px 0;border-bottom:1px solid var(--divider)}
 .art-sysline{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);width:100%}
 .art-sysline .sdot{width:5px;height:5px;border-radius:50%;background:var(--ink-3);flex:0 0 auto;margin-left:11px}
 .art-sysline .sts{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px}
 /* deleted note/reply tombstone (build 26) — a muted, void-tinted sys-style row */
-.art.deleted{padding:7px 0;border-bottom:1px solid var(--line-2);font-style:italic}
+.art.deleted{padding:7px 0;border-bottom:1px solid var(--divider);font-style:italic}
 .art.deleted .art-sysline{color:var(--ink-3)}
 .art.deleted .art-sysline .sdot{background:var(--void)}
 .art.deleted .art-sysline b{font-weight:600;font-style:normal}
@@ -357,13 +358,13 @@ td.audit-detail{overflow-wrap:anywhere}
 /* composer with the built-in note timer (replaces the extension) */
 .composer{margin-top:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
 .composer.note-mode{border-color:#e4d3a8}
-.composer-tabs{display:flex;align-items:center;gap:2px;padding:8px 10px;border-bottom:1px solid var(--line-2);background:var(--surface-2)}
+.composer-tabs{display:flex;align-items:center;gap:2px;padding:8px 10px;border-bottom:1px solid var(--divider);background:var(--surface-2)}
 .composer.note-mode .composer-tabs{background:var(--warn-wash)}
 .ctab{border:0;background:none;padding:5px 11px;border-radius:6px;font-size:12.5px;color:var(--ink-2);font-weight:500}
 .ctab.on{background:var(--ink);color:#fff}
 .composer textarea{border:0;border-radius:0;width:100%;min-height:96px;resize:vertical;padding:12px 14px;font-size:13px;line-height:1.55;background:transparent;box-shadow:none}
 .composer textarea:focus{box-shadow:none}
-.composer-foot{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--line-2);background:var(--surface-2);flex-wrap:wrap}
+.composer-foot{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--divider);background:var(--surface-2);flex-wrap:wrap}
 .timer-pill{
   display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);
   border:1px solid var(--line);background:var(--surface);border-radius:20px;padding:5px 11px;
@@ -377,7 +378,7 @@ td.audit-detail{overflow-wrap:anywhere}
 .composer-foot select{padding:5px 8px;font-size:12.5px}
 
 /* properties sidebar */
-.props .prop{padding:11px 16px;border-bottom:1px solid var(--line-2)}
+.props .prop{padding:11px 16px;border-bottom:1px solid var(--divider)}
 .props .prop:last-child{border-bottom:0}
 .props .pk{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:5px}
 .props select{width:100%;padding:6px 9px;font-size:12.5px}
@@ -389,7 +390,7 @@ td.audit-detail{overflow-wrap:anywhere}
 .tagrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .tagadd{border:1px dashed var(--line);background:none;color:var(--ink-3);border-radius:20px;padding:2px 9px;font-size:11.5px}
 .tagadd:hover{color:var(--brand);border-color:var(--brand)}
-.timeled{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--line-2);font-size:12.5px}
+.timeled{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--divider);font-size:12.5px}
 .timeled:last-child{border-bottom:0}
 .timeled .avatar{width:22px;height:22px;font-size:9.5px}
 .sla-line{display:flex;align-items:center;gap:7px;font-size:12.5px}
@@ -433,7 +434,7 @@ input.ro:focus{border-color:var(--line);box-shadow:none}
 .prio.hexed .pflag{background:currentColor}
 /* pager (build 13) — the shared list-pagination bar: size select + range +
    prev/next. Sits directly under a .tbl inside a .card, or closes a div list. */
-.pager{display:flex;align-items:center;gap:10px;justify-content:flex-end;padding:9px 14px;border-top:1px solid var(--line-2);font-size:12px}
+.pager{display:flex;align-items:center;gap:10px;justify-content:flex-end;padding:9px 14px;border-top:1px solid var(--divider);font-size:12px}
 .pager select{width:auto;padding:4px 8px;font-size:12px}
 .pager button:disabled{opacity:.4;cursor:default}
 /* compact stacked field (build 14) — the settings standard is label ABOVE its
@@ -474,7 +475,7 @@ input.ro:focus{border-color:var(--line);box-shadow:none}
 .sch-dayhead .sch-dnum{font-size:13px;font-weight:600;line-height:1.1}
 .sch-dayhead.is-today{background:var(--brand-wash)}
 .sch-dayhead.is-today .sch-dnum{color:var(--brand-ink)}
-.sch-col{position:relative;background:repeating-linear-gradient(to bottom,transparent 0,transparent 43px,var(--line-2) 43px,var(--line-2) 44px)}
+.sch-col{position:relative;background:repeating-linear-gradient(to bottom,transparent 0,transparent 43px,var(--divider) 43px,var(--divider) 44px)}
 .sch-ev{position:absolute;border-radius:5px;padding:2px 5px;overflow:hidden;cursor:pointer;font-size:11px;line-height:1.25;box-shadow:0 1px 2px rgba(21,32,41,.10);transition:transform .08s,box-shadow .08s}
 .sch-ev:hover{box-shadow:0 3px 8px rgba(21,32,41,.18);z-index:5}
 .sch-ev-nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
