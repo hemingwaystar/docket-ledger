@@ -312,12 +312,12 @@ td.audit-detail{overflow-wrap:anywhere}
 /* full width lets the field/list blocks read HORIZONTALLY: their rows flow into
    responsive auto-fit columns instead of a single tall stack. Header + add-form
    rows span the whole width so they stay legible. */
-.tk-block[data-block="props"] .props{display:grid;grid-template-columns:repeat(auto-fit,minmax(236px,1fr));align-items:start}
+.tk-block[data-block="props"] .props .pfields{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px 18px;align-items:start}
 .tk-block[data-block="schedule"] .sched{display:grid;grid-template-columns:repeat(auto-fit,minmax(236px,1fr));align-items:start}
 .tk-block[data-block="schedule"] .sched>.prop:not(.sched-row){grid-column:1/-1}
 .tk-block[data-block="audit"] .audit-scroll{display:grid;grid-template-columns:repeat(auto-fit,minmax(236px,1fr));gap:0 2px;max-height:420px}
 @media(max-width:640px){
-  .tk-block[data-block="props"] .props,
+  .tk-block[data-block="props"] .props .pfields,
   .tk-block[data-block="schedule"] .sched,
   .tk-block[data-block="audit"] .audit-scroll{grid-template-columns:1fr}
 }
@@ -377,12 +377,25 @@ td.audit-detail{overflow-wrap:anywhere}
 .timer-pill .treset:hover{color:var(--void)}
 .composer-foot select{padding:5px 8px;font-size:12.5px}
 
-/* properties sidebar */
+/* properties sidebar. .prop is the Schedules bar's row (build 16, still used);
+   the ticket properties block itself now renders grouped sections (below). */
 .props .prop{padding:11px 16px;border-bottom:1px solid var(--divider)}
 .props .prop:last-child{border-bottom:0}
 .props .pk{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:5px}
 .props select{width:100%;padding:6px 9px;font-size:12.5px}
 .props .pv{font-size:13px}
+/* grouped properties (build 33): purpose-headed sections; fields in an auto-fit
+   grid with labels top-aligned. The old per-field bottom borders (which landed
+   ragged at each cell's own height) are gone — section borders carry the split
+   and long captions moved to the label's info tooltip (.pk-i). */
+.props .pgroup{padding:13px 16px 15px;border-bottom:1px solid var(--divider)}
+.props .pgroup:last-child{border-bottom:0}
+.props .pgh{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--brand);font-weight:600;margin:0 0 11px}
+.props .pf{display:flex;flex-direction:column;gap:6px;min-width:0}
+.props .pf.wide{grid-column:1/-1}
+.props .pf .pk{margin:0}
+.props .pk-i{display:inline-flex;vertical-align:middle;color:#b7c0bb;cursor:help}
+.props .pk-i svg{width:13px;height:13px;display:block}
 /* Schedules bar (build 16): a .props-classed card beside the props sidebar on
    paused tickets — its add-row datetime/text inputs stretch full-width like
    .props select; no new color tokens, it reuses the .props card + .prop rows */

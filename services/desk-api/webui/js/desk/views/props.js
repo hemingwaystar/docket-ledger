@@ -4,6 +4,10 @@
    (the on-hold Schedules bar — build 16), title rename, merge, related links,
    parent/child (one level) with the close-cascade prompt, and on-ticket caller
    verification.
+   renderProps renders the block as purpose-headed sections (Status /
+   Assignment / Client / Related / Routing & meta), fields in an auto-fit grid;
+   long field captions live in the label's info tooltip (.pk-i), not a caption
+   line — desk.css .pgroup/.pgh/.pf carry the layout.
    Owns: renderProps() · setProp() + cascadeModal/cascadeJust/cascadeAll ·
    setAssignees() · renderSchedules()/addSchedule/removeSchedule/schedMs/
    reconcileSched (build 16) · saveTitle() · mergeModal/doMerge ·
@@ -636,70 +640,94 @@ function vfyCheck(tid){
 }
 
 /* ---------------- the sidebar ---------------- */
+/* the label's info affordance — long field captions live here now (a hover
+   tooltip) instead of a caption line that threw the grid out of alignment */
+const PK_INFO = '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.15"/>';
+
 function renderProps(t){
   const s = slaInfo(t);
   const lk = projLocked(t);
   const dis = k => ((can(k)&&!lk)?'':'disabled');
+  const pki = txt => ` <span class="pk-i" title="${esc(txt)}">${icon(PK_INFO)}</span>`;
+  /* a section renders only when it has at least one field (Related is
+     conditional); empty '' fields are dropped so a hidden Reply-CC etc. leaves
+     no ghost cell */
+  const sect = (title, fields) => { const body = fields.filter(Boolean).join(''); return body
+    ? `<div class="pgroup"><p class="pgh">${title}</p><div class="pfields">${body}</div></div>` : ''; };
+
+  const fState = `<div class="pf"><div class="pk">State</div>
+    <select onchange="setProp(${t.id},'st',this.value)" ${(can('edit_props')||can('close'))&&!lk?'':'disabled'}>
+      ${STATES.filter(x=>(!isArch(x)&&!x.system)||t.st===x.id).map(x=>`<option value="${x.id}" ${t.st===x.id?'selected':''}>${esc(x.label)}${isArch(x)?' (archived)':''}</option>`).join('')}</select></div>`;
+
+  const fPrio = `<div class="pf"><div class="pk">Priority</div>
+    <select onchange="setProp(${t.id},'prio',this.value)" ${dis('edit_props')}>
+      ${PRIOS.filter(p=>!isArch(p)||t.prio===p.id).map(p=>`<option value="${p.id}" ${t.prio===p.id?'selected':''}>${esc(p.label)}${isArch(p)?' (archived)':''}</option>`).join('')}</select></div>`;
+
+  const fSla = `<div class="pf"><div class="pk">Service level${s?pki(`${prio(t.prio).label}: first response ${SLA[t.prio].fr}h · resolution ${SLA[t.prio].res}h`):''}</div>
+    ${s? `<div class="sla-line ${s.breached?'breach-sla':(s.due-nowMs()<2*H?'due-sla':'ok-sla')}"><span class="sdot"></span>${s.kind} due · ${fmtIn(s.due)}</div>`
+        : `<div class="mini muted">Clock paused — ${esc(st8(t.st).label.toLowerCase())}</div>`}</div>`;
+
+  const fOwner = `<div class="pf"><div class="pk">Owner</div>
+    <select onchange="setProp(${t.id},'ownerId',this.value)" ${dis('assign')}>
+      <option value="">— unassigned —</option>
+      ${AGENTS.map(a=>`<option value="${a.id}" ${t.ownerId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>`;
+
+  const fTechs = `<div class="pf"><div class="pk">Assigned techs</div>
+    ${can('assign')&&!lk
+      ? multiCombo('asg-'+t.id, AGENTS.filter(a=>!isArch(a)||(t.assigneeIds||[]).includes(a.id)).map(a=>({v:a.id,label:a.name,sub:a.email,archived:isArch(a)})), t.assigneeIds||[], 'setAssignees', 'Assign techs…')
+      : `<div class="v mini">${(t.assigneeIds||[]).map(id=>esc(agent(id)?.name||'?')).join(', ')||'—'}</div>`}</div>`;
+
+  const fGroup = `<div class="pf"><div class="pk">Group</div>
+    <select onchange="setProp(${t.id},'groupId',this.value)" ${dis('assign')}>
+      ${GROUPS.filter(g=>!isArch(g)||t.groupId===g.id).map(g=>`<option value="${g.id}" ${t.groupId===g.id?'selected':''}>${esc(g.name)}${isArch(g)?' (archived)':''}</option>`).join('')}</select></div>`;
+
+  const fClient = `<div class="pf"><div class="pk">Client${pki('Moving re-homes the ticket — open Ledger entries follow; approved/locked billing stays put')}</div>
+    ${can('edit_props')&&!lk? combo('cliMove-'+t.id, CLIENTS.filter(c=>(!c.sentinel && !(c.archived||c.status==='archived')) || t.clientId===c.id).map(c=>({v:c.id,label:c.name+(c.sentinel?' (intake)':''),sub:c.domain||''})), t.clientId, function(){ const v=document.getElementById('cliMove-'+t.id).value; if(v && v!==t.clientId) reclientTicket(t.id, v); }, 'Search clients…')
+      : `<div class="v mini">${esc(client(t.clientId).name)}</div>`}</div>`;
+
+  const fContact = `<div class="pf"><div class="pk">Primary contact${pki('Caller verification and outgoing replies address this person')}</div>
+    ${can('edit_props')&&!lk? combo('tkContact-'+t.id,
+        [{v:'',label:'— none —'},
+         ...((client(t.clientId)||{contacts:[]}).contacts||[]).filter(p=>p.active!==false||p.id===t.contactId).map(p=>({v:p.id,label:(p.vip?'★ ':'')+p.name,sub:p.email}))],
+        t.contactId||null, function(){ setPrimaryContact(t.id, document.getElementById('tkContact-'+t.id).value); }, 'Search contacts…')
+      : `<div class="v mini">${(contact(t.contactId)||{}).name?esc(contact(t.contactId).name):'—'}</div>`}
+    ${(contact(t.contactId)||{}).vip?`<span class="chip st-pending" style="align-self:flex-start" title="VIP contact"><span class="cdot"></span>★ VIP</span>`:''}</div>`;
+
+  const fIdentity = `<div class="pf"><div class="pk">Identity${t.tags.includes(VERIFIED_TAG)?pki('Verified — audit note in the thread'):''}</div>
+    ${t.tags.includes(VERIFIED_TAG)
+      ? `<div class="sla-line ok-sla"><span class="sdot"></span>Caller verified</div>
+         ${can('verify_identity')? `<button class="btn sm" style="align-self:flex-start" onclick="verifyModal(${t.id})">${icon(IC.shield)}Verify again</button>`:''}`
+      : `<div class="mini muted">Not verified this ticket</div>
+         ${can('verify_identity')? `<button class="btn sm" style="align-self:flex-start" onclick="verifyModal(${t.id})">${icon(IC.shield)}Verify caller</button>`:''}`}</div>`;
+
+  const fTags = `<div class="pf"><div class="pk">Tags</div>
+    <div class="tagrow">${t.tags.map((tag,i)=>`<span class="chip tagchip">${esc(tag)}${can('edit_props')?`<button onclick="rmTag(${t.id},${i})" title="remove">×</button>`:''}</span>`).join('')}
+    ${can('edit_props')?`<button class="tagadd" onclick="addTag(${t.id})">+ tag</button>`:''}</div></div>`;
+
+  const fCc = ((t.cc&&t.cc.length)||can('edit_props'))? `<div class="pf"><div class="pk">Reply CC${pki("CC'd on every agent reply — inbound To/Cc parties land here")}</div>
+    <div class="tagrow">${(t.cc||[]).map((a,i)=>`<span class="chip tagchip" title="CC'd on every agent reply">${esc(a)}${can('edit_props')?`<button onclick="rmCc(${t.id},${i})" title="stop copying">×</button>`:''}</span>`).join('')||'<span class="mini muted">no one yet</span>'}
+    ${can('edit_props')?`<button class="tagadd" onclick="addCc(${t.id})">+ cc</button>`:''}</div></div>` : '';
+
+  const fOpened = `<div class="pf"><div class="pk">Opened</div><div class="v mini">${fmtDT(t.createdAt)}</div></div>`;
+  const fUpdated = `<div class="pf"><div class="pk">Updated</div><div class="v mini">${fmtAgo(t.updatedAt)}</div></div>`;
+
+  /* relationships ride full-width rows (they're lists, not single controls) */
+  const rel = [];
+  if(t.parentId) rel.push(`<div class="pf wide"><div class="pk">Parent ticket</div>
+    <div class="mini" style="display:flex;gap:6px;align-items:center;margin:0"><a href="#" onclick="openTicket(${t.parentId});return false" style="color:var(--brand)">#${t.parentId}</a>${(pp=>pp?`<span ${stChipAttrs(st8(pp.st))}><span class="cdot"></span>${esc((st8(pp.st)||{}).label||pp.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[pp.id]||firstLine(pp)).slice(0,36))}</span>`:'<span class="muted">not in view</span>')(tk(t.parentId))}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.parentId},${t.id})" title="Detach from the parent">×</button>`:''}</div></div>`);
+  if(t.children&&t.children.length) rel.push(`<div class="pf wide"><div class="pk">Child tickets · ${t.children.filter(id=>{const c=tk(id);return c&&(st8(c.st)||{}).type!=='done';}).length} open of ${t.children.length}</div>
+    ${t.children.map(id=>{const ct=tk(id); return `<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a>${ct?`<span ${stChipAttrs(st8(ct.st))}><span class="cdot"></span>${esc((st8(ct.st)||{}).label||ct.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[id]||firstLine(ct)).slice(0,36))}</span>`:'<span class="muted" style="flex:1">not in view</span>'}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.id},${id})">×</button>`:''}</div>`;}).join('')}</div>`);
+  if(t.links&&t.links.length) rel.push(`<div class="pf wide"><div class="pk">Linked tickets</div>
+    ${t.links.map(id=>{const lt=tk(id); return `<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lt?esc((TITLES[id]||firstLine(lt)).slice(0,40)):'not in view'}</span>${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unlink(${t.id},${id})">×</button>`:''}</div>`;}).join('')}</div>`);
+
   return `
   <div>
     <div class="card props">
-      <div class="prop"><div class="pk">State</div>
-        <select onchange="setProp(${t.id},'st',this.value)" ${(can('edit_props')||can('close'))&&!lk?'':'disabled'}>
-          ${STATES.filter(x=>(!isArch(x)&&!x.system)||t.st===x.id).map(x=>`<option value="${x.id}" ${t.st===x.id?'selected':''}>${esc(x.label)}${isArch(x)?' (archived)':''}</option>`).join('')}</select></div>
-      <div class="prop"><div class="pk">Priority</div>
-        <select onchange="setProp(${t.id},'prio',this.value)" ${dis('edit_props')}>
-          ${PRIOS.filter(p=>!isArch(p)||t.prio===p.id).map(p=>`<option value="${p.id}" ${t.prio===p.id?'selected':''}>${esc(p.label)}${isArch(p)?' (archived)':''}</option>`).join('')}</select></div>
-      <div class="prop"><div class="pk">Owner</div>
-        <select onchange="setProp(${t.id},'ownerId',this.value)" ${dis('assign')}>
-          <option value="">— unassigned —</option>
-          ${AGENTS.map(a=>`<option value="${a.id}" ${t.ownerId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>
-      <div class="prop"><div class="pk">Assigned techs</div>
-        ${can('assign')&&!lk
-          ? multiCombo('asg-'+t.id, AGENTS.filter(a=>!isArch(a)||(t.assigneeIds||[]).includes(a.id)).map(a=>({v:a.id,label:a.name,sub:a.email,archived:isArch(a)})), t.assigneeIds||[], 'setAssignees', 'Assign techs…')
-          : `<div class="v mini">${(t.assigneeIds||[]).map(id=>esc(agent(id)?.name||'?')).join(', ')||'—'}</div>`}
-      </div>
-      <div class="prop"><div class="pk">Group</div>
-        <select onchange="setProp(${t.id},'groupId',this.value)" ${dis('assign')}>
-          ${GROUPS.filter(g=>!isArch(g)||t.groupId===g.id).map(g=>`<option value="${g.id}" ${t.groupId===g.id?'selected':''}>${esc(g.name)}${isArch(g)?' (archived)':''}</option>`).join('')}</select></div>
-      <div class="prop"><div class="pk">Client</div>
-        ${can('edit_props')&&!lk? combo('cliMove-'+t.id, CLIENTS.filter(c=>(!c.sentinel && !(c.archived||c.status==='archived')) || t.clientId===c.id).map(c=>({v:c.id,label:c.name+(c.sentinel?' (intake)':''),sub:c.domain||''})), t.clientId, function(){ const v=document.getElementById('cliMove-'+t.id).value; if(v && v!==t.clientId) reclientTicket(t.id, v); }, 'Search clients…')
-          : `<div class="v mini">${esc(client(t.clientId).name)}</div>`}
-        <div class="mini muted" style="margin-top:4px">Moving re-homes the ticket — open Ledger entries follow; approved/locked billing stays put</div></div>
-      <div class="prop"><div class="pk">Primary contact</div>
-        ${can('edit_props')&&!lk? combo('tkContact-'+t.id,
-            [{v:'',label:'— none —'},
-             ...((client(t.clientId)||{contacts:[]}).contacts||[]).filter(p=>p.active!==false||p.id===t.contactId).map(p=>({v:p.id,label:(p.vip?'★ ':'')+p.name,sub:p.email}))],
-            t.contactId||null, function(){ setPrimaryContact(t.id, document.getElementById('tkContact-'+t.id).value); }, 'Search contacts…')
-          : `<div class="v mini">${(contact(t.contactId)||{}).name?esc(contact(t.contactId).name):'—'}</div>`}
-        ${(contact(t.contactId)||{}).vip?`<span class="chip st-pending" style="margin-top:4px" title="VIP contact"><span class="cdot"></span>★ VIP</span>`:''}
-        <div class="mini muted" style="margin-top:4px">Caller verification and outgoing replies address this person</div></div>
-      ${t.parentId?`<div class="prop"><div class="pk">Parent ticket</div>
-        <div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${t.parentId});return false" style="color:var(--brand)">#${t.parentId}</a>${(pp=>pp?`<span ${stChipAttrs(st8(pp.st))}><span class="cdot"></span>${esc((st8(pp.st)||{}).label||pp.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[pp.id]||firstLine(pp)).slice(0,36))}</span>`:'<span class="muted">not in view</span>')(tk(t.parentId))}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.parentId},${t.id})" title="Detach from the parent">×</button>`:''}</div></div>`:''}
-      ${(t.children&&t.children.length)?`<div class="prop"><div class="pk">Child tickets · ${t.children.filter(id=>{const c=tk(id);return c&&(st8(c.st)||{}).type!=='done';}).length} open of ${t.children.length}</div>
-        ${t.children.map(id=>{const ct=tk(id); return `<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a>${ct?`<span ${stChipAttrs(st8(ct.st))}><span class="cdot"></span>${esc((st8(ct.st)||{}).label||ct.st)}</span> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((TITLES[id]||firstLine(ct)).slice(0,36))}</span>`:'<span class="muted" style="flex:1">not in view</span>'}${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unchild(${t.id},${id})">×</button>`:''}</div>`;}).join('')}</div>`:''}
-      ${(t.links&&t.links.length)?`<div class="prop"><div class="pk">Linked tickets</div>
-        ${t.links.map(id=>{const lt=tk(id); return `<div class="mini" style="display:flex;gap:6px;align-items:center;margin:3px 0"><a href="#" onclick="openTicket(${id});return false" style="color:var(--brand)">#${id}</a> <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lt?esc((TITLES[id]||firstLine(lt)).slice(0,40)):'not in view'}</span>${can('edit_props')?`<button class="rowbtn" style="padding:0 5px" onclick="unlink(${t.id},${id})">×</button>`:''}</div>`;}).join('')}</div>`:''}
-      <div class="prop"><div class="pk">Tags</div>
-        <div class="tagrow">${t.tags.map((tag,i)=>`<span class="chip tagchip">${esc(tag)}${can('edit_props')?`<button onclick="rmTag(${t.id},${i})" title="remove">×</button>`:''}</span>`).join('')}
-        ${can('edit_props')?`<button class="tagadd" onclick="addTag(${t.id})">+ tag</button>`:''}</div></div>
-      ${(t.cc&&t.cc.length)||can('edit_props')?`<div class="prop"><div class="pk">Reply CC</div>
-        <div class="tagrow">${(t.cc||[]).map((a,i)=>`<span class="chip tagchip" title="CC'd on every agent reply">${esc(a)}${can('edit_props')?`<button onclick="rmCc(${t.id},${i})" title="stop copying">×</button>`:''}</span>`).join('')||'<span class="mini muted">no one — inbound To/Cc parties land here</span>'}
-        ${can('edit_props')?`<button class="tagadd" onclick="addCc(${t.id})">+ cc</button>`:''}</div></div>`:''}
-      <div class="prop"><div class="pk">Service level</div>
-        ${s? `<div class="sla-line ${s.breached?'breach-sla':(s.due-nowMs()<2*H?'due-sla':'ok-sla')}"><span class="sdot"></span>${s.kind} due · ${fmtIn(s.due)}</div>
-              <div class="mini muted" style="margin-top:3px">${prio(t.prio).label}: first response ${SLA[t.prio].fr}h · resolution ${SLA[t.prio].res}h</div>`
-            : `<div class="mini muted">Clock paused — ${st8(t.st).label.toLowerCase()}</div>`}</div>
-      <div class="prop"><div class="pk">Identity</div>
-        ${t.tags.includes(VERIFIED_TAG)
-          ? `<div class="sla-line ok-sla"><span class="sdot"></span>Caller verified</div><div class="mini muted" style="margin-top:3px;margin-bottom:${can('verify_identity')?'8px':'0'}">audit note in the thread</div>
-             ${can('verify_identity')? `<button class="btn sm" onclick="verifyModal(${t.id})">${icon(IC.shield)}Verify again</button>`:''}`
-          : `<div class="mini muted" style="margin-bottom:${can('verify_identity')?'8px':'0'}">Not verified this ticket</div>
-             ${can('verify_identity')? `<button class="btn sm" onclick="verifyModal(${t.id})">${icon(IC.shield)}Verify caller</button>`:''}`}
-      </div>
-      <div class="prop"><div class="kv" style="margin:0">
-        <div><div class="k">Opened</div><div class="v mini">${fmtDT(t.createdAt)}</div></div>
-        <div><div class="k">Updated</div><div class="v mini">${fmtAgo(t.updatedAt)}</div></div>
-      </div></div>
+      ${sect('Status', [fState, fPrio, fSla])}
+      ${sect('Assignment', [fOwner, fTechs, fGroup])}
+      ${sect('Client', [fClient, fContact, fIdentity])}
+      ${sect('Related', rel)}
+      ${sect('Routing &amp; meta', [fTags, fCc, fOpened, fUpdated])}
     </div>
   </div>`;
 }
