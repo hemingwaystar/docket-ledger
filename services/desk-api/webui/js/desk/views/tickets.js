@@ -393,7 +393,7 @@ function bulkApply(k, v){
   } finally { window._bulkRun = false; }
   if(k==='tag' && n) log('Bulk tag added', `“${v}” on ${n} tickets`);
   state.bulk = [];
-  toast(`Applied to ${n} ticket${n===1?'':'s'} — each change audited individually.`);
+  toast(`Applied to ${n} ticket${n===1?'':'s'}.`);
   render();
 }
 /* bulk "Assign to…" — adds every ticked tech (state.bulkAsg) to every selected
@@ -572,7 +572,7 @@ function renderArt(t,a){
     && !(a.time && (a.time.approved || a.time.locked));
   const editing = mayEditNote && state.editNote===a.id;
   const editBtn = (mayEditNote && !editing)
-    ? `<button class="rowbtn" onclick="state.editNote='${jsq(a.id)}';state.editAtts=[];render()" title="Edit this note — the change is audited (before → after)">Edit</button>`
+    ? `<button class="rowbtn" onclick="state.editNote='${jsq(a.id)}';state.editAtts=[];state.editBody=null;render()" title="Edit this note — the change is audited (before → after)">Edit</button>`
     : '';
   const attachBtn = mayAttach
     ? `<button class="rowbtn" onclick="attachTime(${t.id},'${jsq(a.id)}')" title="Attach a time entry — starts as a 15-min span ending at this ${a.kind==='reply'?'email':'note'}'s timestamp; adjust it inline">+ time</button>`
@@ -626,18 +626,25 @@ function renderArt(t,a){
    sendArticle. Only the ONE note being edited shows the editor (its id ===
    state.editNote), so the single global state.editAtts is unambiguous. Open
    and Cancel are inline state sets (the same pattern as the title editor) —
-   the body reverts to a.body on Cancel because nothing mutated it until Save. */
+   the body reverts to a.body on Cancel because nothing mutated it until Save.
+   The in-progress text lives in state.editBody (null = untouched → show
+   a.body), written on every keystroke, so ANY render — the time-chip edit's
+   commitRender, the rehydrate that fires when the file picker closes, a
+   background repaint — re-emits the draft instead of reverting to a.body.
+   The leading \n is eaten by the HTML parser (one LF after <textarea> is
+   dropped), so a draft that itself starts with a blank line round-trips. */
 function renderNoteEditor(t, a){
   const staged = state.editAtts || [];
+  const draft = state.editBody ?? a.body;
   return `<div class="note-edit" style="margin-top:6px">
-    <textarea id="editBody-${esc(a.id)}" style="width:100%;min-height:92px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;resize:vertical;box-sizing:border-box" placeholder="The note can't be emptied — write something or Cancel.">${esc(a.body)}</textarea>
+    <textarea id="editBody-${esc(a.id)}" style="width:100%;min-height:92px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;resize:vertical;box-sizing:border-box" placeholder="The note can't be emptied — write something or Cancel." oninput="state.editBody=this.value">\n${esc(draft)}</textarea>
     ${(a.atts&&a.atts.length)?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center"><span class="mini muted">kept:</span>${a.atts.map(f=>`<span class="chip" style="background:#eef2f1" title="${esc(f.type||'')} — existing attachments stay; edits only ADD">📎 ${esc(f.name)} <span class="mini muted">${fmtKB(f.size)}</span></span>`).join('')}</div>`:''}
     ${staged.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${staged.map((f,i)=>`<span class="chip" style="background:#eef2f1"><span>📎 ${esc(f.name)}</span> <span class="mini muted">${fmtKB(f.size)}</span><button class="rowbtn" style="padding:0 5px" onclick="rmEditAtt(${i})" title="Remove before saving">×</button></span>`).join('')}</div>`:''}
     <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
       <label class="rowbtn" style="cursor:pointer" title="Add files to this note — staged now, uploaded on Save">📎 attach<input type="file" multiple style="display:none" onchange="addEditAtts(this)"></label>
       <span style="flex:1"></span>
       <button class="btn sm primary" onclick="editNote(${t.id},'${jsq(a.id)}')">Save</button>
-      <button class="btn sm ghost" onclick="state.editNote=null;state.editAtts=[];render()">Cancel</button>
+      <button class="btn sm ghost" onclick="state.editNote=null;state.editAtts=[];state.editBody=null;render()">Cancel</button>
     </div>
   </div>`;
 }
@@ -659,16 +666,16 @@ function editNote(tid, aid){
   if(a.time && (a.time.approved || a.time.locked)){ toast('The linked timesheet is approved — the note is frozen with it.'); return; }
   if(!((a.author?.id===state.meId) || can('see_billing'))) return;
   const el = document.getElementById('editBody-'+aid);
-  const body = (el ? el.value : a.body).trim();
+  const body = (el ? el.value : (state.editBody ?? a.body)).trim();
   if(!body){ toast('A note can’t be emptied — write something or cancel.'); return; }
   const staged = (state.editAtts||[]).slice();
   const before = a.body;
-  if(body===before && !staged.length){ state.editNote=null; state.editAtts=[]; render(); return; }  /* no-op — nothing to mirror */
+  if(body===before && !staged.length){ state.editNote=null; state.editAtts=[]; state.editBody=null; render(); return; }  /* no-op — nothing to mirror */
   /* --- all checks passed; optimistic mutation --- */
   a.body = body;
   if(staged.length) a.atts = (a.atts||[]).concat(staged);
   a.editedAt = nowMs(); a.editedBy = state.user.name;
-  state.editNote = null; state.editAtts = [];
+  state.editNote = null; state.editAtts = []; state.editBody = null;
   /* build 22: a note edit is now a first-class ticket event — it lands on the
      ticket's Audit block (sys article, before→after) AND marks the ticket
      'updated' (the server _touches it; the reconcile below syncs the fresh
@@ -679,7 +686,6 @@ function editNote(tid, aid){
     + (staged.length?` · +${staged.length} attachment${staged.length===1?'':'s'}`:'')));
   t.updatedAt = nowMs();
   log('Note edited', `#${t.id}${staged.length?` · +${staged.length} attachment${staged.length===1?'':'s'}`:''}`);
-  toast(`Note updated${staged.length?` · ${staged.length} attachment${staged.length===1?'':'s'} added`:''} — audited; the thread shows “(edited).”`);
   render();
   /* --- mirror: staged files first (each returns its row id), then PATCH the
      note claiming them — the server links the rows, writes the audit line and
@@ -749,7 +755,6 @@ function deleteArticle(tid, aid){
   t.articles.push(art('sys', me(), nowMs(), detail));       /* Audit block sibling */
   t.updatedAt = nowMs();
   log(`${kl2} deleted`, `#${t.id} · “${clip(before)}”` + (voidedH?` · ${fmtHours(voidedH)} h voided`:''));  /* global Audit Log */
-  toast(`${kl2} deleted — audited.` + (voidedH?' Linked time voided in Ledger.':''));
   render();
   $fetch('/api/tickets/'+tid+'/articles/'+aid,{method:'DELETE'})
     .then(async r=>{ const d=await r.json().catch(()=>0);
@@ -763,22 +768,24 @@ function deleteArticle(tid, aid){
 }
 
 /* editor attachment controls — mirror addAtts/rmAtt but stage into
-   state.editAtts and preserve the in-progress textarea value across the
-   render (the editBody textarea is markup-prefilled from a.body, so a plain
-   render would otherwise discard whatever the editor typed) */
+   state.editAtts. The draft rides state.editBody (renderNoteEditor re-emits
+   it), so these just sync it from the live textarea and render. The old
+   read-DOM → render → write-DOM dance couldn't survive the rehydrate that
+   fires when the file picker closes: that render reverted the textarea to
+   a.body BEFORE this onchange ran, so it faithfully "preserved" the wrong text. */
+function syncEditBody(){
+  const el = document.getElementById('editBody-'+state.editNote);
+  if(el) state.editBody = el.value;
+}
 function addEditAtts(inp){
   state.editAtts = state.editAtts||[];
   [...inp.files].forEach(f=>{ if(!state.editAtts.some(x=>x.name===f.name && x.size===f.size)) state.editAtts.push({ name:f.name, size:f.size, type:f.type||'application/octet-stream', _file:f }); });
   inp.value='';
-  const aid = state.editNote;
-  const body = document.getElementById('editBody-'+aid)?.value; render();
-  const b2 = document.getElementById('editBody-'+aid); if(b2 && body!=null) b2.value = body;
+  syncEditBody(); render();
 }
 function rmEditAtt(i){
-  const aid = state.editNote;
-  const body = document.getElementById('editBody-'+aid)?.value;
+  syncEditBody();
   state.editAtts.splice(i,1); render();
-  const b2 = document.getElementById('editBody-'+aid); if(b2 && body!=null) b2.value = body;
 }
 
 /* ---- canned responses: a local text convenience — the insert renders the
@@ -821,7 +828,6 @@ function attachTime(tid, aid){
   t.updatedAt = nowMs();
   log('Time entry added to '+(a.kind==='reply'?'email':'note'), `#${t.id} · ${agent(techId).name.split(' ')[0]} · ${msTime(e.startedAt)}–${msTime(e.endedAt)} = ${fmtHours(e.h)} h · ${atype(e.typeId).name}`);
   bridgeSend('time-logged', { eid:e.eid, ticket:t.id, title:TITLES[t.id]||firstLine(t), clientId:t.clientId, techId, typeId:e.typeId, h:e.h, startedAt:e.startedAt, endedAt:e.endedAt, note:a.body.slice(0,140), task: taskPayload(t, e.taskId) });
-  toast(`Time attached to the note — ${msTime(e.startedAt)}–${msTime(e.endedAt)} = ${fmtHours(e.h)} h. Adjust the span inline.`);
   render();
   $fetch('/api/tickets/'+tid+'/time',{method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -842,7 +848,7 @@ function attachTime(tid, aid){
    SEGMENT (hour, then minute, then …), so a single edit used to fire this
    handler several times — a "Span saved · Audited and mirrored" toast, a Ledger
    mirror and a PATCH PER SEGMENT. Snapshot the pre-edit values once at the start
-   of a burst and debounce the audit/mirror/toast/PATCH so one edit = one of each. */
+   of a burst and debounce the audit/mirror/PATCH so one edit = one of each. */
 const _teBurst = {};
 function editTimeEntry(tid, i, k, v, srcEl){
   const t = tk(tid), e = t.time[i]; if(!e) return;
@@ -870,8 +876,8 @@ function editTimeEntry(tid, i, k, v, srcEl){
   }
   t.updatedAt = nowMs();
   commitRender(srcEl);
-  /* settle the burst ~600ms after the last segment change: audit, mirror,
-     toast and PATCH the NET change once, against the burst snapshot */
+  /* settle the burst ~600ms after the last segment change: audit, mirror
+     and PATCH the NET change once, against the burst snapshot */
   clearTimeout(burst.timer);
   burst.timer = setTimeout(()=>{
     delete _teBurst[e.eid];
@@ -884,8 +890,9 @@ function editTimeEntry(tid, i, k, v, srcEl){
     if(e.taskId!==was.ta)
       log('Time entry moved between tasks', `#${t.id} · ${was.ta?(projTask(t,was.ta)?.label||'?'):'(no task)'} → ${e.taskId?(projTask(t,e.taskId)?.label||'?'):'(no task)'}`);
     bridgeSend('time-updated', { eid:e.eid, startedAt:e.startedAt, endedAt:e.endedAt, h:e.h, oldH:burst.oldH, techId:e.techId, typeId:e.typeId, ticket:t.id, task: taskPayload(t, e.taskId) });
-    toast(`Span saved — ${msTime(e.startedAt)}–${msTime(e.endedAt)} = ${fmtHours(e.h)} h. Audited and mirrored in Ledger.`);
-    if(!srvId(e.eid)) return;                     /* local-only entry (pre-mirror) */
+    /* no success toast (user request) — the chip's own hours update is the
+       confirmation; failures still surface through oops() */
+    if(!srvId(e.eid)) return;                    /* local-only entry (pre-mirror) */
     $fetch('/api/time/'+e.eid,{method:'PATCH',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({started_at:iso(e.startedAt), ended_at:iso(e.endedAt),
@@ -908,7 +915,7 @@ function removeTimeEntry(tid, i){
   t.updatedAt = nowMs();
   log('Time entry removed', `#${t.id} · ${agent(e.techId).name.split(' ')[0]} · ${fmtHours(e.h)} h (${atype(e.typeId).name}) — Ledger row voided, not deleted`);
   bridgeSend('time-removed', { eid:e.eid, ticket:t.id, techId:e.techId, typeId:e.typeId, h:e.h });
-  toast('Entry removed here — Ledger keeps a voided row for the audit trail.'); render();
+  render();
   if(!srvId(e.eid)) return;                      /* never mirrored — nothing to void */
   $fetch('/api/time/'+e.eid,{method:'PATCH',
     headers:{'Content-Type':'application/json'},
@@ -1134,7 +1141,7 @@ function renderComposer(t){
     <div id="attStage" style="display:${(state.composer.atts||[]).length?'flex':'none'};gap:6px;flex-wrap:wrap;padding:8px 14px 0">
       ${(state.composer.atts||[]).map((f,i)=>`<span class="chip" style="background:#eef2f1"><span>📎 ${esc(f.name)}</span><span class="mini muted">${fmtKB(f.size)}</span><button class="rowbtn" style="padding:0 5px" onclick="rmAtt(${i})">×</button></span>`).join('')}
     </div>
-    <textarea id="composeBody" placeholder="${cm.kind==='reply'?'Write to the customer — the clock below runs while you type…':'Note for the team — the clock below runs while you type…'}" onfocus="composerTimerStart(${t.id})" oninput="state.composer.body=this.value;composerTimerStart(${t.id})">${esc(cm.body||'')}</textarea>
+    <textarea id="composeBody" placeholder="${cm.kind==='reply'?'Write to the customer — the clock below runs while you type…':'Note for the team — the clock below runs while you type…'}" onfocus="composerTimerStart(${t.id})" oninput="state.composer.body=this.value;composerTimerStart(${t.id})">\n${esc(cm.body||'')}</textarea>
     <div class="composer-foot">
       <select style="width:auto;max-width:170px;font-size:12px" onchange="insertCanned(${t.id}, this)" title="Insert a canned response — template variables render for this ticket">
         <option value="">✏ canned…</option>

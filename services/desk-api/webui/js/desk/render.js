@@ -45,8 +45,10 @@ function editingText(){
   const a = document.activeElement; if(!a) return false;
   if(a.id === 'composeBody') return true;
   const tag = a.tagName;
+  /* date/time count too: a repaint mid-entry resets a half-typed time to the
+     last committed value (the "removes text when entering time" symptom) */
   return tag === 'TEXTAREA' ||
-         (tag === 'INPUT' && /^(text|search|email|tel|url|number|password)$/.test(a.type || 'text'));
+         (tag === 'INPUT' && /^(text|search|email|tel|url|number|password|date|time|datetime-local|month|week)$/.test(a.type || 'text'));
 }
 
 function render(){
