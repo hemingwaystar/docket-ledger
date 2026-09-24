@@ -838,6 +838,12 @@ function attachTime(tid, aid){
       if(d.version){ t.version=d.version; t.updatedAt=d.updatedAt||t.updatedAt; } });
 }
 
+/* eid → {was, oldH, timer}: a native date/time input fires `change` once per
+   SEGMENT (hour, then minute, then …), so a single edit used to fire this
+   handler several times — a "Span saved · Audited and mirrored" toast, a Ledger
+   mirror and a PATCH PER SEGMENT. Snapshot the pre-edit values once at the start
+   of a burst and debounce the audit/mirror/toast/PATCH so one edit = one of each. */
+const _teBurst = {};
 function editTimeEntry(tid, i, k, v, srcEl){
   const t = tk(tid), e = t.time[i]; if(!e) return;
   if(!srvId(e.eid)){ /* mid-save (audit): mutating now would toast success and
@@ -845,8 +851,8 @@ function editTimeEntry(tid, i, k, v, srcEl){
     toast('This entry is still saving — try again in a second.'); commitRender(srcEl); return; }
   if(projLocked(t)){ toast('Approved project — time is frozen. Admin unlock available on the checklist card.'); commitRender(srcEl); return; }
   if(!(can('see_billing') || (can('log_time') && e.techId===state.meId))) return;
-  const was = { s:e.startedAt, en:e.endedAt, ty:e.typeId, ta:e.taskId };
-  const oldH = e.h;
+  const burst = _teBurst[e.eid] ||
+    (_teBurst[e.eid] = { was:{ s:e.startedAt, en:e.endedAt, ty:e.typeId, ta:e.taskId }, oldH:e.h, timer:null });
   if(k==='date' || k==='start' || k==='end'){
     if(k!=='date' && !validT(v)){ commitRender(srcEl); return; }
     if(k==='date' && !/^\d{4}-\d{2}-\d{2}$/.test(v)){ commitRender(srcEl); return; }
@@ -856,28 +862,37 @@ function editTimeEntry(tid, i, k, v, srcEl){
     if(k==='end')   b = spanMs(msDate(e.endedAt), v);
     if(!(b>a)){ toast('End must be after start — change not saved. (Worked past noon? 4:30 PM is 16:30.)'); commitRender(srcEl); return; }
     e.startedAt=a; e.endedAt=b; e.h = spanH(a,b);
-    log('Time entry edited', `#${t.id} · ${agent(e.techId).name.split(' ')[0]} · ${msTime(was.s)}–${msTime(was.en)} → ${msTime(a)}–${msTime(b)} on ${msDate(a)} = ${fmtHours(e.h)} h`);
   } else if(k==='typeId'){
-    log('Time entry reclassified', `#${t.id} · ${atype(e.typeId).name} → ${atype(v).name}`);
     e.typeId = v;
   } else if(k==='taskId'){
     if(!isProj(t) || !projEditable(t)) return;
-    const wasT = e.taskId? (projTask(t,e.taskId)?.label||'?') : '(no task)';
-    const nowT = v? (projTask(t,v)?.label||'?') : '(no task)';
-    log('Time entry moved between tasks', `#${t.id} · ${wasT} → ${nowT}`);
     e.taskId = v||null;
   }
   t.updatedAt = nowMs();
-  bridgeSend('time-updated', { eid:e.eid, startedAt:e.startedAt, endedAt:e.endedAt, h:e.h, oldH, techId:e.techId, typeId:e.typeId, ticket:t.id, task: taskPayload(t, e.taskId) });
-  toast(`Span saved — ${msTime(e.startedAt)}–${msTime(e.endedAt)} = ${fmtHours(e.h)} h. Audited and mirrored in Ledger.`); commitRender(srcEl);
-  if(e.startedAt===was.s && e.endedAt===was.en && e.typeId===was.ty && e.taskId===was.ta) return;
-  if(!srvId(e.eid)) return;                      /* local-only entry (pre-mirror) */
-  $fetch('/api/time/'+e.eid,{method:'PATCH',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({started_at:iso(e.startedAt), ended_at:iso(e.endedAt),
-      activity_type:typeName(e.typeId),
-      task_id:e.taskId?(srvId(e.taskId)?e.taskId:undefined):''})})
-    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  commitRender(srcEl);
+  /* settle the burst ~600ms after the last segment change: audit, mirror,
+     toast and PATCH the NET change once, against the burst snapshot */
+  clearTimeout(burst.timer);
+  burst.timer = setTimeout(()=>{
+    delete _teBurst[e.eid];
+    const was = burst.was;
+    if(e.startedAt===was.s && e.endedAt===was.en && e.typeId===was.ty && e.taskId===was.ta) return;
+    if(e.startedAt!==was.s || e.endedAt!==was.en)
+      log('Time entry edited', `#${t.id} · ${agent(e.techId).name.split(' ')[0]} · ${msTime(was.s)}–${msTime(was.en)} → ${msTime(e.startedAt)}–${msTime(e.endedAt)} on ${msDate(e.startedAt)} = ${fmtHours(e.h)} h`);
+    if(e.typeId!==was.ty)
+      log('Time entry reclassified', `#${t.id} · ${atype(was.ty).name} → ${atype(e.typeId).name}`);
+    if(e.taskId!==was.ta)
+      log('Time entry moved between tasks', `#${t.id} · ${was.ta?(projTask(t,was.ta)?.label||'?'):'(no task)'} → ${e.taskId?(projTask(t,e.taskId)?.label||'?'):'(no task)'}`);
+    bridgeSend('time-updated', { eid:e.eid, startedAt:e.startedAt, endedAt:e.endedAt, h:e.h, oldH:burst.oldH, techId:e.techId, typeId:e.typeId, ticket:t.id, task: taskPayload(t, e.taskId) });
+    toast(`Span saved — ${msTime(e.startedAt)}–${msTime(e.endedAt)} = ${fmtHours(e.h)} h. Audited and mirrored in Ledger.`);
+    if(!srvId(e.eid)) return;                     /* local-only entry (pre-mirror) */
+    $fetch('/api/time/'+e.eid,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({started_at:iso(e.startedAt), ended_at:iso(e.endedAt),
+        activity_type:typeName(e.typeId),
+        task_id:e.taskId?(srvId(e.taskId)?e.taskId:undefined):''})})
+      .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
+  }, 600);
 }
 
 function removeTimeEntry(tid, i){

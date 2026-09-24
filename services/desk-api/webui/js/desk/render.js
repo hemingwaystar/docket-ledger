@@ -135,7 +135,12 @@ function reflowAudit(){
    while still focused; re-rendering then destroys the field mid-typing.
    Commit state immediately, defer the re-render to blur. */
 function commitRender(srcEl){
-  if(srcEl && document.activeElement===srcEl){ srcEl.addEventListener('blur', ()=>render(), {once:true}); }
+  /* defer the rebuild to the field's blur so we don't re-render mid-typing.
+     Crucially, run it a tick AFTER blur (setTimeout 0): clicking another
+     control (e.g. "Add note") blurs this field first, and a synchronous
+     rebuild here would replace that control's DOM node between mousedown and
+     mouseup, swallowing the click. The timeout lets the click land first. */
+  if(srcEl && document.activeElement===srcEl){ srcEl.addEventListener('blur', ()=>setTimeout(render,0), {once:true}); }
   else render();
 }
 
