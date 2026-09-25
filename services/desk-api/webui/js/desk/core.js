@@ -31,7 +31,10 @@ const jsq = s => esc(String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
 const webHref  = u => { u = String(u||'').trim(); return u ? (/^https?:\/\//i.test(u) ? u : 'https://'+u) : ''; };
 const webLabel = u => String(u||'').trim().replace(/^https?:\/\//i,'').replace(/\/+$/,'');
 const H = 3600e3, MIN = 60e3;
-function fmtDT(ms){ const d=new Date(ms); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+/* year only when it isn't this year — so Dec 30 / Jan 3 across a rollover stay unambiguous */
+function fmtDT(ms){ const d=new Date(ms); const o={month:'short',day:'numeric'};
+  if(d.getFullYear()!==new Date(nowMs()).getFullYear()) o.year='numeric';
+  return d.toLocaleDateString('en-US',o)+' · '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function fmtAgo(ms){
   const d = nowMs()-ms;
   if(d < MIN) return 'just now';

@@ -373,7 +373,7 @@ function trigModal(id){
       </div>
       <div class="field"><label>Only if (rows must ALL match; OR groups match any — within a row, several picked values or commas mean any-of; leave empty for always)</label><div id="tgConds"></div>
         <button class="btn sm ghost" onclick="trigAddCond()">+ condition</button>
-        <button class="btn sm ghost" onclick="trigAddOrGroup()">+ OR group</button></div>
+        <button class="btn sm ghost" onclick="trigAddOrGroup()">+ OR</button></div>
       <div class="field"><label>Actions (run in order)</label><div id="tgActs"></div>
         <button class="btn sm ghost" onclick="trigAddAct()">+ action</button></div>
     </div>
@@ -490,7 +490,7 @@ function ruleModal(id){
       <div class="field"><label>Rule name</label><input type="text" id="rName" value="${esc(r0.name||'')}" placeholder="e.g. Billing questions → Projects"></div>
       <div class="field"><label>When</label><div id="rConds"></div>
         <button class="btn sm ghost" onclick="ruleAddCond()">+ condition</button>
-        <button class="btn sm ghost" onclick="ruleAddOrGroup()">+ OR group</button></div>
+        <button class="btn sm ghost" onclick="ruleAddOrGroup()">+ OR</button></div>
       <div class="field"><label>Then</label>
         <div class="grid g-2" style="gap:12px">
           <div class="field"><label>Move to board</label><select id="raGroup"><option value="">— leave as is —</option>${aGROUPS().map(g=>`<option value="${g.id}" ${r0.act.groupId===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select></div>
