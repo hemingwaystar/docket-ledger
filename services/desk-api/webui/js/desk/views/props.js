@@ -352,7 +352,35 @@ function renderAudit(t){
             <div class="mini muted" style="margin-top:2px">${esc(a.author?.name||'System')} · ${fmtDT(a.ts)}</div>
           </div>`).join('')}</div>`
       : `<div class="prop"><div class="mini muted">No events yet.</div></div>`}
+    ${accessHistory(t)}
   </div>`;
+}
+
+/* ---- access history (0051) — who opened / downloaded / exported from this
+   ticket. Fetched lazily per ticket (GET /api/access?ticket=), cached a
+   minute; view_audit only, like the block it lives in. ---- */
+const ACCESS_KINDS = { ticket_view:'Opened', ticket_read:'Read via API', ticket_list:'Listed via API', entry_list:'Read time entries via API',
+  attachment:'Downloaded attachment', workspace:'Loaded workspace', export:'Exported' };
+function accessHistory(t){
+  if(!can('view_audit')) return '';
+  const c = (state.accessTk = state.accessTk || {})[t.id];
+  if(!c || (!c.loading && nowMs()-c.at > 60000)){
+    state.accessTk[t.id] = { rows:(c&&c.rows)||null, at:nowMs(), loading:true };
+    $fetch('/api/access?ticket='+encodeURIComponent(t.id)+'&limit=100')
+      .then(r=>r.ok?r.json():{access:[]})
+      .then(d=>{ state.accessTk[t.id] = { rows:d.access||[], at:nowMs(), loading:false };
+        if(state.view==='ticket' && state.ticketId===t.id && !editingText()) render(); })
+      .catch(()=>{ state.accessTk[t.id] = { rows:[], at:nowMs(), loading:false }; });
+  }
+  const rows = (state.accessTk[t.id]||{}).rows;
+  return `<div class="prop"><div class="pk">Access history</div>
+    <div class="mini muted">Who opened this ticket or downloaded its files — HIPAA access log.</div></div>
+    ${rows===null ? `<div class="prop"><div class="mini muted">Loading…</div></div>`
+      : !rows.length ? `<div class="prop"><div class="mini muted">No access recorded yet.</div></div>`
+      : `<div class="audit-scroll">${rows.map(x=>`<div class="prop audit-row">
+          <div class="mini" style="color:var(--ink-2);line-height:1.5">${esc(ACCESS_KINDS[x.kind]||x.kind)}${x.detail&&x.kind!=='ticket_view'?` — ${esc(x.detail)}`:''}</div>
+          <div class="mini muted" style="margin-top:2px">${esc(x.who||'—')} · ${fmtDT(x.ts)}${x.ip?` · ${esc(x.ip)}`:''}</div>
+        </div>`).join('')}</div>`}`;
 }
 
 function saveTitle(tid){

@@ -415,7 +415,14 @@ function signOut(){
 function csvEsc(v){ v = String(v ?? '');
   if(/^[=+\-@]/.test(v)) v = "'"+v;
   return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+/* access log (0051): client-side exports never pass the server again, so
+   each one reports itself — the only record of that disclosure */
+function reportExport(what, rows, copy){
+  $fetch('/api/access/export',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({what:String(what), rows:Math.max(0,rows|0), copy:!!copy})}).catch(()=>{});
+}
 function downloadCSV(name, rows){
+  reportExport(name, rows.length-1, false);
   const csv = rows.map(r=>r.map(csvEsc).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));

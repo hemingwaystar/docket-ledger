@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
 from psycopg import errors as pg_errors
 from pydantic import BaseModel
-from . import auth, db
+from . import access, auth, db
 from .helpers import _sane_span, entry_scope_where
 
 router = APIRouter()
@@ -165,6 +165,9 @@ def list_entries(request: Request, client: str | None = None, status: str | None
             for r in rows:
                 r["rate_cents"] = None
                 r["amount_cents"] = None
+        # access log (0051): entry notes can carry PHI
+        access.log(conn, request, who, "entry_list",
+                   f"API read of {len(rows)} time entries")
         return {"entries": rows}
 
 

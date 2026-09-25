@@ -17,6 +17,12 @@
    keeps an empty base (bug #8: paths stay absolute per origin) */
 const LBASE=location.pathname.startsWith('/ledger/')?'/ledger':'';
 const $fetch=(p,o)=>fetch(LBASE+p,{credentials:'same-origin',...(o||{})});
+/* access log (0051): client-side exports never pass the server again, so
+   each reports itself — the only record of that disclosure */
+function reportExport(what, rows, copy){
+  $fetch('/api/access/export',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({what:String(what), rows:Math.max(0,rows|0), copy:!!copy})}).catch(()=>{});
+}
 let PERIODS=[];   /* server period rows — {id, clientId, key, status, ...} */
 
 function mapIn(d){

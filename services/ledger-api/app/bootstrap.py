@@ -6,7 +6,7 @@ defaultRates, audit tail, cfg, odooSecret, periods, entries, projects —
 ledger row 36's lesson)."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
-from . import auth, db
+from . import access, auth, db
 from .helpers import entry_scope_where
 
 router = APIRouter()
@@ -327,4 +327,7 @@ def bootstrap(request: Request, limit: int = 1000):
                 for t in p["tasks"]:
                     t["rate"] = None
                     t["flat"] = None
+        # access log (0051): a page load hands the browser every visible entry
+        access.log(conn, request, who, "workspace",
+                   f"Ledger loaded · {len(out.get('entries') or [])} time entries")
         return out

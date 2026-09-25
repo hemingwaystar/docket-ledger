@@ -10,7 +10,7 @@ here can disagree with exports; DB triggers enforce the freeze."""
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from . import admin, auth, bootstrap, db, entries, periods, reports, timesheets
+from . import access, admin, auth, bootstrap, db, entries, periods, reports, timesheets
 
 app = FastAPI(title="ledger-api")
 app.include_router(bootstrap.router)
@@ -19,6 +19,7 @@ app.include_router(reports.router)
 app.include_router(timesheets.router)
 app.include_router(periods.router)
 app.include_router(admin.router)
+app.include_router(access.router)
 
 
 @app.get("/healthz")

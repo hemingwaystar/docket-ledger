@@ -91,6 +91,13 @@ function render(){
         try{ const v=el.value; el.value=''; el.value=v; }catch(e){} }
       window.__fk_restoring=false; } }
   reflowAudit();   /* re-open expanded audit disclosures + drop no-op arrows */
+  /* access log (0051): record the ticket on screen — however we got here
+     (queue, search, notification, suite bridge). Once per arrival; the server
+     also folds re-opens within a minute. */
+  if(state.view==='ticket' && state.ticketId){
+    if(window.__viewLogged!==state.ticketId){ window.__viewLogged=state.ticketId;
+      $fetch('/api/tickets/'+encodeURIComponent(state.ticketId)+'/viewed',{method:'POST'}).catch(()=>{}); }
+  } else window.__viewLogged=null;
   if(window.__fk_view!==state.view){ window.__fk_view=state.view; window.scrollTo(0,0); }
 }
 

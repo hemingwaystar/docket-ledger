@@ -2,7 +2,7 @@
 the select vocabularies."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
-from .. import auth, automations, db
+from .. import access, auth, automations, db
 from .common import ST_MAP, visibility_where
 
 router = APIRouter(prefix="/api")
@@ -410,7 +410,10 @@ def bootstrap(request: Request, limit: int = 500):
                                  is_auto, mail_from, mail_to, sent_at, edited_at, edited_by,
                                  deleted_at, deleted_by
                                  FROM desk.articles WHERE ticket_id = ANY(%s)
-                                ORDER BY sent_at""", (ids,))
+                                  -- the ticket Audit block ('sys' entries) is
+                                  -- audit data: audit roles only (HIPAA #6)
+                                  AND (kind <> 'sys' OR %s)
+                                ORDER BY sent_at""", (ids, "view_audit" in who["perms"]))
                 art_index = {}
                 for r in cur.fetchall():
                     art = {"id": str(r["id"]),
@@ -516,6 +519,10 @@ def bootstrap(request: Request, limit: int = 500):
                 out["audit"] = []
         with conn.cursor() as plain:
             out["notifs"] = automations._notifs(plain, who)
+        # access log (0051): a page load hands the browser every visible ticket
+        access.log(conn, request, who, "workspace", None,
+                   f"Docket loaded · {len(out['tickets'])} tickets, "
+                   f"{sum(len(t['articles']) for t in out['tickets'])} messages")
         return out
 
 

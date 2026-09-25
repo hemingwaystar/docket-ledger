@@ -175,6 +175,7 @@ function rptPreset(p){
 function downloadCSV(){
   const rep=buildReport();
   if(!rep.rows.length){ toast('Nothing to export for this report'); return; }
+  reportExport(reportFilename(), rep.rows.length, false);
   const blob=new Blob([reportCSV(rep)],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob), a=document.createElement('a');
   a.href=url; a.download=reportFilename(); document.body.appendChild(a); a.click(); a.remove();
@@ -185,6 +186,7 @@ function copyCSV(){
   const rep=buildReport();
   if(!rep.rows.length){ toast('Nothing to copy'); return; }
   const csv=reportCSV(rep);
+  reportExport('Ledger report (copy)', rep.rows.length, true);
   if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(csv).then(()=>toast('Report copied — paste into a spreadsheet'),()=>toast('Copy blocked by browser')); }
   else toast('Clipboard unavailable in this browser');
 }
@@ -202,6 +204,7 @@ function exportUtilCSV(){
   const q=v=>{ v=String(v); if(/^[=+\-@]/.test(v)) v="'"+v;
     return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
   const csv = data.map(r=>r.map(q).join(',')).join('\n');
+  reportExport(`ledger-utilization-${mkey}.csv`, data.length-1, false);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download = `ledger-utilization-${mkey}.csv`; a.click();
   log('CSV exported', `utilization ${mkey}`);

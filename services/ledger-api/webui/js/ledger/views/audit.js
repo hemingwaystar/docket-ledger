@@ -95,6 +95,7 @@ function auditCSV(){
 }
 function downloadAudit(){
   if(!auditFiltered().length){ toast('Nothing to export'); return; }
+  reportExport('ledger-audit.csv', auditFiltered().length, false);
   const blob=new Blob([auditCSV()],{type:'text/csv;charset=utf-8'}); const url=URL.createObjectURL(blob), a=document.createElement('a');
   a.href=url; a.download='ledger-audit.csv'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1200); toast('Exported ledger-audit.csv');
@@ -102,6 +103,7 @@ function downloadAudit(){
 function copyAudit(){
   if(!auditFiltered().length){ toast('Nothing to copy'); return; }
   const csv=auditCSV();
+  reportExport('Ledger audit (copy)', auditFiltered().length, true);
   if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(csv).then(()=>toast('Audit copied — paste into a spreadsheet'),()=>toast('Copy blocked by browser'));
   else toast('Clipboard unavailable in this browser');
 }

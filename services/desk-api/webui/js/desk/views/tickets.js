@@ -451,6 +451,7 @@ function auditCSVRows(){
 function exportTicketsCSV(){ if(!can('export_csv')){ toast('Your role can’t export data — ask an admin for the “Export & copy CSV data” permission.'); return; } downloadCSV(`docket-tickets-${msDate(nowMs())}.csv`, ticketsCSVRows()); }
 function exportAuditCSV(){ if(!can('export_csv')) return; downloadCSV(`docket-audit-${msDate(nowMs())}.csv`, auditCSVRows()); }
 function copyRowsCSV(rows, what){
+  reportExport(what, rows.length-1, true);
   const csv = rows.map(r=>r.map(csvEsc).join(',')).join('\n');
   const done = ()=>toast(`${what} — ${rows.length-1} rows copied.`);
   if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(csv).then(done, done);
@@ -493,12 +494,14 @@ function viewTicket(){
       `${isProj(t)? projChecklistCard(t) : ''}
       <div class="card" style="padding:4px 18px">
         <div class="thread">${conv.length ? conv.map(a=>renderArt(t,a)).join('')
-          : `<div class="mini muted" style="padding:12px 0">No conversation yet — automatic events are in the Audit panel.</div>`}</div>
+          : `<div class="mini muted" style="padding:12px 0">No conversation yet${can('view_audit')?' — automatic events are in the Audit panel':''}.</div>`}</div>
       </div>
       ${projLocked(t)? `<div class="notice lock" style="margin-top:14px">${icon(IC.seal)}<div><b>Approved &amp; locked.</b> This project ticket is immutable — no notes, replies, time or property changes.${can('approve_projects')?' Use <b>Unlock (admin)</b> on the checklist card if something genuinely needs fixing.':' An admin can unlock it if something genuinely needs fixing.'}</div></div>`
         : canWork? renderComposer(t) : `<div class="notice lock" style="margin-top:14px">${icon(IC.shield)}<div>Your role can view this ticket but not respond. Ask a dispatcher or admin if that looks wrong.</div></div>`}`;
   const blocks = { props: renderProps(t), thread: threadBlock, schedule: renderSchedules(t), audit: renderAudit(t) };
-  const order = ticketBlockOrder();
+  /* the Audit block is audit data — audit roles only (HIPAA #6; the server
+     no longer sends 'sys' entries to anyone else either) */
+  const order = ticketBlockOrder().filter(id=>id!=='audit' || can('view_audit'));
   const stack = order.map((id,i)=>tkBlockWrap(id, blocks[id], i===0, i===order.length-1)).join('');
 
   return `

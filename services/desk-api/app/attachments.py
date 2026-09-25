@@ -23,7 +23,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
-from . import auth, db
+from . import access, auth, db
 from .tickets.common import visibility_where
 
 router = APIRouter(prefix="/api")
@@ -80,7 +80,7 @@ def download(attachment_id: uuid.UUID, request: Request):
             # caller — the same visibility_where every other read applies.
             # Staged rows (article_id NULL) still serve: LEFT JOINs keep them.
             vis_sql, vis_args = visibility_where(who)
-            cur.execute(f"""SELECT at.filename, at.mime_type, at.content
+            cur.execute(f"""SELECT at.filename, at.mime_type, at.content, ar.ticket_id
                              FROM desk.attachments at
                              LEFT JOIN desk.articles ar ON ar.id = at.article_id
                              LEFT JOIN desk.tickets t ON t.id = ar.ticket_id
@@ -88,9 +88,14 @@ def download(attachment_id: uuid.UUID, request: Request):
                               AND (at.article_id IS NULL OR {vis_sql})""",
                         (attachment_id, *vis_args))
             row = cur.fetchone()
+            if row is not None:
+                # access log (0051): every served file is a disclosure
+                access.log(conn, request, who, "attachment", row[3],
+                           f"{row[0] or 'attachment'} ({len(row[2] or b'')} bytes)"
+                           + ("" if row[3] else " · staged upload"))
     if row is None:
         raise HTTPException(404, "No such attachment")
-    filename, mime, content = row
+    filename, mime, content, _tid = row
     # serve-time is the real gate: it covers rows stored before mime
     # normalization existed, whatever their column says
     mime = normalize_mime(mime)

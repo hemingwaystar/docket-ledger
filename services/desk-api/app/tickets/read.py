@@ -2,7 +2,7 @@
 report, and the audit tail."""
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.rows import dict_row
-from .. import auth, db
+from .. import access, auth, db
 from .common import TICKET_SELECT, visibility_where
 
 router = APIRouter(prefix="/api")
@@ -26,7 +26,11 @@ def list_tickets(request: Request, state: str | None = None, client: str | None 
         args.append(min(limit, 500))
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, args)
-            return {"tickets": cur.fetchall()}
+            rows = cur.fetchall()
+        # access log (0051): which tickets this read disclosed
+        access.log(conn, request, who, "ticket_list", None,
+                   f"{len(rows)} tickets: " + ", ".join(f"#{r['id']}" for r in rows))
+        return {"tickets": rows}
 
 
 @router.get("/tickets/{ticket_id}")
@@ -34,6 +38,7 @@ def get_ticket(ticket_id: int, request: Request):
     with db.connect() as conn:
         who = auth.require(conn, request)
         vis_sql, vis_args = visibility_where(who)
+        can_audit = who["perms"] is None or "view_audit" in who["perms"]
         with conn.cursor(row_factory=dict_row) as cur:
             # out-of-scope reads 404 like missing ones — existence is not leaked
             cur.execute(TICKET_SELECT + f" WHERE t.id = %s AND {vis_sql}",
@@ -53,7 +58,11 @@ def get_ticket(ticket_id: int, request: Request):
                               WHERE at.article_id = ar.id AND NOT at.is_inline)
                           ELSE 0 END AS attachments
                      FROM desk.articles ar
-                    WHERE ar.ticket_id = %s ORDER BY sent_at""", (ticket_id,))
+                    WHERE ar.ticket_id = %s
+                      -- ticket audit entries ('sys') are audit data: audit
+                      -- roles only (HIPAA review #6)
+                      AND (ar.kind <> 'sys' OR %s)
+                    ORDER BY sent_at""", (ticket_id, can_audit))
             ticket["articles"] = cur.fetchall()
             cur.execute(
                 """SELECT e.id, e.started_at, e.ended_at, e.hours,
@@ -77,7 +86,8 @@ def get_ticket(ticket_id: int, request: Request):
                          FROM desk.project_tasks WHERE ticket_id = %s ORDER BY position""",
                     (ticket_id,))
                 ticket["project"]["tasks"] = cur.fetchall()
-            return ticket
+        access.log(conn, request, who, "ticket_read", ticket_id, "API detail read")
+        return ticket
 
 
 @router.get("/reports/queue")

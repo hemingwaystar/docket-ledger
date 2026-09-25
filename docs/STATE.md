@@ -1157,6 +1157,17 @@ places.
   polls send `X-HTS-Passive: 1` and never keep a session alive — any new
   background timer must send it too. Permissions are read live from the
   agent's role on every request (role edits apply immediately).
+* **Audit data is audit-role only (0051, HIPAA #6/#7):** the ticket Audit
+  block ('sys' articles — incl. edited/deleted note text) ships only to
+  `view_audit`; audit.events tails were already gated per app (view_audit /
+  l_view_audit / a_view_audit). Nothing is deleted. **Access log**
+  (`audit.access`, append-only): ticket opens (logged from the render loop,
+  every path), API ticket reads/lists, Ledger entry reads, attachment
+  downloads, Docket/Ledger page loads, and every CSV export/copy (the
+  browser reports those — they never touch the server again). Review in
+  Docket → Audit Log → Access log, or a ticket's Audit block → Access
+  history. Any NEW read path that returns ticket content or an export
+  button must call `access.log` / `reportExport` too.
 * **VM hostname quirk:** the VM cannot resolve its own public hostname
   (DNS A record → NetBird IP). VM-side curls go to `http://$BIND_ADDR:8081`
   directly, or add an `/etc/hosts` line mapping the hostname to $BIND_ADDR
