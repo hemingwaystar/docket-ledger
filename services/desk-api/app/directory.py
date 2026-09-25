@@ -276,6 +276,7 @@ class NewContact(BaseModel):
     pref: str = "email"                # preferred contact channel (0041)
     fax: str = ""
     notes: str = ""                    # "anything the next tech should know"
+    source: str = "manual"             # manual | csv (0048) — both protected from sync removal
 
 
 @router.post("/contacts", status_code=201)
@@ -287,16 +288,20 @@ def create_contact(body: NewContact, request: Request):
             cid = helpers.client_id(cur, body.client)
             cur.execute("""INSERT INTO shared.contacts
                              (client_id, name, email, title, department, phone, mobile,
-                              vip, pref, fax, notes)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                              vip, pref, fax, notes, source)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                            RETURNING id""",
                         (cid, body.name, body.email, body.title, body.department,
                          body.phone, body.mobile, body.vip,
                          body.pref if body.pref in ("email", "sms", "phone", "fax")
-                         else "email", body.fax, body.notes))
+                         else "email", body.fax, body.notes,
+                         # the API only mints human sources; mail/m365 are the
+                         # worker's alone
+                         "csv" if body.source == "csv" else "manual"))
             (pid,) = cur.fetchone()
         auth.audit(conn, "desk", "Contact added", f"contact:{pid}",
                    f"{body.name} <{body.email}> → {body.client}"
+                   + (" · CSV import" if body.source == "csv" else "")
                    + (" · VIP" if body.vip else ""))
         return {"id": str(pid)}
 
@@ -327,6 +332,9 @@ def patch_contact(contact_id: str, body: PatchContact, request: Request):
             return {"ok": True}
         with conn.cursor() as cur:
             sets = ", ".join(f"{k} = %s" for k in cols)
+            if "active" in cols:
+                # a human set Active — the M365 sync must never undo it (0048)
+                sets += ", sync_deactivated = false"
             cur.execute(f"UPDATE shared.contacts SET {sets} WHERE id = %s RETURNING name",
                         (*cols.values(), contact_id))
             row = cur.fetchone()

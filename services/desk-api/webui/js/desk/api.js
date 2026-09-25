@@ -172,6 +172,7 @@ function mapIn(d){
     GRAPH_AUTH.consentedBy=d.graph.by||'—';
     if(d.graph.tenant){ GRAPH_AUTH.tenant=d.graph.tenant; AUTH_CFG.tenant=AUTH_CFG.tenant||d.graph.tenant; }
   }
+  if(d.m365Sync) Object.assign(M365_SYNC, d.m365Sync);
   if(d.canned){ CANNED.length=0; d.canned.forEach(c=>CANNED.push(c)); }
   if(d.vcfg&&Object.keys(d.vcfg).length){
     ['sms','email'].forEach(k=>{ if(d.vcfg[k]) Object.assign(VCFG[k]=VCFG[k]||{}, d.vcfg[k]); });
@@ -184,6 +185,7 @@ function mapIn(d){
     put('entraSecret','entra_oidc','Entra OIDC client secret');
     put('voipKey','voipms','voip.ms API password');
     put('twilioToken','twilio','Twilio auth token');
+    put('m365Secret','m365_sync','M365 sync app client secret');
   }
   }catch(err){ console.error('cosmetic hydration failed (core data is live):', err); }
   if(d.roles){

@@ -32,7 +32,7 @@ import base64
 import httpx
 import psycopg
 
-from . import automations, crypto, db
+from . import automations, crypto, db, m365sync
 
 INTERVAL = 30
 TOKEN_CACHE = {"token": None, "until": 0.0}
@@ -105,8 +105,8 @@ def route_sender(conn, from_email: str):
             # lookup above filters c.active — mail from a DEACTIVATED contact
             # reaches this INSERT and must not blow up the ingestion tx.
             # Adopt the existing row (its own client) instead of creating.
-            cur.execute("""INSERT INTO shared.contacts (client_id, name, email)
-                           VALUES (%s, %s, %s)
+            cur.execute("""INSERT INTO shared.contacts (client_id, name, email, source)
+                           VALUES (%s, %s, %s, 'mail')
                            ON CONFLICT (lower(email)) DO NOTHING
                            RETURNING id""", (client_id, name, email))
             created = cur.fetchone()
@@ -541,6 +541,16 @@ def main():
                     conn.commit()
                 except Exception as exc:
                     print("automation pass failed:", exc)
+                    conn.rollback()
+                # Microsoft 365 contact sync (0048), fenced the same way —
+                # idle unless config/m365_sync is enabled with a stored secret
+                try:
+                    n = m365sync.sync_pass(conn)
+                    if n:
+                        print(f"m365 contact sync: {n} tenant(s) processed")
+                    conn.commit()
+                except Exception as exc:
+                    print("m365 contact sync pass failed:", exc)
                     conn.rollback()
                 # housekeeping, fenced the same way
                 try:

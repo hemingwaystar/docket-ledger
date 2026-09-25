@@ -65,6 +65,7 @@ function viewClient(){
         <div style="font-size:13px;font-weight:500">${esc(p.name)} <span class="mini muted">· ${esc(p.title)}${p.dept?` · ${esc(p.dept)}`:''}</span>
           ${p.vip?`<span class="chip st-pending" style="margin-left:6px" title="VIP"><span class="cdot"></span>★ VIP</span>`:''}
           ${off?`<span class="chip st-closed" style="margin-left:6px"><span class="cdot"></span>Inactive</span>`:''}
+          ${contactSourceTag(p)}
           ${p.pref?`<span class="mini muted" style="margin-left:6px">prefers ${p.pref==='sms'?'SMS':p.pref}</span>`:''}</div>
         <div class="mini muted" style="margin-top:2px">${esc(p.email)}</div>
         <div class="mini muted tape" style="margin-top:2px;font-size:11px">${[p.phone?`w ${esc(p.phone)}`:'',p.mobile?`m ${esc(p.mobile)}`:'',p.fax?`f ${esc(p.fax)}`:''].filter(Boolean).join(' · ')||'no numbers on file'}</div>
@@ -105,6 +106,7 @@ function viewClient(){
       ${(can('add_contacts')||can('manage_clients'))&&!arch?`<span style="display:inline-flex;gap:8px;margin-top:12px"><button class="btn sm" onclick="addContactModal('${c.id}')">${icon(IC.plus)}Add contact</button><button class="btn sm ghost" onclick="csvImportModal('${c.id}')">${icon(IC.export)}Import from Entra (CSV)</button></span>`:''}
     </div>
   </div>
+  ${m365Card(c, arch)}
   <div class="section-gap"></div>
   <div class="card">
     <div class="card-head"><h3>Tickets</h3><span class="hint">${fts.length}${fts.length!==ts.length?` of ${ts.length}`:''} · within your access</span>
@@ -243,7 +245,7 @@ function saveContact(clientId, fromTicket){
   const name = document.getElementById('acName').value.trim();
   if(!name){ toast('A name is the one thing a contact needs.'); return; }
   const payload = Object.assign({client:clientId}, contactPayload());
-  const p = readContactFields(c, { id:'p'+(nextContactIx++), active:true });
+  const p = readContactFields(c, { id:'p'+(nextContactIx++), active:true, source:'manual' });
   c.contacts.push(p);
   log('Contact added', `${p.name} <${p.email}> → ${c.name}`);
   toast(`${p.name} added to ${c.name}.`);
@@ -281,6 +283,79 @@ function saveContactEdit(clientId, pid){
     body:JSON.stringify(Object.assign({active:p.active}, payload))})
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
       hydrate(); });
+}
+
+/* ---- contact source (0048): where a contact came from. Manual and CSV
+   contacts are protected — the M365 sync never deactivates them. ---- */
+const CONTACT_SOURCES = {
+  manual:{ label:'Manual', tip:'Added by hand — never removed by the Microsoft 365 sync' },
+  csv:   { label:'CSV import', tip:'Imported from an Entra CSV — never removed by the Microsoft 365 sync' },
+  mail:  { label:'From email', tip:'Created automatically from an inbound email at the client’s domain' },
+  m365:  { label:'Microsoft 365', tip:'Added by the Microsoft 365 sync' } };
+function contactSourceTag(p){
+  const s = CONTACT_SOURCES[p.source] || CONTACT_SOURCES.manual;
+  const link = p.m365 && p.source!=='m365' ? ' · linked to 365' : '';
+  return `<span class="mini muted" style="margin-left:6px;border:1px solid var(--line);border-radius:10px;padding:1px 7px;white-space:nowrap" title="${esc(s.tip+(link?' · matched to a Microsoft 365 user':''))}">${esc(s.label+link)}</span>`;
+}
+
+/* ---- Microsoft 365 link card (0048). The tenant field's text lives in
+   state.m365Tid (never only in the DOM — background renders would wipe it). ---- */
+function m365Card(c, arch){
+  const L = c.m365, admin = can('manage_clients');
+  if(c.sentinel || (!L && (!admin || arch))) return '';
+  if(!state.m365Tid) state.m365Tid = {};
+  const tid = state.m365Tid[c.id] ?? (L ? L.tenant : '');
+  const editing = !L || state.m365Edit===c.id;
+  const failed = L && /^FAILED/.test(L.status||'');
+  const statusLine = !L ? '' : !L.enabled ? 'Paused — contacts are not being updated.'
+    : L.requested ? 'Sync queued — runs within about a minute.'
+    : (L.status||'Waiting for the first sync.')
+      + (L.okAt?` · last synced ${fmtDT(L.okAt)}`:'')
+      + (L.nextAt?` · next ${fmtDT(L.nextAt)}`:'');
+  const consentUrl = L && M365_SYNC.clientId ? `https://login.microsoftonline.com/${encodeURIComponent(L.tenant)}/adminconsent?client_id=${encodeURIComponent(M365_SYNC.clientId)}&redirect_uri=${encodeURIComponent(m365RedirectUri())}&state=${encodeURIComponent(c.id)}` : '';
+  return `<div class="section-gap"></div>
+  <div class="card card-pad">
+    <div class="card-head flush"><h3>Microsoft 365</h3><span class="hint">${L?(L.enabled?'contacts sync daily':'sync paused'):'not linked'}</span></div>
+    ${!M365_SYNC.enabled?`<div class="mini muted" style="margin-bottom:8px">The sync app is off — ${can('manage_settings')?`turn it on in <a href="#" onclick="go('settings');return false" style="color:var(--brand)">Settings → Microsoft 365 contact sync</a>`:'an admin turns it on in Settings'}.</div>`:''}
+    ${L&&!editing?`<div class="setting-row" style="padding:7px 0"><div class="sl"><p style="margin:0">Tenant</p></div><span class="tape mini">${esc(L.tenant)}</span></div>
+      <div class="mini" style="margin:6px 0;${failed?'color:var(--void)':'color:var(--ink-2)'}">${esc(statusLine)}</div>`:''}
+    ${admin&&!arch?(editing?`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+        <input type="text" class="in-mono" style="width:330px;max-width:100%" placeholder="tenant ID (directory GUID)" value="${esc(tid)}" oninput="state.m365Tid['${c.id}']=this.value">
+        <button class="btn sm ghost" onclick="m365Detect('${c.id}')">Find from domain</button>
+        <button class="btn sm primary" onclick="m365Link('${c.id}')">${L?'Save':'Link tenant'}</button>
+        ${L?`<button class="btn sm ghost" onclick="state.m365Edit=null;delete state.m365Tid['${c.id}'];render()">Cancel</button>`:''}</div>`
+      :`<span style="display:inline-flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        ${consentUrl?`<a class="btn sm" style="text-decoration:none" href="${esc(consentUrl)}" title="Sign in with your partner (GDAP) or the client's admin account and accept — once per client">Grant consent</a>`:''}
+        ${L.enabled?`<button class="btn sm" onclick="m365SyncNow('${c.id}')">Sync now</button>`:''}
+        <button class="btn sm ghost" onclick="m365Link('${c.id}', ${!L.enabled})">${L.enabled?'Pause sync':'Resume sync'}</button>
+        <button class="btn sm ghost" onclick="state.m365Edit='${c.id}';render()">Change tenant</button></span>`):''}
+  </div>`;
+}
+function m365Detect(cid){
+  $fetch('/api/m365/clients/'+encodeURIComponent(cid)+'/detect',{method:'POST'})
+    .then(async r=>{ const d = await r.json().catch(()=>0);
+      if(!r.ok) return oops(d);
+      if(!state.m365Tid) state.m365Tid = {};
+      state.m365Tid[cid] = d.tenant_id; render(); });
+}
+function m365Link(cid, enabled){
+  const c = client(cid), L = c.m365;
+  const tid = ((state.m365Tid||{})[cid] ?? (L?L.tenant:'')).trim().toLowerCase();
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(tid)){
+    toast('That doesn’t look like a tenant ID — use Find from domain, or copy it from Entra → Overview.'); return; }
+  const en = enabled===undefined ? (L?L.enabled:true) : enabled;
+  $fetch('/api/m365/clients/'+encodeURIComponent(cid),{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant_id:tid, enabled:en})})
+    .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
+      state.m365Edit = null; if(state.m365Tid) delete state.m365Tid[cid];
+      hydrate(); });
+}
+function m365SyncNow(cid){
+  const L = client(cid).m365; if(!L) return;
+  L.requested = true; render();
+  $fetch('/api/m365/clients/'+encodeURIComponent(cid)+'/sync',{method:'POST'})
+    .then(async r=>{ if(!r.ok){ L.requested = false; render(); return oops(await r.json().catch(()=>0)); }
+      setTimeout(()=>hydrate(), 45000); });
 }
 
 /* ---- client organizations — create / edit / archive (admin) ---- */

@@ -82,6 +82,9 @@ const MAILCFG = { outboundEnabled:false };
 /* secrets are WRITE-ONLY: stored encrypted server-side; only set/rotated
    metadata is ever readable here */
 const SECRETS = {};
+/* Microsoft 365 contact sync (0048) — the app registration the mail-worker
+   signs in to each client tenant with; per-client links ride on CLIENTS[].m365 */
+const M365_SYNC = { enabled:false, clientId:'' };
 
 /* local id counters for optimistic rows — the server id arrives on rehydrate */
 let nextMbIx = 1, nextRuleIx = 1, nextTrigIx = 1, nextCannedIx = 1;

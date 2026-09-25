@@ -764,11 +764,12 @@ function vcfgTogglePost(){
 /* ---- secrets: write-only PUT — plaintext goes in, only set/rotated
    metadata ever comes back ------------------------------------------------ */
 const SECRET_NAMES  = { graphSecret:'graph', entraSecret:'entra_oidc',
-                        voipKey:'voipms', twilioToken:'twilio' };
+                        voipKey:'voipms', twilioToken:'twilio', m365Secret:'m365_sync' };
 const SECRET_LABELS = { graphSecret:'Graph app client secret',
                         entraSecret:'Entra OIDC client secret',
                         voipKey:'voip.ms API password',
-                        twilioToken:'Twilio auth token' };
+                        twilioToken:'Twilio auth token',
+                        m365Secret:'M365 sync app client secret' };
 function secretRow(key){
   const sx = SECRETS[key] || { set:false, at:null, by:'', label:SECRET_LABELS[key]||key };
   return `<div class="field inline-sm" style="margin:8px 0"><label>${esc(sx.label)}</label>
@@ -798,6 +799,22 @@ function secretSave(key){
     headers:{'Content-Type':'application/json'},body:JSON.stringify({value:v})})
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
       setTimeout(()=>hydrate(),400); });           /* pull the real rotation meta */
+}
+
+/* ---- Microsoft 365 contact sync app (0048) — config/m365_sync ---------- */
+function m365RedirectUri(){ return location.origin+'/api/m365/consented'; }
+function m365CfgSet(k, v){
+  if(!can('manage_settings')) return;
+  if(k==='enabled' && v && (!M365_SYNC.clientId || !(SECRETS.m365Secret||{}).set)){
+    toast('Set the sync app’s client ID and secret first.'); return; }
+  const was = Object.assign({}, M365_SYNC);
+  M365_SYNC[k] = v;
+  render();
+  $fetch('/api/settings/config/m365_sync',{method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({value:{enabled:M365_SYNC.enabled, client_id:M365_SYNC.clientId}})})
+    .then(async r=>{ if(!r.ok){ Object.assign(M365_SYNC, was); render();
+      return oops(await r.json().catch(()=>0)); } });
 }
 
 /* ---- personal access tokens: read-only metadata list. No mint/revoke in
@@ -969,6 +986,17 @@ function viewSettings(){
     <div class="card card-pad">
       <div class="card-head flush"><h3>Channels</h3><span class="hint">how tickets arrive</span></div>
       <div class="setting-row"><div class="sl"><b>Microsoft Graph mail</b><p>${MAILBOXES.length} mailbox${MAILBOXES.length===1?'':'es'} (${MAILBOXES.filter(m=>m.type==='shared').length} shared, ${MAILBOXES.filter(m=>m.type==='licensed').length} licensed) · webhook subscriptions + 60s delta poll · outbound routed per ticket/board${can('manage_automations')?` — <a href="#" onclick="go('automations');return false" style="color:var(--brand)">authenticate &amp; manage in Automations</a>`:''}</p></div><span class="chip ${GRAPH_AUTH.connected?'st-solved':'st-closed'}"><span class="cdot"></span>${GRAPH_AUTH.connected?'Connected':'Not authenticated'}</span></div>
+    </div>
+    <div class="card card-pad">
+      <div class="card-head flush"><h3>Microsoft 365 contact sync</h3><span class="hint">client users → contacts, daily</span></div>
+      <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Sync app</b>
+          <p style="max-width:620px">A <b>multi-tenant</b> app registration in your own tenant with one permission: Microsoft Graph <span class="tape">User.Read.All</span> (Application). Add <span class="tape">${esc(m365RedirectUri())}</span> as a Web redirect URI. Grant consent per client from its page (GDAP lets you do it yourself). Keep it separate from the mail app — consent grants every permission an app has.</p>
+          <div class="field inline-sm" style="margin:8px 0;max-width:560px"><label>client ID</label><input type="text" value="${esc(M365_SYNC.clientId)}" placeholder="application (client) ID" class="in-mono" style="width:100%" onchange="m365CfgSet('clientId',this.value.trim())"></div>
+          ${secretRow('m365Secret')}
+          <div class="mini muted">Licensed, enabled members only. Name + email follow 365; other fields only fill blanks; Preferred contact, Notes and VIP stay Docket-only. Offboarded users are deactivated — manual and CSV contacts never are.</div>
+        </div>
+        <button class="rowbtn" onclick="m365CfgSet('enabled',!M365_SYNC.enabled)">${M365_SYNC.enabled?'Pause':'Enable'}</button>
+        <span class="chip ${M365_SYNC.enabled?'st-solved':'st-closed'}"><span class="cdot"></span>${M365_SYNC.enabled?'On':'Off'}</span></div>
     </div>
     <div class="card card-pad">
       <div class="card-head flush"><h3>Authentication</h3><span class="hint">who gets in, and as what</span></div>

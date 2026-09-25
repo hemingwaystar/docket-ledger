@@ -101,7 +101,8 @@ def bootstrap(request: Request, limit: int = 500):
                 clients[str(r["id"])] = entry
             if see_clients:
                 cur.execute("""SELECT id, client_id, name, email, title, department, phone,
-                                 mobile, active, vip, pref, fax, notes
+                                 mobile, active, vip, pref, fax, notes, source,
+                                 entra_oid IS NOT NULL AS linked, synced_at
                                  FROM shared.contacts ORDER BY name""")
                 for r in cur.fetchall():
                     c = clients.get(str(r["client_id"]))
@@ -111,7 +112,22 @@ def bootstrap(request: Request, limit: int = 500):
                                               "dept": r["department"], "phone": r["phone"],
                                               "mobile": r["mobile"], "active": r["active"],
                                               "vip": r["vip"], "pref": r["pref"],
-                                              "fax": r["fax"], "notes": r["notes"]})
+                                              "fax": r["fax"], "notes": r["notes"],
+                                              "source": r["source"], "m365": r["linked"],
+                                              "syncedAt": ms(r["synced_at"])})
+                # per-client Microsoft 365 link + last sync outcome (0048)
+                cur.execute("""SELECT client_id, tenant_id, enabled, sync_requested,
+                                      last_attempt_at, last_ok_at, last_status, next_due_at
+                                 FROM shared.m365_tenants""")
+                for r in cur.fetchall():
+                    c = clients.get(str(r["client_id"]))
+                    if c is not None:
+                        c["m365"] = {"tenant": r["tenant_id"], "enabled": r["enabled"],
+                                     "requested": r["sync_requested"],
+                                     "attemptAt": ms(r["last_attempt_at"]),
+                                     "okAt": ms(r["last_ok_at"]),
+                                     "status": r["last_status"],
+                                     "nextAt": ms(r["next_due_at"])}
             out["clients"] = list(clients.values())
             cur.execute("SELECT id, name, billable, active FROM ledger.activity_types ORDER BY is_sentinel DESC, name")
             # archived types ride along (active:false) so existing time chips
@@ -170,13 +186,17 @@ def bootstrap(request: Request, limit: int = 500):
             out["signatures"] = {"enabled": sig_enabled,
                                  "mine": sig_mine, "groups": sig_groups}
             cur.execute("""SELECT key, value, updated_at, updated_by FROM shared.app_config
-                            WHERE key IN ('graph','auth','verification')""")
+                            WHERE key IN ('graph','auth','verification','m365_sync')""")
             cfgs = {r["key"]: r for r in cur.fetchall()}
             g = cfgs.get("graph", {"value": {}, "updated_at": None, "updated_by": ""})
             gv = g["value"] if isinstance(g["value"], dict) else {}
             out["graph"] = {"tenant": gv.get("tenant", ""), "clientId": gv.get("client_id", ""),
                             "connected": bool(gv.get("connected")),
                             "at": ms(g.get("updated_at")), "by": g.get("updated_by") or ""}
+            m = cfgs.get("m365_sync", {"value": {}})
+            mv = m["value"] if isinstance(m["value"], dict) else {}
+            out["m365Sync"] = {"enabled": bool(mv.get("enabled")),
+                               "clientId": mv.get("client_id", "")}
             v = cfgs.get("verification", {"value": {}})
             out["vcfg"] = v["value"] if isinstance(v["value"], dict) else {}
             a = cfgs.get("auth", {"value": {}})

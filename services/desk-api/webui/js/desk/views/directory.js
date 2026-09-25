@@ -253,7 +253,7 @@ function csvImportGo(cid){
   const fresh = r.users.filter(u=>!have.has(u.email));
   if(!fresh.length) return;
   fresh.forEach(u=>{
-    c.contacts.push({ id:'px'+(nextImportIx++), name:u.name, title:u.title, dept:u.dept, email:u.email, phone:u.phone, mobile:u.mobile, fax:'', pref:'email', notes:'Imported from Entra CSV.', active:true });
+    c.contacts.push({ id:'px'+(nextImportIx++), name:u.name, title:u.title, dept:u.dept, email:u.email, phone:u.phone, mobile:u.mobile, fax:'', pref:'email', notes:'', active:true, source:'csv' });
   });
   log('Contacts imported from Entra CSV', `${c.name} · ${fresh.length} added, ${r.users.length-fresh.length} skipped (already existed) · by ${state.user.name}`);
   toast(`${fresh.length} contact${fresh.length===1?'':'s'} imported into ${c.name}.`);
@@ -262,7 +262,7 @@ function csvImportGo(cid){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({client:cid, name:u.name, email:u.email,
         title:u.title||'', department:u.dept||'', phone:u.phone||'',
-        mobile:u.mobile||''})})))
+        mobile:u.mobile||'', source:'csv'})})))
     .then(async rs=>{ const bad=rs.find(x=>!x.ok);
       if(bad) return oops(await bad.json().catch(()=>0));
       setTimeout(()=>hydrate(),500); });           /* swap temp ids for server rows */
