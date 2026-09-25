@@ -33,7 +33,7 @@ def visibility_where(who: dict, alias: str = "t"):
     view_own → owned by me OR assigned to me (0032; owner and assignee are
     separate concepts, the OR dedups them). Returns (sql, args) to AND into
     a WHERE. PATs are all-scope service credentials (§10.17) like need()."""
-    if who["kind"] != "session" or "view_all" in who["perms"]:
+    if who["perms"] is None or "view_all" in who["perms"]:
         return "TRUE", []
     ors, args = [], []
     if "view_group" in who["perms"]:

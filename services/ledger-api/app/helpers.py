@@ -14,7 +14,7 @@ def entry_scope_where(who: dict, alias: str = "e"):
     (0017: all/restricted/group) on top unless l_all_clients. Returns
     (sql, args) to AND into a WHERE. PATs are all-scope service credentials,
     like need()."""
-    if who["kind"] != "session":
+    if who["perms"] is None:              # all-scope service token only (0050)
         return "TRUE", []
     if who["perms"] & {"l_approve", "l_export"}:
         return "TRUE", []

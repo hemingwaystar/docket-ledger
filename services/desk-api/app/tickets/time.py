@@ -90,7 +90,7 @@ def patch_time(entry_id: str, body: PatchTime, request: Request):
             if row is None:
                 raise HTTPException(404, "No such time entry")
             tech_id, ticket_id, old_hours = row
-            if who["kind"] == "session" and tech_id != who["agent_id"]:
+            if who["perms"] is not None and tech_id != who["agent_id"]:
                 auth.need(who, 'see_billing')
             else:
                 auth.need(who, 'log_time', 'see_billing')

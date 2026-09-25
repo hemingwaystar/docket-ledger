@@ -43,7 +43,7 @@ def list_periods(request: Request, client: str | None = None):
         # l_all_clients) could read billed dollar totals for clients its access
         # is restricted from. Same client_access rule as helpers.entry_scope_where;
         # l_approve / l_export / l_all_clients (and PATs) see every client.
-        if who["kind"] == "session" and not (who["perms"] & {"l_approve", "l_export", "l_all_clients"}):
+        if who["perms"] is not None and not (who["perms"] & {"l_approve", "l_export", "l_all_clients"}):
             conds.append("""NOT EXISTS (SELECT 1 FROM ledger.client_access ca
                 WHERE ca.client_id = bp.client_id
                   AND ((ca.mode = 'restricted' AND NOT %s = ANY(ca.tech_ids))
@@ -68,7 +68,7 @@ def list_periods(request: Request, client: str | None = None):
                     r["hourly_amount_cents"] = ov["amount_cents"]
         # billed dollars ship only with l_see_amounts (same rule everywhere);
         # approve/export roles without it still see hours and entry counts
-        if who["kind"] == "session" and "l_see_amounts" not in who["perms"]:
+        if who["perms"] is not None and "l_see_amounts" not in who["perms"]:
             for r in rows:
                 r["hourly_amount_cents"] = None
                 r["project_flat_cents"] = None
@@ -91,7 +91,7 @@ def approve_period(period_id: str, body: PeriodApprove, request: Request):
             # email a caller could use to attribute the lock to another agent
             # (audit). A PAT/integration carries no session identity, so it
             # still names the approver in the body.
-            if who["kind"] == "session":
+            if who.get("agent_id"):              # session, or an owned token (0050)
                 aid, name = who["agent_id"], who["name"]
             else:
                 cur.execute("SELECT id, name FROM shared.agents WHERE lower(email) = lower(%s)",

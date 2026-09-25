@@ -838,7 +838,11 @@ function tokenRows(){
   if(_tokens===null) return `<div class="mini muted">Loading tokens…</div>`;
   if(_tokensErr)     return `<div class="mini muted">Couldn’t load the token list — check desk-api logs.</div>`;
   if(!_tokens.length) return `<div class="mini muted">No personal access tokens yet.</div>`;
-  return _tokens.map(k=>`<div class="setting-row"><div class="sl"><b>${esc(k.name)}</b><p>created ${fmtDT(k.createdAt)} · ${k.lastUsedAt?'last used '+fmtDT(k.lastUsedAt):'never used'}</p></div><span class="chip st-solved"><span class="cdot"></span>Active</span></div>`).join('');
+  return _tokens.map(k=>{
+    const dead = (k.expiresAt && k.expiresAt<=nowMs()) || !k.ownerActive;
+    const soon = !dead && k.expiresAt && k.expiresAt-nowMs() < 14*864e5;
+    return `<div class="setting-row"><div class="sl"><b>${esc(k.name)}</b><p>${k.owner?'owner '+esc(k.owner)+(k.ownerActive?'':' (deactivated)')+' · ':'no owner (legacy) · '}${k.scopes&&k.scopes.length?'scopes '+esc(k.scopes.join(', ')):'<b>all-scope</b>'} · created ${fmtDT(k.createdAt)} · ${k.lastUsedAt?'last used '+fmtDT(k.lastUsedAt):'never used'} · ${k.expiresAt?(dead&&k.expiresAt<=nowMs()?'expired ':'expires ')+fmtDT(k.expiresAt):''}</p></div><span class="chip ${dead?'st-closed':soon?'st-pending':'st-solved'}"><span class="cdot"></span>${dead?'Inactive':soon?'Expiring soon':'Active'}</span></div>`;
+  }).join('');
 }
 
 /* ---- the Settings page -------------------------------------------------- */

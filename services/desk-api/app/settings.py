@@ -669,8 +669,17 @@ def list_tokens(request: Request):
         auth.need(who, "manage_settings")
         ms = lambda dt: int(dt.timestamp() * 1000) if dt else None
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("""SELECT label, created_at, last_used_at FROM shared.api_tokens
-                            WHERE revoked_at IS NULL ORDER BY created_at DESC""")
+            # expired tokens still list (flagged) so an admin can see what
+            # stopped working; owner + scope ride along (0050)
+            cur.execute("""SELECT t.label, t.created_at, t.last_used_at, t.expires_at,
+                                  t.scopes, o.name AS owner, o.active AS owner_active
+                             FROM shared.api_tokens t
+                             LEFT JOIN shared.agents o ON o.id = t.created_by
+                            WHERE t.revoked_at IS NULL ORDER BY t.created_at DESC""")
             return {"tokens": [{"name": r["label"], "createdAt": ms(r["created_at"]),
-                                "lastUsedAt": ms(r["last_used_at"])}
+                                "lastUsedAt": ms(r["last_used_at"]),
+                                "expiresAt": ms(r["expires_at"]),
+                                "scopes": list(r["scopes"] or []),
+                                "owner": r["owner"] or "",
+                                "ownerActive": r["owner_active"] is not False}
                                for r in cur.fetchall()]}

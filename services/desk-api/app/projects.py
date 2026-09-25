@@ -142,7 +142,7 @@ def patch_task(ticket_id: int, task_id: str, body: PatchTask, request: Request):
                     aid, name = helpers.agent(cur, body.done_by_email)
                     # completion is recorded under a person's name — only a
                     # project manager may record it for someone else
-                    if (who["kind"] == "session" and aid != who["agent_id"]
+                    if (who["perms"] is not None and aid != who["agent_id"]
                             and "manage_projects" not in who["perms"]):
                         raise HTTPException(403, "You can only mark tasks done "
                                                  "as yourself")
@@ -307,7 +307,7 @@ def approve(ticket_id: int, body: Approve, request: Request):
             # actor of record: the SESSION's own identity, never a body-supplied
             # email a caller could use to attribute the approval to another
             # agent (audit). A PAT/integration still names the approver in body.
-            if who["kind"] == "session":
+            if who.get("agent_id"):              # session, or an owned token (0050)
                 aid, name = who["agent_id"], who["name"]
             else:
                 aid, name = helpers.agent(cur, body.approver_email)

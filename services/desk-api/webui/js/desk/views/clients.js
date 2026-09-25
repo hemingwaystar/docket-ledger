@@ -312,7 +312,7 @@ function m365Card(c, arch){
     : (L.status||'Waiting for the first sync.')
       + (L.okAt?` · last synced ${fmtDT(L.okAt)}`:'')
       + (L.nextAt?` · next ${fmtDT(L.nextAt)}`:'');
-  const consentUrl = L && M365_SYNC.clientId ? `https://login.microsoftonline.com/${encodeURIComponent(L.tenant)}/adminconsent?client_id=${encodeURIComponent(M365_SYNC.clientId)}&redirect_uri=${encodeURIComponent(m365RedirectUri())}&state=${encodeURIComponent(c.id)}` : '';
+  const canConsent = L && M365_SYNC.clientId;
   return `<div class="section-gap"></div>
   <div class="card card-pad">
     <div class="card-head flush"><h3>Microsoft 365</h3><span class="hint">${L?(L.enabled?'contacts sync daily':'sync paused'):'not linked'}</span></div>
@@ -325,7 +325,7 @@ function m365Card(c, arch){
         <button class="btn sm primary" onclick="m365Link('${c.id}')">${L?'Save':'Link tenant'}</button>
         ${L?`<button class="btn sm ghost" onclick="state.m365Edit=null;delete state.m365Tid['${c.id}'];render()">Cancel</button>`:''}</div>`
       :`<span style="display:inline-flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-        ${consentUrl?`<a class="btn sm" style="text-decoration:none" href="${esc(consentUrl)}" title="Sign in with your partner (GDAP) or the client's admin account and accept — once per client">Grant consent</a>`:''}
+        ${canConsent?`<button class="btn sm" onclick="m365Consent('${c.id}')" title="Sign in with your partner (GDAP) or the client's admin account and accept — once per client">Grant consent</button>`:''}
         ${L.enabled?`<button class="btn sm" onclick="m365SyncNow('${c.id}')">Sync now</button>`:''}
         <button class="btn sm ghost" onclick="m365Link('${c.id}', ${!L.enabled})">${L.enabled?'Pause sync':'Resume sync'}</button>
         <button class="btn sm ghost" onclick="state.m365Edit='${c.id}';render()">Change tenant</button></span>`):''}
@@ -349,6 +349,15 @@ function m365Link(cid, enabled){
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0));
       state.m365Edit = null; if(state.m365Tid) delete state.m365Tid[cid];
       hydrate(); });
+}
+/* the consent link is minted server-side with a sealed, expiring state
+   (HIPAA review #8) — the callback refuses anything it didn't issue */
+function m365Consent(cid){
+  $fetch('/api/m365/clients/'+encodeURIComponent(cid)+'/consent-url?redirect_uri='+encodeURIComponent(m365RedirectUri()))
+    .then(async r=>{ const d = await r.json().catch(()=>0);
+      if(!r.ok) return oops(d);
+      /* top window: Microsoft sign-in refuses to render inside the suite frame */
+      try{ (window.top||window).location.href = d.url; }catch(e){ location.href = d.url; } });
 }
 function m365SyncNow(cid){
   const L = client(cid).m365; if(!L) return;

@@ -16,7 +16,9 @@ Field ownership (user's call, 2026-09-25):
     SMS-verification number, so a changed number in the tenant never silently
     redirects verification codes.
   * vip, pref, notes — Docket-only, never touched (no grant either).
-Eligible = enabled Member account with at least one licence and an address.
+Eligible = enabled Member account with at least one licence and an address
+on one of the CLIENT'S OWN email domains (shared.client_domains) — a tenant
+whose licensed users sit on none of them is refused as a likely mis-link.
 Contacts that match a tenant user who is NOT eligible (disabled, unlicensed —
 shared/room mailboxes, offboarded staff — or a guest), or whose linked user is
 gone from the tenant, are deactivated. Contacts matching nobody in the tenant
@@ -126,10 +128,30 @@ def _audit(cur, action, entity, detail):
                    VALUES ('mail', %s, %s, %s)""", (action, entity, detail))
 
 
+def _on_domains(addr, domains):
+    dom = addr.rsplit("@", 1)[-1] if "@" in addr else ""
+    return any(dom == d or dom.endswith("." + d) for d in domains)
+
+
 def sync_client(cur, cfg, client_id, client_name, tenant):
+    # wrong-tenant guard (HIPAA review #8): only users on the client's OWN
+    # email domains are imported. A client linked to someone else's tenant
+    # would otherwise import that company's staff as this client's contacts —
+    # and route their mail (and tickets) to the wrong client from then on.
+    cur.execute("SELECT lower(domain) FROM shared.client_domains WHERE client_id = %s",
+                (client_id,))
+    domains = [r[0].strip() for r in cur.fetchall() if r[0] and r[0].strip()]
+    if not domains:
+        raise RuntimeError("the client has no email domain on file — add it so the "
+                           "sync can confirm the tenant belongs to this client")
     token = _token(cfg, tenant)
     users = _users(token)
-    eligible = [u for u in users if _eligible(u)]
+    licensed = [u for u in users if _eligible(u)]
+    eligible = [u for u in licensed if _on_domains(_address(u), domains)]
+    if licensed and not eligible:
+        raise RuntimeError(f"none of the tenant's {len(licensed)} licensed users are on "
+                           f"{', '.join(domains)} — this looks like the wrong tenant; "
+                           "nothing was changed")
     by_oid = {u["id"]: u for u in users}
     by_alias = {}
     for u in users:
@@ -148,7 +170,8 @@ def sync_client(cur, cfg, client_id, client_name, tenant):
     c_by_oid = {r["entra_oid"]: r for r in rows if r["entra_oid"]}
     c_by_email = {r["email"].lower(): r for r in mine}
     n = {"users": len(eligible), "added": 0, "updated": 0, "deactivated": 0,
-         "conflicts": 0, "unmatched": 0, "protected": 0}
+         "conflicts": 0, "unmatched": 0, "protected": 0,
+         "offdomain": len(licensed) - len(eligible)}
     touched = set()
 
     for u in eligible:
@@ -258,7 +281,8 @@ def _summary(n):
     parts = [f"{n['users']} licensed user{'s' if n['users'] != 1 else ''}"]
     for k, label in (("added", "added"), ("updated", "updated"),
                      ("deactivated", "deactivated"), ("conflicts", "skipped (address conflict)"),
-                     ("protected", "manual/CSV kept though not licensed in 365")):
+                     ("protected", "manual/CSV kept though not licensed in 365"),
+                     ("offdomain", "skipped (not on the client's domains)")):
         if n[k]:
             parts.append(f"{n[k]} {label}")
     if not n["users"]:

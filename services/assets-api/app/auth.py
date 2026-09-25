@@ -72,20 +72,30 @@ def require(conn, request: Request, allow_must_change: bool = False) -> dict:
         raise HTTPException(401, "Sign in, or send a bearer token")
     digest = hashlib.sha256(header[7:].strip().encode()).hexdigest()
     with conn.cursor() as cur:
-        cur.execute("""SELECT id, label, created_by, scopes FROM shared.api_tokens
-                        WHERE token_hash = %s AND revoked_at IS NULL""", (digest,))
+        # 0050 (HIPAA review #10): tokens expire, and a token dies with its
+        # owner — a deactivated agent's tokens stop working immediately
+        cur.execute("""SELECT t.id, t.label, t.created_by, t.scopes, o.name
+                         FROM shared.api_tokens t
+                         LEFT JOIN shared.agents o ON o.id = t.created_by
+                        WHERE t.token_hash = %s AND t.revoked_at IS NULL
+                          AND t.expires_at > now()
+                          AND (t.created_by IS NULL OR o.active)""", (digest,))
         row = cur.fetchone()
         if row is None:
-            raise HTTPException(401, "Invalid or revoked token")
-        token_id, label, created_by, scopes = row
+            raise HTTPException(401, "Invalid, expired or revoked token")
+        token_id, label, created_by, scopes, owner_name = row
         cur.execute("UPDATE shared.api_tokens SET last_used_at = now() WHERE id = %s",
                     (token_id,))
         actor = f"agent:{created_by}" if created_by else f"api:{label}"
         cur.execute("SELECT set_config('app.actor', %s, false)", (actor,))
-    # scopes (0001, enforced as of the audit builds): an empty array is the
-    # legacy/service all-scope token; a NON-empty array is a least-privilege
-    # token and need() holds it to exactly those permission keys
+    # scopes (0001, enforced as of the audit builds): an EMPTY array is the
+    # all-scope service token (perms None — the only caller that bypasses
+    # visibility and own-row rules); a NON-empty array is a least-privilege
+    # token held to exactly those keys, acting AS its owner (agent_id) for
+    # visibility and own-row checks. Restriction checks key on
+    # `who["perms"] is not None`, never on kind == "session".
     return {"kind": "pat", "perms": set(scopes) if scopes else None,
+            "agent_id": created_by, "name": owner_name or label,
             "actor": actor, "label": label}
 
 

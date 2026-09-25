@@ -591,7 +591,7 @@ def complete_schedule(ticket_id: int, schedule_id: int, body: ScheduleDone, requ
                 raise HTTPException(404, "Schedule block not found")
             sched_agent, agent_name, starts_at, ends_at = str(row[0]), row[1], row[2], row[3]
             # a block's own tech can check it off; otherwise it takes 'assign'
-            if not (who["kind"] == "pat"
+            if not (who["perms"] is None
                     or ("assign" in who.get("perms", set()))
                     or str(who.get("agent_id")) == sched_agent):
                 raise HTTPException(403, "Marking another tech's schedule needs the assign permission")
@@ -704,7 +704,7 @@ def edit_note(ticket_id: int, article_id: str, body: EditNote, request: Request)
                     raise HTTPException(423, "The linked timesheet is approved — "
                                         "the note is frozen with it")
             # 4) permission: the author, or a see_billing supervisor; PATs pass.
-            if who["kind"] == "session" and author_id != who["agent_id"]:
+            if who["perms"] is not None and author_id != who["agent_id"]:
                 auth.need(who, "see_billing")
             actor = who.get("name") or who.get("label") or "API"
             # 5) apply. The guard permits note-body edits + the 0034 columns

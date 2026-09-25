@@ -1119,8 +1119,13 @@ places.
   python -m app.bootstrap <email> "<name>"` → sign in → forced change.
   Groups/agents/clients via `/api/directory`; mailboxes + Graph via
   `/api/settings` (Entra walkthrough in README "Connecting mail").
-* **Tokens:** `sh scripts/create-token.sh "<label>"` (plaintext once; treat
-  any displayed/screenshotted token as burned — revoke by label via psql).
+* **Tokens:** `sh scripts/create-token.sh <label> <owner-email> [--days N]
+  <scope ...|ALL>` (0050: an ACTIVE owner, an expiry — default 90 days, max
+  365 — and explicit scopes are required; `ALL` alone mints an all-scope
+  token that bypasses per-user visibility). Deactivating the owner kills the
+  token; a scoped token sees only what its owner may see. Plaintext shown
+  once; treat any displayed/screenshotted token as burned — revoke by label
+  via psql. Settings → Tokens lists owner, scope and expiry.
 * **Config flags of note:** `mail.outbound_enabled` (replies transmit),
   `graph.connected` (ingestion runs), `auth.mfa` (optional|required),
   `retainers.enabled`.

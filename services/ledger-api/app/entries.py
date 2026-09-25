@@ -68,7 +68,7 @@ def classify_entry(entry_id: str, body: Classify, request: Request):
             gate = ("AND ts_approved_at IS NULL" if body.void
                     else "AND status = 'pending' AND ts_approved_at IS NULL")
             gargs = []
-            if who["kind"] == "session":
+            if who["perms"] is not None:
                 if "l_edit_submitted" not in who["perms"]:
                     gate += " AND submitted_at IS NULL"
                 if "l_edit_all" not in who["perms"]:
@@ -99,7 +99,7 @@ def recall_entry(entry_id: str, request: Request):
             # own sheet only, unless l_edit_all (audit: bare l_submit could
             # recall anyone's submission)
             own, oargs = "", []
-            if who["kind"] == "session" and "l_edit_all" not in who["perms"]:
+            if who["perms"] is not None and "l_edit_all" not in who["perms"]:
                 own, oargs = " AND tech_id = %s", [who["agent_id"]]
             cur.execute(f"""UPDATE ledger.time_entries
                               SET submitted_at = NULL
@@ -161,7 +161,7 @@ def list_entries(request: Request, client: str | None = None, status: str | None
             cur.execute(sql, args)
             rows = cur.fetchall()
         # money visibility (audit): rates/amounts ship only with l_see_amounts
-        if who["kind"] == "session" and "l_see_amounts" not in who["perms"]:
+        if who["perms"] is not None and "l_see_amounts" not in who["perms"]:
             for r in rows:
                 r["rate_cents"] = None
                 r["amount_cents"] = None
@@ -176,7 +176,7 @@ def submit_entry(entry_id: str, request: Request):
         with conn.cursor() as cur:
             # own entries only, unless l_edit_all — mirrors canSubmitEntry
             own, oargs = "", []
-            if who["kind"] == "session" and "l_edit_all" not in who["perms"]:
+            if who["perms"] is not None and "l_edit_all" not in who["perms"]:
                 own, oargs = " AND tech_id = %s", [who["agent_id"]]
             cur.execute(f"""
                 UPDATE ledger.time_entries

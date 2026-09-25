@@ -6,12 +6,16 @@ email domain, ask for a sync now, and receive Microsoft's admin-consent
 redirect. App credentials are set in Settings (config/m365_sync + the sealed
 'm365_sync' secret). No DELETE: unlinking = disabling (enabled false).
 """
+import base64
+import json
 import re
+import time
+import urllib.parse
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from . import auth, db, helpers
+from . import auth, crypto, db, helpers
 
 router = APIRouter(prefix="/api/m365")
 
@@ -115,18 +119,71 @@ def sync_now(handle: str, request: Request):
         return {"ok": True, "note": "runs within one worker pass (~30 s)"}
 
 
-@router.get("/consented")
-def consented(request: Request, state: str = "", tenant: str = "",
-              admin_consent: str = "", error: str = "", error_description: str = ""):
-    """Microsoft's admin-consent redirect (register <origin>/api/m365/consented
-    on the app). state = the client's id. Success queues a first sync;
-    failure is recorded on the client's link so the card shows why."""
+CONSENT_TTL = 1800          # seconds to finish Microsoft's consent round-trip
+
+
+def _seal_state(client_id, agent_id) -> str:
+    """Consent state (HIPAA review #8): KEK-sealed {client, agent, expiry} —
+    the callback accepts only a state WE issued, unexpired, to the same
+    signed-in admin. A bare client id was forgeable into a fake 'consent
+    granted' audit line."""
+    raw = json.dumps({"c": str(client_id), "a": str(agent_id or ""),
+                      "x": int(time.time()) + CONSENT_TTL}).encode()
+    return base64.urlsafe_b64encode(crypto.seal(raw)).decode().rstrip("=")
+
+
+def _open_state(state: str) -> dict | None:
+    try:
+        pad = "=" * (-len(state) % 4)
+        d = json.loads(crypto.open_(base64.urlsafe_b64decode(state + pad)).decode())
+    except Exception:
+        return None
+    return d if int(d.get("x", 0)) >= time.time() else None
+
+
+@router.get("/clients/{handle}/consent-url")
+def consent_url(handle: str, redirect_uri: str, request: Request):
+    """Microsoft admin-consent link for this client's tenant, carrying a
+    sealed state. redirect_uri comes from the page (its own origin) and must
+    be this app's callback path — Entra only honours registered URIs anyway."""
+    ru = urllib.parse.urlparse(redirect_uri)
+    if ru.path != "/api/m365/consented" or ru.scheme not in ("https", "http") or             (ru.scheme == "http" and ru.hostname not in ("localhost", "127.0.0.1")):
+        raise HTTPException(422, "redirect_uri must be https://<this site>/api/m365/consented")
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "manage_clients")
         with conn.cursor() as cur:
+            cid = helpers.client_id(cur, handle)
+            cur.execute("SELECT tenant_id FROM shared.m365_tenants WHERE client_id = %s", (cid,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(409, "Link this client to its tenant first")
+            cur.execute("SELECT value FROM shared.app_config WHERE key = 'm365_sync'")
+            cfg = (cur.fetchone() or [{}])[0] or {}
+            if not cfg.get("client_id"):
+                raise HTTPException(409, "Set the sync app's client ID in Settings first")
+    q = urllib.parse.urlencode({"client_id": cfg["client_id"], "redirect_uri": redirect_uri,
+                                "state": _seal_state(cid, who.get("agent_id"))})
+    return {"url": f"https://login.microsoftonline.com/{row[0]}/adminconsent?{q}"}
+
+
+@router.get("/consented")
+def consented(request: Request, state: str = "", tenant: str = "",
+              admin_consent: str = "", error: str = "", error_description: str = ""):
+    """Microsoft's admin-consent redirect (register <origin>/api/m365/consented
+    on the app). state = the sealed token from consent-url. Success queues a first sync;
+    failure is recorded on the client's link so the card shows why."""
+    with db.connect() as conn:
+        who = auth.require(conn, request)
+        auth.need(who, "manage_clients")
+        st = _open_state(state)
+        if st is None or st.get("a") != str(who.get("agent_id") or ""):
+            auth.audit(conn, "desk", "Microsoft 365 consent callback refused", None,
+                       f"unverifiable or expired state ({who['label']})")
+            return RedirectResponse("/", status_code=303)
+        with conn.cursor() as cur:
             cur.execute("SELECT client_id, tenant_id FROM shared.m365_tenants "
-                        "WHERE client_id::text = %s", (state,))
+                        "WHERE client_id::text = %s", (st["c"],))
             row = cur.fetchone()
             if row is None:
                 return RedirectResponse("/", status_code=303)
