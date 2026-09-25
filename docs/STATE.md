@@ -1139,6 +1139,19 @@ places.
   (`UPDATE shared.app_config SET value=jsonb_set(value,'{mfa}','"optional"')
   WHERE key='auth'`), sign in, re-enroll, flip back to `"required"`. Write
   an audit.events row alongside any console surgery.
+* **Break-glass: local passwords (0049):** turning password sign-in off in
+  Settings now REALLY refuses `/auth/login` (it used to only hide the form),
+  and the server refuses to turn it off unless SSO is configured. If Entra
+  sign-in later breaks, re-open the password door from the console:
+  `UPDATE shared.app_config SET value=jsonb_set(value,'{local_passwords}','true')
+  WHERE key='auth'` — then sign in, fix SSO, turn passwords back off, and
+  write an audit.events row for the surgery.
+* **Automatic sign-out (0049):** `auth.idle_minutes` (default 15, 5–480,
+  Settings → Authentication). Every service refuses a session idle longer
+  than that; `js/idle.js` clears the screen at the same moment. Background
+  polls send `X-HTS-Passive: 1` and never keep a session alive — any new
+  background timer must send it too. Permissions are read live from the
+  agent's role on every request (role edits apply immediately).
 * **VM hostname quirk:** the VM cannot resolve its own public hostname
   (DNS A record → NetBird IP). VM-side curls go to `http://$BIND_ADDR:8081`
   directly, or add an `/etc/hosts` line mapping the hostname to $BIND_ADDR

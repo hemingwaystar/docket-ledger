@@ -11,7 +11,10 @@ from . import auth, db, helpers
 router = APIRouter(prefix="/api/projects")
 
 
-def _project(cur, ticket_id):
+def _project(cur, ticket_id, who):
+    # object-scope guard (HIPAA review #5): the caller must be able to SEE the
+    # ticket, like every other ticket write — 404 hides a ticket they can't
+    helpers.ticket_or_404(cur, ticket_id, who)
     cur.execute("""SELECT status, billing_model, project_flat_cents, unlocked
                      FROM desk.projects WHERE ticket_id = %s""", (ticket_id,))
     row = cur.fetchone()
@@ -88,7 +91,7 @@ def add_task(ticket_id: int, body: NewTask, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status != "open":
                 raise HTTPException(409, f"Project is in {status} — checklist frozen")
             cur.execute("""INSERT INTO desk.project_tasks (ticket_id, label, position, billing_mode)
@@ -123,7 +126,7 @@ def patch_task(ticket_id: int, task_id: str, body: PatchTask, request: Request):
                 or body.flat_cents is not None):
             auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status == "approved":
                 raise HTTPException(409, "Project approved — checklist and billing frozen")
             cur.execute("""SELECT label FROM desk.project_tasks
@@ -137,6 +140,12 @@ def patch_task(ticket_id: int, task_id: str, body: PatchTask, request: Request):
                     if not body.done_by_email:
                         raise HTTPException(422, "done_by_email required when completing")
                     aid, name = helpers.agent(cur, body.done_by_email)
+                    # completion is recorded under a person's name — only a
+                    # project manager may record it for someone else
+                    if (who["kind"] == "session" and aid != who["agent_id"]
+                            and "manage_projects" not in who["perms"]):
+                        raise HTTPException(403, "You can only mark tasks done "
+                                                 "as yourself")
                     cur.execute("""UPDATE desk.project_tasks
                                       SET done_at = now(), done_by = %s WHERE id = %s""",
                                 (aid, task_id))
@@ -177,7 +186,7 @@ def remove_task(ticket_id: int, task_id: str, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status != "open":
                 raise HTTPException(409, "Checklist frozen")
             cur.execute("SELECT count(*) FROM ledger.time_entries WHERE task_id = %s", (task_id,))
@@ -205,7 +214,7 @@ def patch_billing(ticket_id: int, body: Flat, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status == "approved":
                 raise HTTPException(409, "Approved project billing is immutable")
             notes = []
@@ -234,7 +243,7 @@ def reopen(ticket_id: int, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_projects', 'approve_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status != "review":
                 raise HTTPException(409, f"Project is {status}, not in review")
             cur.execute("""UPDATE desk.projects
@@ -251,7 +260,7 @@ def submit(ticket_id: int, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'manage_projects')
         with conn.cursor() as cur:
-            status, model, flat, _ = _project(cur, ticket_id)
+            status, model, flat, _ = _project(cur, ticket_id, who)
             if status != "open":
                 raise HTTPException(409, f"Project is already in {status}")
             cur.execute("""SELECT count(*) FILTER (WHERE done_at IS NULL),
@@ -292,7 +301,7 @@ def approve(ticket_id: int, body: Approve, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'approve_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status != "review":
                 raise HTTPException(409, f"Project is in {status}, not review")
             # actor of record: the SESSION's own identity, never a body-supplied
@@ -332,7 +341,7 @@ def unlock(ticket_id: int, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'approve_projects')
         with conn.cursor() as cur:
-            status, *_ = _project(cur, ticket_id)
+            status, *_ = _project(cur, ticket_id, who)
             if status != "approved":
                 raise HTTPException(409, "Only approved projects lock")
             cur.execute("UPDATE desk.projects SET unlocked = true WHERE ticket_id = %s",
@@ -348,7 +357,7 @@ def relock(ticket_id: int, request: Request):
         who = auth.require(conn, request)
         auth.need(who, 'approve_projects')
         with conn.cursor() as cur:
-            _project(cur, ticket_id)
+            _project(cur, ticket_id, who)
             cur.execute("UPDATE desk.projects SET unlocked = false WHERE ticket_id = %s",
                         (ticket_id,))
         auth.audit(conn, "desk", "Project ticket re-locked", f"ticket:{ticket_id}",

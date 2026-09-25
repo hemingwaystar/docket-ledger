@@ -51,13 +51,37 @@ class ConfigValue(BaseModel):
     value: dict
 
 
+def _check_auth_config(v: dict):
+    """Server-side guards on the sign-in policy (HIPAA review #1/#2): password
+    sign-in is now really refused when local_passwords is off, so switching it
+    off without a working SSO door would lock everyone out; idle_minutes is
+    the automatic-logoff window every service enforces."""
+    if v.get("local_passwords") is False and not (
+            v.get("sso_enabled") and v.get("tenant") and v.get("client_id")):
+        raise HTTPException(422, "Connect Entra SSO (tenant + client ID) before "
+                                 "turning off password sign-in — otherwise no one "
+                                 "can sign in")
+    if "idle_minutes" in v:
+        im = v["idle_minutes"]
+        if not isinstance(im, int) or isinstance(im, bool) or not 5 <= im <= 480:
+            raise HTTPException(422, "Idle sign-out must be a whole number of "
+                                     "minutes between 5 and 480")
+    if v.get("mfa", "optional") not in ("optional", "required"):
+        raise HTTPException(422, "mfa must be optional or required")
+
+
 @router.put("/config/{key}")
 def put_config(key: str, body: ConfigValue, request: Request):
     if key not in CONFIG_KEYS:
         raise HTTPException(422, f"Unknown config key — one of {', '.join(CONFIG_KEYS)}")
+    if key == "auth":
+        _check_auth_config(body.value)
     with db.connect() as conn:
         who = auth.require(conn, request)
         auth.need(who, "manage_settings", "manage_automations")
+        if key == "auth":
+            # sign-in policy is the settings admin's alone, never automations'
+            auth.need(who, "manage_settings")
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO shared.app_config (key, value)
                            VALUES (%s, %s)

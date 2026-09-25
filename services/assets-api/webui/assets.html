@@ -54,6 +54,10 @@
 <div class="scrim" id="scrim"><div class="modal" id="modal"></div></div>
 <div class="toast-wrap" id="toasts"></div>
 
+<script>(function(){ const std=location.port===''||location.port==='443'||location.port==='80';
+  const desk=std?'':location.protocol+'//'+location.hostname+':8081';
+  window.HTS_IDLE={ping:(std?'/assets':'')+'/me',logout:desk+'/auth/logout',login:desk+'/ui/login.html'}; })();</script>
+<script src="js/idle.js"></script>
 <script src="js/assets/core.js"></script>
 <script src="js/assets/state.js"></script>
 <script src="js/assets/api.js"></script>

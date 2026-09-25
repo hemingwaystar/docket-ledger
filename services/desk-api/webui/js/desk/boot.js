@@ -16,7 +16,8 @@ window.addEventListener('focus',()=>{ if(Date.now()-HYD>30000 && !editingText())
    writes the notices; this only pulls them */
 setInterval(async()=>{
   try{
-    const r=await $fetch('/api/automations/notifications');
+    /* passive: a background poll is not user activity (auto sign-out, 0049) */
+    const r=await $fetch('/api/automations/notifications',{headers:{'X-HTS-Passive':'1'}});
     if(!r.ok) return;
     const d=await r.json();
     const unread=a=>a.filter(x=>!x.read).length, before=unread(state.notifs);

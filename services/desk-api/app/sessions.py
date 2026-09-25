@@ -96,6 +96,19 @@ def _throttle_clear(cur, email: str):
                 (f"acct:{email.strip().lower()}"[:200],))
 
 
+def _local_passwords_on(cur) -> bool:
+    """app_config auth.local_passwords (default on). When an admin turns it
+    off, password sign-in is REFUSED here — the setting used to only hide
+    the form (HIPAA review #2). Recovery if SSO breaks: re-enable it in the
+    DB (docs/STATE.md, "Break-glass: local passwords")."""
+    cur.execute("SELECT value FROM shared.app_config WHERE key = 'auth'")
+    row = cur.fetchone()
+    cfg = row[0] if row else {}
+    if isinstance(cfg, str):
+        cfg = json.loads(cfg)
+    return (cfg or {}).get("local_passwords", True) is not False
+
+
 def _mfa_policy(cur) -> str:
     cur.execute("SELECT value FROM shared.app_config WHERE key = 'auth'")
     row = cur.fetchone()
@@ -139,6 +152,9 @@ class Login(BaseModel):
 def login(body: Login, request: Request, response: Response):
     with db.connect("auth") as conn:
         with conn.cursor() as cur:
+            if not _local_passwords_on(cur):
+                raise HTTPException(403, "Password sign-in is turned off — "
+                                         "use “Sign in with Microsoft”")
             tkeys = _throttle_keys(request, body.email)
             _throttle_guard(cur, tkeys)
             cur.execute("""SELECT id, name, password_hash, password_must_change,
@@ -248,7 +264,8 @@ def me(request: Request):
             raise HTTPException(401, "Session required")
         return {"name": who["name"], "email": who["email"],
                 "perms": sorted(who["perms"]),
-                "must_change_password": who["must_change"]}
+                "must_change_password": who["must_change"],
+                "idle_minutes": who["idle_minutes"]}
 
 
 PREFS_CAP = 16 * 1024                  # bytes of serialized JSON — sanity, not quota
@@ -411,6 +428,9 @@ def mfa_enroll_start(body: EnrollStart, request: Request):
     PENDING secret (active only after a valid code at /auth/login). Refuses if
     MFA is already live — admin reset is the only way to replace an active secret."""
     with db.connect("auth") as conn, conn.cursor() as cur:
+        if not _local_passwords_on(cur):
+            raise HTTPException(403, "Password sign-in is turned off — "
+                                     "use “Sign in with Microsoft”")
         tkeys = _throttle_keys(request, body.email)
         _throttle_guard(cur, tkeys)
         cur.execute("""SELECT id, password_hash, totp_enrolled_at, active

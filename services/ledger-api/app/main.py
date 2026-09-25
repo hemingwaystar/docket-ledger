@@ -41,7 +41,7 @@ def me(request: Request):
         if who["kind"] != "session":
             raise HTTPException(401, "Session required")
         return {"name": who["name"], "email": who["email"],
-                "perms": sorted(who["perms"])}
+                "perms": sorted(who["perms"]), "idle_minutes": who["idle_minutes"]}
 
 
 @app.get("/")
