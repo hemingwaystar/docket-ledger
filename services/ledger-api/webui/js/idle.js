@@ -22,7 +22,7 @@
   const cfg = window.HTS_IDLE || {};
   if(!cfg.ping || !cfg.login) return;
   const KEY = 'hts_last_activity';
-  let limitMs = 15 * 60000;              /* until the server says otherwise */
+  let limitMs = 480 * 60000;             /* 8 h default, until the server says otherwise */
   let local = Date.now(), lastPing = 0, gone = false;
   const readShared = () => { try{ return Number(localStorage.getItem(KEY)) || 0; }catch(e){ return 0; } };
   const writeShared = v => { try{ localStorage.setItem(KEY, String(v)); }catch(e){} };

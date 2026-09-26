@@ -6,7 +6,7 @@ audit triggers either way.
 HIPAA review (0049): permissions are read LIVE from the agent's current role
 on every request — a demotion or a role edit applies immediately, not at the
 next sign-in. And sessions log off automatically after app_config
-auth.idle_minutes (default 15, clamped 5..480) without user activity; a
+auth.idle_minutes (default 480 = 8 h, clamped 5..480) without user activity; a
 request carrying X-HTS-Passive: 1 (background polls) never counts as
 activity. This file is identical in desk-api, ledger-api and assets-api."""
 import hashlib
@@ -38,7 +38,7 @@ def require(conn, request: Request, allow_must_change: bool = False) -> dict:
                                    FROM shared.app_config c
                                   WHERE c.key = 'auth'
                                     AND c.value->>'idle_minutes' ~ '^[0-9]{1,4}$'),
-                                15))) AS mins) i
+                                480))) AS mins) i
                  WHERE s.token_hash = %s AND s.revoked_at IS NULL
                    AND s.expires_at > now() AND a.active""", (digest,))
             row = cur.fetchone()

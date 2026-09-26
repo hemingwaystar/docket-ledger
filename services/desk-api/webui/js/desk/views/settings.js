@@ -1040,8 +1040,8 @@ function viewSettings(){
         <button class="rowbtn" onclick="authToggleLocal()">${AUTH_CFG.localPasswords?'Disable':'Enable'}</button>
         <span class="chip ${AUTH_CFG.localPasswords?'st-solved':'st-closed'}"><span class="cdot"></span>${AUTH_CFG.localPasswords?'On':'Off'}</span></div>
       <div class="setting-row" style="align-items:flex-start"><div class="sl"><b>Automatic sign-out</b>
-          <p>Signs everyone out after this long with no activity — mouse, keyboard or a click in any of the three apps. Background refreshes don’t count. Applies to SSO and password sessions alike.</p>
-          <div class="field inline-sm" style="margin:8px 0"><label>idle minutes</label><input type="number" min="5" max="480" step="1" value="${Number(AUTH_CFG.idleMinutes)||15}" style="width:72px" onchange="authSetIdle(this)"></div>
+          <p>Signs everyone out after this long with no activity — mouse, keyboard or a click in any of the three apps. Background refreshes don’t count. Applies to SSO and password sessions alike. Default 480 (8 hours) — pair it with an enforced OS screen lock on every workstation.</p>
+          <div class="field inline-sm" style="margin:8px 0"><label>idle minutes</label><input type="number" min="5" max="480" step="1" value="${Number(AUTH_CFG.idleMinutes)||480}" style="width:72px" onchange="authSetIdle(this)"></div>
         </div></div>
     </div>
   </div>`;

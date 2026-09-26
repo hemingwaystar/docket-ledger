@@ -1151,7 +1151,7 @@ places.
   `UPDATE shared.app_config SET value=jsonb_set(value,'{local_passwords}','true')
   WHERE key='auth'` — then sign in, fix SSO, turn passwords back off, and
   write an audit.events row for the surgery.
-* **Automatic sign-out (0049):** `auth.idle_minutes` (default 15, 5–480,
+* **Automatic sign-out (0049):** `auth.idle_minutes` (default 480 = 8 h, 5–480,
   Settings → Authentication). Every service refuses a session idle longer
   than that; `js/idle.js` clears the screen at the same moment. Background
   polls send `X-HTS-Passive: 1` and never keep a session alive — any new

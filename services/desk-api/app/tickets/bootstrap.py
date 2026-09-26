@@ -208,7 +208,7 @@ def bootstrap(request: Request, limit: int = 500):
                               "localPasswords": bool(av.get("local_passwords", True)),
                               "roleMapping": bool(av.get("role_mapping")),
                               "mfa": av.get("mfa", "optional"),
-                              "idleMinutes": av.get("idle_minutes", 15)}
+                              "idleMinutes": av.get("idle_minutes", 480)}
             cur.execute("SELECT name, rotated_at, rotated_by FROM shared.secrets")
             out["secretMeta"] = {r["name"]: {"at": ms(r["rotated_at"]),
                                              "by": r["rotated_by"]} for r in cur.fetchall()}

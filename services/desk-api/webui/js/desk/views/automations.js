@@ -609,7 +609,7 @@ function authPut(){ clearTimeout(_authT); _authT=setTimeout(()=>{
       redirect_uri:AUTH_CFG.redirectUri||'',
       local_passwords:!!AUTH_CFG.localPasswords,
       role_mapping:!!AUTH_CFG.roleMapping, mfa:AUTH_CFG.mfa||'optional',
-      idle_minutes:Number(AUTH_CFG.idleMinutes)||15}})})
+      idle_minutes:Number(AUTH_CFG.idleMinutes)||480}})})
     .then(async r=>{ if(!r.ok) return oops(await r.json().catch(()=>0)); });
 },500); }
 function authSet(k, v, srcEl){
@@ -620,7 +620,7 @@ function authSet(k, v, srcEl){
 }
 function authSetIdle(el){
   const v = Math.round(Number(el.value));
-  if(!(v>=5 && v<=480)){ toast('Idle sign-out must be between 5 and 480 minutes.'); el.value = Number(AUTH_CFG.idleMinutes)||15; return; }
+  if(!(v>=5 && v<=480)){ toast('Idle sign-out must be between 5 and 480 minutes.'); el.value = Number(AUTH_CFG.idleMinutes)||480; return; }
   authSet('idleMinutes', v, el);
 }
 function authToggleSSO(){

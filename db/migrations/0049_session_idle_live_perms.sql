@@ -2,7 +2,7 @@
 -- 0049_session_idle_live_perms.sql — HIPAA review (2026-09-25) #1 and #4.
 --   * shared.sessions.last_seen_at: the last USER activity on a session. Every
 --     service's auth.require() refuses a session idle longer than
---     app_config auth.idle_minutes (default 15, clamped 5..480) and bumps
+--     app_config auth.idle_minutes (default 480 = 8 h, clamped 5..480) and bumps
 --     the stamp on non-passive requests (background polls send
 --     X-HTS-Passive: 1 and never keep a session alive). Automatic logoff,
 --     §164.312(a)(2)(iii).
